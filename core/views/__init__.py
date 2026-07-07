@@ -26,6 +26,7 @@ from core.views.conversations import (
     ConversationListCreateView,
     ConversationMessagesView,
 )
+from core.views.feedback import FeedbackCreateView, IssueListCreateView
 from core.views.health import db_check, health, ping
 from core.views.profile import (
     BankAccountDetailView,
@@ -81,4 +82,6 @@ __all__ = [
     "ConversationDetailView",
     "ConversationMessagesView",
     "ConversationAttachmentsView",
+    "FeedbackCreateView",
+    "IssueListCreateView",
 ]

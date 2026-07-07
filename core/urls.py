@@ -16,6 +16,8 @@ from core.views import (
     ConversationMessagesView,
     DashboardGoalView,
     DashboardView,
+    FeedbackCreateView,
+    IssueListCreateView,
     LoginView,
     LogoutView,
     MeConsentRevokeView,
@@ -96,4 +98,7 @@ urlpatterns = [
     path("analytics/spending-insights/", SpendingInsightsView.as_view()),
     path("analytics/net-worth/", NetWorthView.as_view()),
     path("analytics/stability-score/", StabilityScoreView.as_view()),
+    # 11. Feedback & Support (API_Endpoints_1.md §11)
+    path("feedback/", FeedbackCreateView.as_view()),
+    path("issues/", IssueListCreateView.as_view()),
 ]
