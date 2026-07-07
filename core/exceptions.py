@@ -19,6 +19,24 @@ from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.views import exception_handler as drf_default_exception_handler
 
 
+class BusinessRuleError(DRFValidationError):
+    """
+    Raise this instead of a plain DRFValidationError when a business-rule
+    failure needs BOTH a specific top-level `code` (e.g. "duplicate_transaction",
+    matching docs/API_GUIDE/Data_Shapes_Aggregations.md's documented duplicate
+    error) AND a `fields` payload that isn't itself a per-field validation
+    map — e.g. referencing an existing resource's id, not reporting which
+    input field was malformed. A plain ValidationError's `code` only affects
+    a single ErrorDetail's code, which get_codes() can't cleanly surface as
+    one top-level string once `detail` is a dict — this sidesteps that by
+    carrying the intended `fields` payload separately on the exception itself.
+    """
+
+    def __init__(self, message, code, fields=None):
+        super().__init__(detail=message, code=code)
+        self.error_fields = fields
+
+
 def _first_message(data):
     """Pulls one human-readable message out of DRF's (possibly nested) error data."""
     if isinstance(data, dict):
@@ -46,6 +64,19 @@ def api_exception_handler(exc, context):
         # Anything that got as far as a ValidationError is a semantic/business-
         # rule failure per API Design Guidelines §10, so it becomes 422 here.
         response.status_code = 422
+        if isinstance(exc, BusinessRuleError):
+            # DRFValidationError.__init__ always coerces a plain string `detail`
+            # into a one-item list (see its source — "details should always be
+            # coerced to a list if not already"), so both get_codes() and
+            # exc.detail come back as one-item lists here, not bare values —
+            # _first_message() already knows how to unwrap that shape.
+            codes = exc.get_codes()
+            code = codes[0] if isinstance(codes, list) else codes
+            fields = exc.error_fields
+            response.data = {
+                "error": {"code": code, "message": _first_message(exc.detail), "fields": fields}
+            }
+            return response
         code = "validation_error"
         if isinstance(response.data, dict):
             fields = response.data

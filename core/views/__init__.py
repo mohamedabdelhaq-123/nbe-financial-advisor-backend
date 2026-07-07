@@ -1,3 +1,15 @@
+from core.views.aggregations import (
+    AnomaliesView,
+    AnomalyResolveView,
+    CategoryBreakdownView,
+    MonthlySummariesView,
+    NetWorthView,
+    RecurringChargesView,
+    SpendingInsightsView,
+    StabilityScoreView,
+    TransactionDetailView,
+    TransactionListCreateView,
+)
 from core.views.auth import LoginView, LogoutView, RefreshView, SignupView
 from core.views.health import db_check, health, ping
 from core.views.profile import (
@@ -33,4 +45,14 @@ __all__ = [
     "StatementDetailView",
     "StatementOcrResultView",
     "StatementNormalizedView",
+    "TransactionListCreateView",
+    "TransactionDetailView",
+    "MonthlySummariesView",
+    "CategoryBreakdownView",
+    "RecurringChargesView",
+    "AnomaliesView",
+    "AnomalyResolveView",
+    "SpendingInsightsView",
+    "NetWorthView",
+    "StabilityScoreView",
 ]
