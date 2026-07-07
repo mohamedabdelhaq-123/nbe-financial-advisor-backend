@@ -1,6 +1,7 @@
 from django.contrib.auth.hashers import check_password
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics
 from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import LimitOffsetPagination
@@ -15,6 +16,7 @@ from core.permissions import AdminAuthMixin, IsSuperAdmin
 from core.serializers.administration import (
     AdminIssueSerializer,
     AdminIssueUpdateSerializer,
+    AdminLoginResponseSerializer,
     AdminLoginSerializer,
     AdminProductCreateSerializer,
     AdminProductSerializer,
@@ -29,6 +31,7 @@ class AdminLoginView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
+    @extend_schema(request=AdminLoginSerializer, responses={200: AdminLoginResponseSerializer})
     def post(self, request):
         serializer = AdminLoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -114,6 +117,7 @@ class AdminIssueListView(AdminAuthMixin, generics.ListAPIView):
 class AdminIssueUpdateView(AdminAuthMixin, APIView):
     """PATCH /admin/issues/{issue_id} — reviewer or super_admin."""
 
+    @extend_schema(request=AdminIssueUpdateSerializer, responses={200: AdminIssueSerializer})
     def patch(self, request, issue_id):
         issue = get_object_or_404(ReportedIssue, id=issue_id)  # cross-user: no ownership filter
         serializer = AdminIssueUpdateSerializer(data=request.data)
@@ -180,6 +184,7 @@ class AdminProductDetailView(AdminAuthMixin, APIView):
 
     permission_classes = [IsSuperAdmin]
 
+    @extend_schema(request=AdminProductUpdateSerializer, responses={200: AdminProductSerializer})
     def patch(self, request, product_id):
         product = get_object_or_404(Product, id=product_id)
         serializer = AdminProductUpdateSerializer(product, data=request.data, partial=True)
@@ -187,6 +192,7 @@ class AdminProductDetailView(AdminAuthMixin, APIView):
         serializer.save()
         return Response(AdminProductSerializer(product).data)
 
+    @extend_schema(responses={204: None})
     def delete(self, request, product_id):
         # Hard delete, cascades to problem_statements and recommendation_logs
         # (DB_Schema.md: ON DELETE CASCADE on both). Data_Shapes_

@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from django.db.models import Sum
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import extend_schema
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.generics import ListAPIView
 from rest_framework.pagination import LimitOffsetPagination
@@ -14,7 +15,14 @@ from core.models import BankAccount, Budget, BudgetAllocation, BudgetHistory, Tr
 from core.serializers.budgets import (
     BudgetCreateSerializer,
     BudgetHistorySerializer,
+    BudgetProgressResponseSerializer,
+    BudgetResponseSerializer,
     BudgetUpdateSerializer,
+    DashboardGoalRequestSerializer,
+    DashboardGoalResponseSerializer,
+    DashboardResponseSerializer,
+    SavingsProgressResponseSerializer,
+    StarterTemplateSerializer,
 )
 from core.views.aggregations import compute_stability_score
 from services import file_storage
@@ -132,12 +140,14 @@ def _apply_allocations(budget, allocations, monthly_income):
 class BudgetView(APIView):
     """GET/POST/PATCH /budget"""
 
+    @extend_schema(responses={200: BudgetResponseSerializer})
     def get(self, request):
         budget = Budget.objects.filter(user=request.user).prefetch_related("allocations").first()
         if budget is None:
             raise NotFound("No budget plan exists yet.")
         return Response(_serialize_budget(budget))
 
+    @extend_schema(request=BudgetCreateSerializer, responses={201: BudgetResponseSerializer})
     def post(self, request):
         if Budget.objects.filter(user=request.user).exists():
             # One plan per user, no parallel rows (Data_Governance_Specs.md
@@ -159,6 +169,7 @@ class BudgetView(APIView):
         _apply_allocations(budget, data["allocations"], request.user.monthly_income or Decimal("0"))
         return Response(_serialize_budget(budget), status=201)
 
+    @extend_schema(request=BudgetUpdateSerializer, responses={200: BudgetResponseSerializer})
     def patch(self, request):
         budget = get_object_or_404(Budget.objects.prefetch_related("allocations"), user=request.user)
         serializer = BudgetUpdateSerializer(data=request.data)
@@ -213,6 +224,7 @@ class BudgetProgressView(APIView):
     # status field Data_Shapes_Budgets.md requires per category.
     APPROACHING_LIMIT_THRESHOLD = 80
 
+    @extend_schema(responses={200: BudgetProgressResponseSerializer})
     def get(self, request):
         budget = get_object_or_404(Budget.objects.prefetch_related("allocations"), user=request.user)
         period = request.query_params.get("period") or date.today().strftime("%Y-%m")
@@ -252,6 +264,7 @@ class BudgetProgressView(APIView):
 class SavingsProgressView(APIView):
     """GET /budget/savings-progress"""
 
+    @extend_schema(responses={200: SavingsProgressResponseSerializer})
     def get(self, request):
         budget = get_object_or_404(Budget, user=request.user)
         if budget.goal_target_amount is None or budget.goal_timeline_months is None:
@@ -292,6 +305,7 @@ class SavingsProgressView(APIView):
 class StarterTemplatesView(APIView):
     """GET /budget/starter-templates"""
 
+    @extend_schema(responses={200: StarterTemplateSerializer(many=True)})
     def get(self, request):
         templates = file_storage.get_onboarding_templates()
         # Simple heuristic for which template gets is_suggested=true — a real
@@ -326,6 +340,7 @@ def _goal_progress(budget):
 class DashboardView(APIView):
     """GET /dashboard — aggregate endpoint (API Design Guidelines §7)."""
 
+    @extend_schema(responses={200: DashboardResponseSerializer})
     def get(self, request):
         budget = Budget.objects.filter(user=request.user).prefetch_related("allocations").first()
         if budget is None:
@@ -400,6 +415,7 @@ class DashboardGoalView(APIView):
     holding any separate goal-update logic of its own.
     """
 
+    @extend_schema(request=DashboardGoalRequestSerializer, responses={200: DashboardGoalResponseSerializer})
     def patch(self, request):
         goal_data = request.data.get("goal")
         if not goal_data:

@@ -1,5 +1,6 @@
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, mixins, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -17,15 +18,18 @@ from core.serializers.profile import (
 class MeView(APIView):
     """GET/PATCH /users/me, DELETE /users/me (full account + data deletion)."""
 
+    @extend_schema(responses={200: UserSerializer})
     def get(self, request):
         return Response(UserSerializer(request.user).data)
 
+    @extend_schema(request=UserSerializer, responses={200: UserSerializer})
     def patch(self, request):
         serializer = UserSerializer(request.user, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
 
+    @extend_schema(responses={204: None})
     def delete(self, request):
         # Every domain FK to `users` is ON DELETE CASCADE per DB_Schema.md, so
         # this single call removes the user's entire footprint (accounts,
@@ -50,9 +54,11 @@ class MePreferencesView(APIView):
         preferences, _ = UserPreference.objects.get_or_create(user=request.user)
         return preferences
 
+    @extend_schema(responses={200: UserPreferenceSerializer})
     def get(self, request):
         return Response(UserPreferenceSerializer(self._get_preferences(request)).data)
 
+    @extend_schema(request=UserPreferenceSerializer, responses={200: UserPreferenceSerializer})
     def patch(self, request):
         serializer = UserPreferenceSerializer(
             self._get_preferences(request), data=request.data, partial=True
@@ -65,6 +71,7 @@ class MePreferencesView(APIView):
 class MeConsentView(APIView):
     """POST /users/me/consent — records a grant event."""
 
+    @extend_schema(request=ConsentGrantSerializer, responses={201: ConsentRecordSerializer})
     def post(self, request):
         serializer = ConsentGrantSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -88,6 +95,7 @@ class MeConsentRevokeView(APIView):
     a revoke event, keeping the full grant/revoke timeline reconstructable.
     """
 
+    @extend_schema(responses={204: None})
     def delete(self, request, consent_id):
         target = get_object_or_404(ConsentRecord, id=consent_id, user=request.user)
         ConsentRecord.objects.create(

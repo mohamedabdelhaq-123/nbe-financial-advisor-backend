@@ -1,3 +1,4 @@
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics
 from rest_framework.exceptions import NotFound
 from rest_framework.pagination import LimitOffsetPagination
@@ -28,6 +29,7 @@ _OWNERSHIP_CHECKS = {
 class FeedbackCreateView(APIView):
     """POST /feedback"""
 
+    @extend_schema(request=FeedbackCreateSerializer, responses={201: ReactionSerializer})
     def post(self, request):
         serializer = FeedbackCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

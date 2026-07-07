@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import extend_schema
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -22,6 +23,7 @@ class RecommendationsView(APIView):
     user, for which query, with what match confidence"), not just returned.
     """
 
+    @extend_schema(responses={200: RecommendationItemSerializer(many=True)})
     def get(self, request):
         query = request.query_params.get("q", "").strip()
         active_products = list(Product.objects.filter(is_active=True))
@@ -64,6 +66,7 @@ class RecommendationFeedbackView(APIView):
     entries may be targeted by Feedback").
     """
 
+    @extend_schema(request=RecommendationFeedbackSerializer, responses={201: ReactionSerializer})
     def post(self, request, recommendation_id):
         log = get_object_or_404(RecommendationLog, id=recommendation_id, user=request.user)
         serializer = RecommendationFeedbackSerializer(data=request.data)

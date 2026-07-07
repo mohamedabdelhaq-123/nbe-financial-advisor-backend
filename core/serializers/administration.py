@@ -8,6 +8,13 @@ class AdminLoginSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True, trim_whitespace=False)
 
 
+class AdminLoginResponseSerializer(serializers.Serializer):
+    access_token = serializers.CharField()
+    refresh_token = serializers.CharField()
+    admin_id = serializers.UUIDField()
+    role = serializers.CharField()
+
+
 class AdminReactionSerializer(serializers.ModelSerializer):
     """
     GET /admin/feedback — cross-user, so unlike the end-user-facing Feedback

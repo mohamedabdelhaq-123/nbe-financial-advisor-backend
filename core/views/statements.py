@@ -3,6 +3,7 @@ from datetime import date
 from decimal import Decimal
 
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.pagination import LimitOffsetPagination
@@ -10,7 +11,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.models import BankAccount, StatementFile, StatementNormalized, StatementOcrResult, Transaction, UserPreference
-from core.serializers.statements import StatementFileSerializer
+from core.serializers.statements import (
+    StatementFileSerializer,
+    StatementNormalizedResponseSerializer,
+    StatementOcrResultResponseSerializer,
+)
 from services import ai_service, file_storage
 
 
@@ -195,6 +200,7 @@ class StatementDetailView(generics.RetrieveDestroyAPIView):
 class StatementOcrResultView(APIView):
     """GET /statements/{statement_id}/ocr-result"""
 
+    @extend_schema(responses={200: StatementOcrResultResponseSerializer})
     def get(self, request, statement_id):
         statement = get_object_or_404(StatementFile, id=statement_id, user=request.user)
         ocr = statement.ocr_results.order_by("-processed_at").first()
@@ -216,6 +222,7 @@ class StatementOcrResultView(APIView):
 class StatementNormalizedView(APIView):
     """GET /statements/{statement_id}/normalized"""
 
+    @extend_schema(responses={200: StatementNormalizedResponseSerializer})
     def get(self, request, statement_id):
         statement = get_object_or_404(StatementFile, id=statement_id, user=request.user)
         record = statement.normalized_records.order_by("-adjusted_at").first()

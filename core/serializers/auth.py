@@ -46,3 +46,21 @@ class RefreshRequestSerializer(serializers.Serializer):
 
 class LogoutSerializer(serializers.Serializer):
     refresh_token = serializers.CharField()
+
+
+class TokenPairResponseSerializer(serializers.Serializer):
+    """
+    Output-only shape for signup/login (core/views/auth.py's
+    _token_pair_response()) — documentation purposes only (drf-spectacular
+    schema generation, API Design Guidelines §11), never instantiated for
+    actual validation since the view builds this dict directly.
+    """
+
+    access_token = serializers.CharField()
+    refresh_token = serializers.CharField()
+    user_id = serializers.UUIDField()
+
+
+class RefreshResponseSerializer(serializers.Serializer):
+    access_token = serializers.CharField()
+    refresh_token = serializers.CharField(required=False)

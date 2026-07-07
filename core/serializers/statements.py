@@ -23,10 +23,31 @@ class StatementFileSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_failure_reason(self, obj):
+    def get_failure_reason(self, obj) -> str | None:
         # No `failure_reason` column exists on StatementFile — DB_Schema.md
         # doesn't define one, and the mock pipeline in services/ai_service.py
         # never actually fails. Kept as a field (always null for now) rather
         # than omitted, so this response shape already matches
         # Data_Shapes_Statements.md ahead of a real, fallible pipeline landing.
         return None
+
+
+class StatementOcrResultResponseSerializer(serializers.Serializer):
+    """GET /statements/{id}/ocr-result — output-only, see StatementFileSerializer's
+    docstring pattern (documents core/views/statements.py's dict response)."""
+
+    statement_id = serializers.UUIDField()
+    ocr_engine = serializers.CharField()
+    confidence_score = serializers.DecimalField(max_digits=4, decimal_places=3, allow_null=True)
+    processed_at = serializers.DateTimeField()
+    artifact_url = serializers.CharField()
+
+
+class StatementNormalizedResponseSerializer(serializers.Serializer):
+    """GET /statements/{id}/normalized — output-only, same pattern."""
+
+    statement_id = serializers.UUIDField()
+    model_used = serializers.CharField(allow_null=True)
+    adjusted_at = serializers.DateTimeField()
+    transaction_count = serializers.IntegerField()
+    normalized_json = serializers.JSONField()

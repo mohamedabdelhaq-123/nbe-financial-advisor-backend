@@ -21,7 +21,7 @@ class ConversationListItemSerializer(ConversationSerializer):
         fields = ConversationSerializer.Meta.fields + ["preview"]
         read_only_fields = fields
 
-    def get_preview(self, conversation):
+    def get_preview(self, conversation) -> str | None:
         latest = conversation.messages.order_by("-created_at").first()
         return latest.content[:80] if latest else None
 
@@ -54,3 +54,36 @@ class MessageSerializer(serializers.ModelSerializer):
 
 class MessageCreateSerializer(serializers.Serializer):
     content = serializers.CharField()
+
+
+class WidgetSerializer(serializers.Serializer):
+    type = serializers.CharField(allow_null=True)
+    payload = serializers.JSONField(allow_null=True)
+
+
+class MessageDoneEventSerializer(serializers.Serializer):
+    """
+    Documents the `data` payload of the terminal "done" SSE event from POST
+    .../messages (core/views/conversations.py's _sse_stream()) — the actual
+    HTTP response is text/event-stream, not JSON, so this is a documentation
+    aid for drf-spectacular (API Design Guidelines §11) rather than something
+    a client would ever deserialize the whole response body as.
+    """
+
+    id = serializers.UUIDField()
+    content = serializers.CharField()
+    widget = WidgetSerializer()
+    references = MessageReferenceSerializer(many=True)
+
+
+class ConversationAttachmentResponseSerializer(serializers.Serializer):
+    statement_id = serializers.UUIDField()
+    status = serializers.CharField()
+    message_id = serializers.UUIDField()
+
+
+class ConversationAttachmentRequestSerializer(serializers.Serializer):
+    """multipart/form-data request for POST .../attachments — documentation only,
+    the view reads request.FILES directly (see create_statement_from_upload())."""
+
+    file = serializers.FileField()

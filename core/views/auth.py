@@ -1,3 +1,4 @@
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -10,7 +11,10 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from core.serializers.auth import (
     LoginSerializer,
     LogoutSerializer,
+    RefreshRequestSerializer,
+    RefreshResponseSerializer,
     SignupSerializer,
+    TokenPairResponseSerializer,
 )
 
 
@@ -39,6 +43,7 @@ class SignupView(APIView):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(request=SignupSerializer, responses={201: TokenPairResponseSerializer})
     def post(self, request):
         serializer = SignupSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -51,6 +56,7 @@ class LoginView(APIView):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(request=LoginSerializer, responses={200: TokenPairResponseSerializer})
     def post(self, request):
         serializer = LoginSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
@@ -71,6 +77,7 @@ class RefreshView(APIView):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(request=RefreshRequestSerializer, responses={200: RefreshResponseSerializer})
     def post(self, request):
         inner = TokenRefreshSerializer(data={"refresh": request.data.get("refresh_token")})
         try:
@@ -96,6 +103,7 @@ class LogoutView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(request=LogoutSerializer, responses={204: None})
     def post(self, request):
         serializer = LogoutSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

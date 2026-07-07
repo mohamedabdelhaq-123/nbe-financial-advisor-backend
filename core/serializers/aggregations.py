@@ -105,3 +105,56 @@ class SpendingPatternInsightSerializer(serializers.ModelSerializer):
         model = SpendingPatternInsight
         fields = ["insight_type", "period", "value", "created_at"]
         read_only_fields = fields
+
+
+# ---------------------------------------------------------------------------
+# Output-only shapes for the "live computed" analytics views in
+# core/views/aggregations.py (MonthlySummariesView, CategoryBreakdownView,
+# NetWorthView, StabilityScoreView) — these build plain dicts directly
+# (no model instance backs a single response 1:1), so these serializers
+# exist purely to document the response shape for drf-spectacular
+# (API Design Guidelines §11), never for validation.
+# ---------------------------------------------------------------------------
+
+
+class TopMerchantSerializer(serializers.Serializer):
+    merchant = serializers.CharField()
+    total = serializers.DecimalField(max_digits=14, decimal_places=2)
+
+
+class MonthlySummaryItemSerializer(serializers.Serializer):
+    month = serializers.DateField()
+    account_id = serializers.UUIDField(allow_null=True)
+    total_spend = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_inflow = serializers.DecimalField(max_digits=14, decimal_places=2)
+    category_breakdown = serializers.DictField(child=serializers.DecimalField(max_digits=14, decimal_places=2))
+    top_merchants = TopMerchantSerializer(many=True)
+
+
+class CategoryBreakdownItemSerializer(serializers.Serializer):
+    category = serializers.CharField()
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    percentage_of_total = serializers.FloatField()
+
+
+class CategoryBreakdownResponseSerializer(serializers.Serializer):
+    period = serializers.CharField()
+    breakdown = CategoryBreakdownItemSerializer(many=True)
+
+
+class NetWorthAccountBreakdownSerializer(serializers.Serializer):
+    account_id = serializers.UUIDField()
+    bank_name = serializers.CharField()
+    balance = serializers.DecimalField(max_digits=14, decimal_places=2)
+
+
+class NetWorthResponseSerializer(serializers.Serializer):
+    as_of_date = serializers.CharField()
+    total_across_accounts = serializers.DecimalField(max_digits=14, decimal_places=2)
+    per_account_breakdown = NetWorthAccountBreakdownSerializer(many=True)
+
+
+class StabilityScoreResponseSerializer(serializers.Serializer):
+    score = serializers.FloatField(allow_null=True)
+    label = serializers.CharField()
+    computed_for_period = serializers.CharField()

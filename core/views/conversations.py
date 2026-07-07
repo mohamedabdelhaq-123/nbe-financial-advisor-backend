@@ -2,6 +2,7 @@ import json
 
 from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import generics
 from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import CursorPagination, LimitOffsetPagination
@@ -10,9 +11,12 @@ from rest_framework.views import APIView
 
 from core.models import Budget, Conversation, Message
 from core.serializers.conversations import (
+    ConversationAttachmentRequestSerializer,
+    ConversationAttachmentResponseSerializer,
     ConversationListItemSerializer,
     ConversationSerializer,
     MessageCreateSerializer,
+    MessageDoneEventSerializer,
     MessageSerializer,
 )
 from core.views.statements import create_statement_from_upload
@@ -44,6 +48,10 @@ class ConversationListCreateView(generics.ListCreateAPIView):
 class ConversationDetailView(generics.DestroyAPIView):
     """DELETE /chat/conversations/{conversation_id}"""
 
+    # DestroyAPIView wants a serializer_class even though DELETE returns no
+    # body — reusing ConversationSerializer rather than duplicating it just
+    # for this attribute.
+    serializer_class = ConversationSerializer
     lookup_url_kwarg = "conversation_id"
 
     def get_queryset(self):
@@ -63,6 +71,7 @@ class ConversationMessagesView(APIView):
     def _get_conversation(self, request, conversation_id):
         return get_object_or_404(Conversation, id=conversation_id, user=request.user)
 
+    @extend_schema(responses={200: MessageSerializer(many=True)})
     def get(self, request, conversation_id):
         # Reopening a conversation to read it does NOT bump last_message_at
         # (Data_Shapes_Conversations.md's stale-session note) — only POSTing
@@ -78,6 +87,19 @@ class ConversationMessagesView(APIView):
         page = paginator.paginate_queryset(qs, request, view=self)
         return paginator.get_paginated_response(MessageSerializer(page, many=True).data)
 
+    @extend_schema(
+        request=MessageCreateSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=MessageDoneEventSerializer,
+                description=(
+                    "text/event-stream — a sequence of {\"event\": \"token\", \"data\": str} chunks "
+                    "followed by one terminal {\"event\": \"done\", \"data\": <this shape>} event. "
+                    "Not a single JSON body; documented here as the terminal event's payload only."
+                ),
+            )
+        },
+    )
     def post(self, request, conversation_id):
         conversation = self._get_conversation(request, conversation_id)
         serializer = MessageCreateSerializer(data=request.data)
@@ -160,6 +182,10 @@ class ConversationAttachmentsView(APIView):
     a system message + reference rather than any new field on StatementFile.
     """
 
+    @extend_schema(
+        request=ConversationAttachmentRequestSerializer,
+        responses={202: ConversationAttachmentResponseSerializer},
+    )
     def post(self, request, conversation_id):
         conversation = get_object_or_404(Conversation, id=conversation_id, user=request.user)
         file_obj = request.FILES.get("file")

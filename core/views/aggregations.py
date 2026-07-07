@@ -4,6 +4,7 @@ from decimal import Decimal
 from django.db.models import Sum
 from django.db.models.functions import TruncMonth
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import extend_schema
 from rest_framework import mixins, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import GenericAPIView, ListAPIView
@@ -16,8 +17,12 @@ from core.models import AnomalyFlag, BankAccount, RecurringCharge, SpendingPatte
 from core.serializers.aggregations import (
     AnomalyFlagSerializer,
     AnomalyResolveSerializer,
+    CategoryBreakdownResponseSerializer,
+    MonthlySummaryItemSerializer,
+    NetWorthResponseSerializer,
     RecurringChargeSerializer,
     SpendingPatternInsightSerializer,
+    StabilityScoreResponseSerializer,
     TransactionDetailSerializer,
     TransactionListSerializer,
     TransactionPatchSerializer,
@@ -156,6 +161,7 @@ class TransactionDetailView(mixins.RetrieveModelMixin, mixins.DestroyModelMixin,
 class MonthlySummariesView(APIView):
     """GET /analytics/monthly-summaries"""
 
+    @extend_schema(responses={200: MonthlySummaryItemSerializer(many=True)})
     def get(self, request):
         qs = Transaction.objects.filter(user=request.user)
         account_id = request.query_params.get("account_id")
@@ -216,6 +222,7 @@ class MonthlySummariesView(APIView):
 class CategoryBreakdownView(APIView):
     """GET /analytics/category-breakdown"""
 
+    @extend_schema(responses={200: CategoryBreakdownResponseSerializer})
     def get(self, request):
         period = request.query_params.get("period")
         if not period:
@@ -254,6 +261,7 @@ class RecurringChargesView(APIView):
     module docstring for why real detection logic isn't built here.
     """
 
+    @extend_schema(responses={200: RecurringChargeSerializer(many=True)})
     def get(self, request):
         qs = RecurringCharge.objects.filter(user=request.user)
         account_id = request.query_params.get("account_id")
@@ -265,6 +273,7 @@ class RecurringChargesView(APIView):
 class AnomaliesView(APIView):
     """GET /analytics/anomalies — same scope boundary as RecurringChargesView."""
 
+    @extend_schema(responses={200: AnomalyFlagSerializer(many=True)})
     def get(self, request):
         qs = AnomalyFlag.objects.filter(transaction__user=request.user)
         severity = request.query_params.get("severity")
@@ -278,6 +287,7 @@ class AnomaliesView(APIView):
 class AnomalyResolveView(APIView):
     """PATCH /analytics/anomalies/{anomaly_id}"""
 
+    @extend_schema(request=AnomalyResolveSerializer, responses={200: AnomalyFlagSerializer})
     def patch(self, request, anomaly_id):
         # Scoped via the underlying transaction's ownership, not a direct
         # user FK on AnomalyFlag itself — matches Data_Shapes_Aggregations.md
@@ -292,6 +302,7 @@ class AnomalyResolveView(APIView):
 class SpendingInsightsView(APIView):
     """GET /analytics/spending-insights — same scope boundary as RecurringChargesView."""
 
+    @extend_schema(responses={200: SpendingPatternInsightSerializer(many=True)})
     def get(self, request):
         qs = SpendingPatternInsight.objects.filter(user=request.user)
         insight_type = request.query_params.get("insight_type")
@@ -316,6 +327,7 @@ class NetWorthView(APIView):
     shape-compatibility, without claiming to reconstruct a past balance.
     """
 
+    @extend_schema(responses={200: NetWorthResponseSerializer})
     def get(self, request):
         as_of = request.query_params.get("as_of") or date.today().isoformat()
         accounts = BankAccount.objects.filter(user=request.user, is_active=True)
@@ -377,6 +389,7 @@ def compute_stability_score(user):
 class StabilityScoreView(APIView):
     """GET /analytics/stability-score"""
 
+    @extend_schema(responses={200: StabilityScoreResponseSerializer})
     def get(self, request):
         period = request.query_params.get("period")
         score = compute_stability_score(request.user)
