@@ -8,9 +8,7 @@ class AdminUser(models.Model):
     name = models.CharField(max_length=255)
     email = models.EmailField(max_length=255, unique=True)
     password_hash = models.CharField(max_length=255)
-    role = models.CharField(
-        max_length=50, default="reviewer"
-    )  # e.g., 'reviewer', 'manager', 'admin'
+    role = models.CharField(max_length=50, default="reviewer")  # reviewer | super_admin
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -21,5 +19,13 @@ class AdminUser(models.Model):
 
     @property
     def is_super_admin(self):
-        """Quick operational check for high-clearance management actions."""
-        return self.role == "admin"
+        """
+        Quick operational check for high-clearance management actions
+        (e.g. product catalog writes — Data_Shapes_Administration.md's role
+        split). Previously compared against role == "admin", a value that
+        never actually occurs anywhere in the documented role set
+        (reviewer | super_admin — Data_Shapes_Administration.md, DB_Schema.md)
+        — meaning this always returned False for a real super_admin. Fixed
+        to match the documented value.
+        """
+        return self.role == "super_admin"

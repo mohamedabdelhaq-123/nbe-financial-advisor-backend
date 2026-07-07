@@ -2,6 +2,12 @@ from django.urls import path
 
 from core.ask_view import ask
 from core.views import (
+    AdminFeedbackListView,
+    AdminIssueListView,
+    AdminIssueUpdateView,
+    AdminLoginView,
+    AdminProductDetailView,
+    AdminProductListCreateView,
     AnomaliesView,
     AnomalyResolveView,
     BankAccountDetailView,
@@ -106,4 +112,11 @@ urlpatterns = [
     # 10. Recommendations (API_Endpoints_1.md §10)
     path("recommendations/", RecommendationsView.as_view()),
     path("recommendations/<uuid:recommendation_id>/feedback/", RecommendationFeedbackView.as_view()),
+    # 12. Administration [admin] (API_Endpoints_1.md §12)
+    path("admin/auth/login/", AdminLoginView.as_view()),
+    path("admin/feedback/", AdminFeedbackListView.as_view()),
+    path("admin/issues/", AdminIssueListView.as_view()),
+    path("admin/issues/<uuid:issue_id>/", AdminIssueUpdateView.as_view()),
+    path("admin/products/", AdminProductListCreateView.as_view()),
+    path("admin/products/<uuid:product_id>/", AdminProductDetailView.as_view()),
 ]

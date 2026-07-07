@@ -71,8 +71,14 @@ REST_FRAMEWORK = {
     # Every endpoint requires a valid JWT by default (API Design Guidelines §8);
     # individual views (signup/login/refresh, and the health/ping/ask dev probes)
     # opt out explicitly with AllowAny rather than the API being open by default.
+    # UserJWTAuthentication (not simplejwt's raw JWTAuthentication) explicitly
+    # rejects admin tokens — see core/authentication.py's module docstring —
+    # so a token issued to an AdminUser can never authenticate as a regular
+    # user here, structurally, not just because the two id spaces happen not
+    # to collide. /admin/* views override this with AdminJWTAuthentication
+    # (core/permissions.py's AdminAuthMixin).
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "core.authentication.UserJWTAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
