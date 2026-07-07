@@ -25,3 +25,5 @@ def ping(request):
         return JsonResponse({"error": "use POST"}, status=405)
     row = Ping.objects.create()
     return JsonResponse({"created_id": row.id, "ping_count": Ping.objects.count()})
+
+x=1;y=2  # ci-fail-test: intentionally bad formatting
