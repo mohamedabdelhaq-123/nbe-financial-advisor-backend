@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0               # TruffleHog needs full history
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tools
+        run: pip install ruff black -r requirements.txt
+
+      - name: Lint (Ruff)
+        run: ruff check .
+
+      - name: Format check (Black)
+        run: black --check .
+
+      - name: Django system check
+        run: python manage.py check
+        env:
+          POSTGRES_DB: ci_db
+          POSTGRES_USER: ci_user
+          POSTGRES_PASSWORD: ci_pass
+
+      - name: OpenAPI schema generates
+        run: python manage.py spectacular --file openapi.yaml
+        env:
+          POSTGRES_DB: ci_db
+          POSTGRES_USER: ci_user
+          POSTGRES_PASSWORD: ci_pass
+
+      - name: Secret scan (TruffleHog)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --only-verified
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (layer caching)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
