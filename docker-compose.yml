@@ -18,7 +18,7 @@ services:
       context: .
       args:
         BUILD_ENV: ${BUILD_ENV:-development}
-    command: sh -c "python manage.py migrate && gunicorn config.wsgi:application --bind 0.0.0.0:8000"
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-appdb}
       POSTGRES_USER: ${POSTGRES_USER:-appuser}
@@ -27,6 +27,9 @@ services:
       POSTGRES_PORT: 5432
       DJANGO_DEBUG: ${DJANGO_DEBUG:-1}
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+    volumes:
+      - .:/app
+      - /app/.venv  # or wherever your venv/site-packages live, see note below
     ports:
       - "8000:8000"
     depends_on:
