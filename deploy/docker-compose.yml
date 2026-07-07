@@ -100,6 +100,33 @@ services:
   #     - "8000"                        # internal only — Pattern A
   #   restart: unless-stopped
 
+  # ── vLLM (PARKED — enable when a GPU machine is available) ──────────────
+  # Serves the real model with an OpenAI-compatible API. Requires a GPU +
+  # nvidia-container-toolkit on the host. Until then, the AI service uses
+  # mock mode / OpenAI (USE_MOCK_LLM). Enabling this is CONFIG ONLY — no code changes.
+  #
+  # vllm:
+  #   image: vllm/vllm-openai:latest        # ⚠️ PIN an exact tag/digest before real use
+  #   command: ["--model", "${MODEL_NAME}"]  # e.g. a model that fits the GPU's VRAM
+  #   volumes:
+  #     - ./models:/models                   # pre-fetched weights (offline prod can't download)
+  #   expose:
+  #     - "8000"                             # internal only — never published (Pattern A)
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 10
+  #     start_period: 300s                   # weights take minutes to load
+
 volumes:
   pgdata:
   seaweed_data:
+  # models:                                  # uncomment with vllm service above
