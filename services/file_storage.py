@@ -52,3 +52,58 @@ def delete_prefix(prefix: str) -> None:
     here since nothing is actually written to any backing store yet.
     """
     return None
+
+
+def get_onboarding_templates() -> list[dict]:
+    """
+    Mock for reading pfm-reference-data/onboarding-templates/*.json
+    (File_System_Structure.md §4) — the 3-5 hand-authored starter templates
+    backing GET /budget/starter-templates. Real implementation reads these as
+    versioned JSON files from SeaweedFS, edited out-of-band by whoever owns
+    the reference data, never through the app's own write paths (§4's "read-
+    only from the application's perspective at request time"); this mock
+    hardcodes the same shape instead of reading from a file. Each template's
+    allocations sum to exactly 100, matching the percentage convention
+    (API Design Guidelines §3) every allocation set in the system follows.
+    """
+    return [
+        {
+            "template_key": "balanced",
+            "name": "Balanced",
+            "description": "An even split across essentials, savings, and lifestyle spending.",
+            "allocations": [
+                {"category": "housing", "allocated_percentage": 30},
+                {"category": "food", "allocated_percentage": 15},
+                {"category": "transport", "allocated_percentage": 10},
+                {"category": "savings", "allocated_percentage": 20},
+                {"category": "lifestyle", "allocated_percentage": 15},
+                {"category": "other", "allocated_percentage": 10},
+            ],
+        },
+        {
+            "template_key": "aggressive_savings",
+            "name": "Aggressive Savings",
+            "description": "Minimizes discretionary spending to maximize savings rate.",
+            "allocations": [
+                {"category": "housing", "allocated_percentage": 30},
+                {"category": "food", "allocated_percentage": 12},
+                {"category": "transport", "allocated_percentage": 8},
+                {"category": "savings", "allocated_percentage": 35},
+                {"category": "lifestyle", "allocated_percentage": 5},
+                {"category": "other", "allocated_percentage": 10},
+            ],
+        },
+        {
+            "template_key": "comfortable",
+            "name": "Comfortable",
+            "description": "More room for lifestyle spending, with a lighter savings target.",
+            "allocations": [
+                {"category": "housing", "allocated_percentage": 30},
+                {"category": "food", "allocated_percentage": 15},
+                {"category": "transport", "allocated_percentage": 10},
+                {"category": "savings", "allocated_percentage": 10},
+                {"category": "lifestyle", "allocated_percentage": 25},
+                {"category": "other", "allocated_percentage": 10},
+            ],
+        },
+    ]

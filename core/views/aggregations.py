@@ -340,37 +340,49 @@ class NetWorthView(APIView):
         )
 
 
-class StabilityScoreView(APIView):
+def compute_stability_score(user):
     """
-    GET /analytics/stability-score
+    Shared by StabilityScoreView below and the Budgets domain's Dashboard
+    aggregate (core/views/budgets.py) — factored out here rather than
+    duplicated, per System_Architecture.md §4's "if a number can be computed
+    from transactions, it is computed, not duplicated" rule. Returns None
+    when there isn't enough data (fewer than 2 months of inflow), letting
+    each caller decide how to represent that in its own response shape.
 
     A simple, real (not AI-mocked) heuristic over actual inflow data: the
     coefficient of variation of the last 6 months' total credit inflow,
-    inverted into a 0-100 score. This is intentionally simple arithmetic,
-    not a statistical/ML model — good enough to exercise the endpoint
-    end-to-end against real data; a more sophisticated model can replace
-    just this function's body later without changing the response shape.
+    inverted into a 0-100 score. Intentionally simple arithmetic, not a
+    statistical/ML model — good enough to exercise real data end-to-end; a
+    more sophisticated model can replace just this function's body later
+    without changing either caller's response shape.
     """
+    monthly_inflows = list(
+        Transaction.objects.filter(user=user, transaction_type="credit")
+        .annotate(month=TruncMonth("transaction_date"))
+        .values("month")
+        .annotate(total=Sum("amount"))
+        .order_by("-month")[:6]
+        .values_list("total", flat=True)
+    )
+    if len(monthly_inflows) < 2:
+        return None
+
+    amounts = [float(a) for a in monthly_inflows]
+    mean = sum(amounts) / len(amounts)
+    variance = sum((a - mean) ** 2 for a in amounts) / len(amounts)
+    coefficient_of_variation = (variance**0.5 / mean) if mean else 1.0
+    return max(0.0, min(100.0, round((1 - coefficient_of_variation) * 100, 1)))
+
+
+class StabilityScoreView(APIView):
+    """GET /analytics/stability-score"""
 
     def get(self, request):
         period = request.query_params.get("period")
-        monthly_inflows = list(
-            Transaction.objects.filter(user=request.user, transaction_type="credit")
-            .annotate(month=TruncMonth("transaction_date"))
-            .values("month")
-            .annotate(total=Sum("amount"))
-            .order_by("-month")[:6]
-            .values_list("total", flat=True)
-        )
-        if len(monthly_inflows) < 2:
+        score = compute_stability_score(request.user)
+        if score is None:
             return Response(
                 {"score": None, "label": "insufficient_data", "computed_for_period": period or "all"}
             )
-
-        amounts = [float(a) for a in monthly_inflows]
-        mean = sum(amounts) / len(amounts)
-        variance = sum((a - mean) ** 2 for a in amounts) / len(amounts)
-        coefficient_of_variation = (variance**0.5 / mean) if mean else 1.0
-        score = max(0.0, min(100.0, round((1 - coefficient_of_variation) * 100, 1)))
         label = "stable" if score >= 70 else "variable" if score >= 40 else "unstable"
         return Response({"score": score, "label": label, "computed_for_period": period or "last_6_months"})

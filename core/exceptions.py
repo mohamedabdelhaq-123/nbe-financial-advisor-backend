@@ -15,8 +15,23 @@ current and future view gets both fixes for free instead of re-implementing
 them per view.
 """
 
+from rest_framework.exceptions import APIException
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.views import exception_handler as drf_default_exception_handler
+
+
+class ConflictError(APIException):
+    """
+    409 — for the handful of "this already exists, use PATCH instead" cases
+    documented in the API (e.g. POST /budget when a plan already exists —
+    Data_Shapes_Budgets.md: "Rejected 409 if a budgets row already exists").
+    DRF has no built-in exception for this status code (unlike 404/403/400),
+    so it's defined once here for any endpoint that needs it.
+    """
+
+    status_code = 409
+    default_detail = "This resource already exists."
+    default_code = "conflict"
 
 
 class BusinessRuleError(DRFValidationError):

@@ -11,6 +11,15 @@ from core.views.aggregations import (
     TransactionListCreateView,
 )
 from core.views.auth import LoginView, LogoutView, RefreshView, SignupView
+from core.views.budgets import (
+    BudgetHistoryView,
+    BudgetProgressView,
+    BudgetView,
+    DashboardGoalView,
+    DashboardView,
+    SavingsProgressView,
+    StarterTemplatesView,
+)
 from core.views.health import db_check, health, ping
 from core.views.profile import (
     BankAccountDetailView,
@@ -55,4 +64,11 @@ __all__ = [
     "SpendingInsightsView",
     "NetWorthView",
     "StabilityScoreView",
+    "BudgetView",
+    "BudgetHistoryView",
+    "BudgetProgressView",
+    "SavingsProgressView",
+    "StarterTemplatesView",
+    "DashboardView",
+    "DashboardGoalView",
 ]
