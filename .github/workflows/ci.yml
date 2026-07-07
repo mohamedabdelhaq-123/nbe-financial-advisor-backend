@@ -32,6 +32,7 @@ jobs:
           POSTGRES_DB: ci_db
           POSTGRES_USER: ci_user
           POSTGRES_PASSWORD: ci_pass
+          AI_SERVICE_TOKEN: ci-placeholder-not-a-real-secret
 
       - name: OpenAPI schema generates
         run: python manage.py spectacular --file openapi.yaml
@@ -39,6 +40,7 @@ jobs:
           POSTGRES_DB: ci_db
           POSTGRES_USER: ci_user
           POSTGRES_PASSWORD: ci_pass
+          AI_SERVICE_TOKEN: ci-placeholder-not-a-real-secret
 
       - name: Secret scan (TruffleHog)
         uses: trufflesecurity/trufflehog@main

@@ -15,8 +15,8 @@ from pathlib import Path
 
 # ── Fail-fast env validation ──────────────────────────────────────────────────
 # The app refuses to start if any required env var is missing. This surfaces
-# misconfigurations immediately rather than at first DB query.
-_REQUIRED_ENV = ["POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"]
+# misconfigurations immediately rather than at first DB query or API call.
+_REQUIRED_ENV = ["POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD", "AI_SERVICE_TOKEN"]
 _missing = [v for v in _REQUIRED_ENV if not os.environ.get(v)]
 if _missing:
     raise RuntimeError(
