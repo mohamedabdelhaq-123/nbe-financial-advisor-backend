@@ -26,6 +26,8 @@ from core.views import (
     MeView,
     MonthlySummariesView,
     NetWorthView,
+    RecommendationFeedbackView,
+    RecommendationsView,
     RecurringChargesView,
     RefreshView,
     SavingsProgressView,
@@ -101,4 +103,7 @@ urlpatterns = [
     # 11. Feedback & Support (API_Endpoints_1.md §11)
     path("feedback/", FeedbackCreateView.as_view()),
     path("issues/", IssueListCreateView.as_view()),
+    # 10. Recommendations (API_Endpoints_1.md §10)
+    path("recommendations/", RecommendationsView.as_view()),
+    path("recommendations/<uuid:recommendation_id>/feedback/", RecommendationFeedbackView.as_view()),
 ]

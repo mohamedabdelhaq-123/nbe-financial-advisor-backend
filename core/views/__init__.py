@@ -36,6 +36,7 @@ from core.views.profile import (
     MePreferencesView,
     MeView,
 )
+from core.views.recommendation import RecommendationFeedbackView, RecommendationsView
 from core.views.statements import (
     StatementDetailView,
     StatementListCreateView,
@@ -84,4 +85,6 @@ __all__ = [
     "ConversationAttachmentsView",
     "FeedbackCreateView",
     "IssueListCreateView",
+    "RecommendationsView",
+    "RecommendationFeedbackView",
 ]

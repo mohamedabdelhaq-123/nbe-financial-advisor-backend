@@ -10,7 +10,7 @@ when the mock body is swapped for a real request.
 
 Functions are added incrementally, one per checkpoint that needs them (see
 PLAN.md) — normalize() (Statements checkpoint), chat() (Conversations
-checkpoint).
+checkpoint), match_recommendations() (Recommendation checkpoint).
 """
 
 import random
@@ -112,3 +112,51 @@ def chat(content: str, budget=None) -> dict:
         "widget": {"type": None, "payload": None},
         "references": [],
     }
+
+
+def match_recommendations(query: str, active_products, top_k: int = 5) -> list[dict]:
+    """
+    Mock for POST /internal/recommendations/match. Real implementation: an
+    offline embedding model computes the query's embedding, and pgvector's
+    HNSW index over `problem_statements` finds the closest matches by cosine
+    similarity (Data_Governance_Specs.md §6, DB_Schema.md's problem_statements
+    table — itself AI-service/Alembic-owned, not written to from here). No
+    local embedding model is wired up, so this mock ranks products by a
+    simple case-insensitive keyword-overlap score against
+    title/description/tags/categories instead of a real vector search — same
+    "soft suggestion, never a guarantee" spirit (§6's rule), not a real RAG
+    pipeline. `active_products` is passed in pre-filtered (is_active=True) —
+    this module doesn't query the DB itself, matching the real AI service's
+    stateless-request-handling boundary (System_Architecture.md §2).
+
+    Returns a list of {"product": <the Product instance>, "similarity_score": float},
+    already sorted best-match-first and capped at `top_k`.
+    """
+    if not query:
+        # Profile/goal-driven fallback with no query text: there's no real
+        # ranking signal to fake here, so this just returns the first
+        # `top_k` active products with a flat, clearly-synthetic
+        # similarity_score — a real implementation would rank by the user's
+        # profile/goal signals instead (Data_Governance_Specs.md §6: "Reads
+        # contextual signals from Profile and Budgets when matching is
+        # profile-driven rather than query-driven").
+        return [{"product": product, "similarity_score": 0.5} for product in active_products[:top_k]]
+
+    query_terms = query.lower().split()
+    scored = []
+    for product in active_products:
+        haystack = " ".join(
+            [
+                product.title.lower(),
+                (product.description or "").lower(),
+                " ".join(product.tags or []).lower(),
+                " ".join(product.categories or []).lower(),
+            ]
+        )
+        match_count = sum(1 for term in query_terms if term in haystack)
+        if match_count:
+            similarity_score = min(0.99, 0.5 + 0.1 * match_count)
+            scored.append((similarity_score, product))
+
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return [{"product": product, "similarity_score": score} for score, product in scored[:top_k]]
