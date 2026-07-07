@@ -6,8 +6,8 @@ from core.ask_view import ask
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("health/", views.health),   # is the app up?
-    path("db/", views.db_check),      # can it reach the database?
-    path("ping/", views.ping),        # POST -> write one row
-    path("ask/", ask),                # GET ?q=... -> AI service reply
+    path("health/", views.health),  # is the app up?
+    path("db/", views.db_check),  # can it reach the database?
+    path("ping/", views.ping),  # POST -> write one row
+    path("ask/", ask),  # GET ?q=... -> AI service reply
 ]
