@@ -49,9 +49,12 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.postgres",
     # API
     "rest_framework",
     "drf_spectacular",
+    'django_extensions',        # show_urls, shell_plus, etc.
+    'storages',                 # django-storages (S3/SeaweedFS backend)
     # Project apps
     "core",
 ]
