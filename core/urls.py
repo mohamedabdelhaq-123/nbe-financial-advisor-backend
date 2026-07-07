@@ -12,6 +12,10 @@ from core.views import (
     MeView,
     RefreshView,
     SignupView,
+    StatementDetailView,
+    StatementListCreateView,
+    StatementNormalizedView,
+    StatementOcrResultView,
     db_check,
     health,
     ping,
@@ -37,4 +41,9 @@ urlpatterns = [
     # 3. Bank Accounts (API_Endpoints_1.md §3)
     path("accounts/", BankAccountListCreateView.as_view()),
     path("accounts/<uuid:account_id>/", BankAccountDetailView.as_view()),
+    # 4. Statements & Document Ingestion (API_Endpoints_1.md §4)
+    path("statements/", StatementListCreateView.as_view()),
+    path("statements/<uuid:statement_id>/", StatementDetailView.as_view()),
+    path("statements/<uuid:statement_id>/ocr-result/", StatementOcrResultView.as_view()),
+    path("statements/<uuid:statement_id>/normalized/", StatementNormalizedView.as_view()),
 ]

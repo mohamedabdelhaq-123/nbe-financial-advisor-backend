@@ -8,6 +8,12 @@ from core.views.profile import (
     MePreferencesView,
     MeView,
 )
+from core.views.statements import (
+    StatementDetailView,
+    StatementListCreateView,
+    StatementNormalizedView,
+    StatementOcrResultView,
+)
 
 __all__ = [
     "health",
@@ -23,4 +29,8 @@ __all__ = [
     "MeConsentRevokeView",
     "BankAccountListCreateView",
     "BankAccountDetailView",
+    "StatementListCreateView",
+    "StatementDetailView",
+    "StatementOcrResultView",
+    "StatementNormalizedView",
 ]
