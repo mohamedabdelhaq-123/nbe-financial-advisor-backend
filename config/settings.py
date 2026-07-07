@@ -82,7 +82,23 @@ REST_FRAMEWORK = {
     # as 422 (semantic/business-rule failures) rather than DRF's default 400 —
     # see core/exceptions.py for the full rationale.
     "EXCEPTION_HANDLER": "core.exceptions.api_exception_handler",
+    # DRF's LimitOffsetPagination only activates when it can resolve a limit;
+    # with PAGE_SIZE unset (None), a request with no explicit ?limit= param
+    # gets no pagination at all — a bare array instead of the documented
+    # {count,next,previous,results} envelope (API Design Guidelines §5).
+    # Setting this makes every view using LimitOffsetPagination consistently
+    # paginated by default, matching every endpoint documented as
+    # "Pagination: Offset" in the Data Shapes docs.
+    "PAGE_SIZE": 20,
 }
+
+# rest_framework.W001 warns about PAGE_SIZE with no DEFAULT_PAGINATION_CLASS —
+# that's deliberate here: some endpoints (e.g. GET /accounts, GET
+# /analytics/net-worth) are intentionally unpaginated (small, bounded,
+# per-user collections — see core/views/profile.py's BankAccountListCreateView
+# docstring), so pagination is opted into per-view via `pagination_class`
+# rather than applied globally.
+SILENCED_SYSTEM_CHECKS = ["rest_framework.W001"]
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "NBE Financial Advisor API",

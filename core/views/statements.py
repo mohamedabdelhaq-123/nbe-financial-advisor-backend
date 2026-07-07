@@ -101,6 +101,50 @@ def _run_mock_pipeline(statement: StatementFile) -> None:
     )
 
 
+def create_statement_from_upload(user, file_obj, account_id=None) -> StatementFile:
+    """
+    The full upload -> checksum-dedupe -> mock-pipeline flow, factored out of
+    StatementListCreateView.post() so the Conversations domain's
+    POST /chat/conversations/{id}/attachments can reuse it exactly —
+    Data_Shapes_Conversations.md: "Shortcut into the Statements pipeline...
+    same underlying processing as POST /statements". Raises the same
+    ValidationError/404 a direct upload would, so both call sites behave
+    identically (API Design Guidelines §1: "one backend, one write path").
+    """
+    if not file_obj:
+        raise ValidationError({"file": "This field is required."})
+
+    checksum = file_storage.compute_checksum(file_obj.read())
+
+    if StatementFile.objects.filter(user=user, checksum=checksum).exists():
+        # File-level duplicate-upload check (DB_Schema.md's
+        # UNIQUE(user_id, checksum)) — System_Architecture.md §8: "A
+        # secondary file-level checksum check rejects a byte-identical
+        # re-upload before OCR even runs."
+        raise ValidationError(
+            {"file": "This exact file has already been uploaded."},
+            code="duplicate_statement",
+        )
+
+    account = None
+    if account_id:
+        account = get_object_or_404(BankAccount, id=account_id, user=user)
+
+    extension = file_obj.name.rsplit(".", 1)[-1].lower() if "." in file_obj.name else "bin"
+    statement_id = uuid.uuid4()
+    statement = StatementFile.objects.create(
+        id=statement_id,
+        user=user,
+        account=account,
+        seaweed_file_id=file_storage.raw_statement_key(user.id, statement_id, extension),
+        checksum=checksum,
+        status="pending",
+    )
+
+    _run_mock_pipeline(statement)
+    return statement
+
+
 class StatementListCreateView(generics.ListAPIView):
     """GET /statements, POST /statements (multipart upload)"""
 
@@ -118,40 +162,9 @@ class StatementListCreateView(generics.ListAPIView):
         return qs.order_by("-upload_date")
 
     def post(self, request, *args, **kwargs):
-        file_obj = request.FILES.get("file")
-        if not file_obj:
-            raise ValidationError({"file": "This field is required."})
-
-        checksum = file_storage.compute_checksum(file_obj.read())
-
-        if StatementFile.objects.filter(user=request.user, checksum=checksum).exists():
-            # File-level duplicate-upload check (DB_Schema.md's
-            # UNIQUE(user_id, checksum)) — System_Architecture.md §8: "A
-            # secondary file-level checksum check rejects a byte-identical
-            # re-upload before OCR even runs."
-            raise ValidationError(
-                {"file": "This exact file has already been uploaded."},
-                code="duplicate_statement",
-            )
-
-        account = None
-        account_id = request.data.get("account_id")
-        if account_id:
-            account = get_object_or_404(BankAccount, id=account_id, user=request.user)
-
-        extension = file_obj.name.rsplit(".", 1)[-1].lower() if "." in file_obj.name else "bin"
-        statement_id = uuid.uuid4()
-        statement = StatementFile.objects.create(
-            id=statement_id,
-            user=request.user,
-            account=account,
-            seaweed_file_id=file_storage.raw_statement_key(request.user.id, statement_id, extension),
-            checksum=checksum,
-            status="pending",
+        statement = create_statement_from_upload(
+            request.user, request.FILES.get("file"), account_id=request.data.get("account_id")
         )
-
-        _run_mock_pipeline(statement)
-
         return Response(StatementFileSerializer(statement).data, status=status.HTTP_202_ACCEPTED)
 
 

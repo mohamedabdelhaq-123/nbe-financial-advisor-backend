@@ -20,6 +20,12 @@ from core.views.budgets import (
     SavingsProgressView,
     StarterTemplatesView,
 )
+from core.views.conversations import (
+    ConversationAttachmentsView,
+    ConversationDetailView,
+    ConversationListCreateView,
+    ConversationMessagesView,
+)
 from core.views.health import db_check, health, ping
 from core.views.profile import (
     BankAccountDetailView,
@@ -71,4 +77,8 @@ __all__ = [
     "StarterTemplatesView",
     "DashboardView",
     "DashboardGoalView",
+    "ConversationListCreateView",
+    "ConversationDetailView",
+    "ConversationMessagesView",
+    "ConversationAttachmentsView",
 ]

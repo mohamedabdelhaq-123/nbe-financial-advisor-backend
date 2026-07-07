@@ -10,6 +10,10 @@ from core.views import (
     BudgetProgressView,
     BudgetView,
     CategoryBreakdownView,
+    ConversationAttachmentsView,
+    ConversationDetailView,
+    ConversationListCreateView,
+    ConversationMessagesView,
     DashboardGoalView,
     DashboardView,
     LoginView,
@@ -75,6 +79,14 @@ urlpatterns = [
     # 7. Dashboard (API_Endpoints_1.md §7)
     path("dashboard/", DashboardView.as_view()),
     path("dashboard/goal/", DashboardGoalView.as_view()),
+    # 9. AI Assistant / Conversations (API_Endpoints_1.md §9)
+    path("chat/conversations/", ConversationListCreateView.as_view()),
+    path("chat/conversations/<uuid:conversation_id>/", ConversationDetailView.as_view()),
+    path("chat/conversations/<uuid:conversation_id>/messages/", ConversationMessagesView.as_view()),
+    path(
+        "chat/conversations/<uuid:conversation_id>/attachments/",
+        ConversationAttachmentsView.as_view(),
+    ),
     # 8. Analytics (API_Endpoints_1.md §8)
     path("analytics/monthly-summaries/", MonthlySummariesView.as_view()),
     path("analytics/category-breakdown/", CategoryBreakdownView.as_view()),
