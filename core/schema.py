@@ -38,7 +38,6 @@ class AdminJWTAuthenticationScheme(OpenApiAuthenticationExtension):
             "scheme": "bearer",
             "bearerFormat": "JWT",
             "description": (
-                "Admin token from POST /admin/auth/login. "
-                "Never accepted on end-user routes."
+                "Admin token from POST /admin/auth/login. " "Never accepted on end-user routes."
             ),
         }

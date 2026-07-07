@@ -39,8 +39,7 @@ def normalize(statement_file) -> dict:
         {
             "transaction_date": (date.today() - timedelta(days=rng.randrange(1, 60))).isoformat(),
             "merchant_raw": (
-                f"{merchants[rng.randrange(len(merchants))]} "
-                f"#{statement_file.id.hex[:6]}"
+                f"{merchants[rng.randrange(len(merchants))]} " f"#{statement_file.id.hex[:6]}"
             ),
             "category": categories[rng.randrange(len(categories))],
             "amount": round(rng.uniform(50, 5000), 2),

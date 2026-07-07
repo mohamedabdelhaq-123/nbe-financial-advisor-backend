@@ -19,6 +19,6 @@ class BudgetAllocation(models.Model):
 
     def __str__(self):
         return (
-                f"{self.category}: {self.allocated_percentage}% "
-                f"({self.allocated_amount} {self.currency})"
-            )
+            f"{self.category}: {self.allocated_percentage}% "
+            f"({self.allocated_amount} {self.currency})"
+        )
