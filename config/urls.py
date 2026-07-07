@@ -11,3 +11,5 @@ urlpatterns = [
     path("ping/", views.ping),        # POST -> write one row
     path("ask/", ask),                # GET ?q=... -> AI service reply
 ]
+
+x=1;y=2  # test: bad format for ci gate
