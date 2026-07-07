@@ -41,3 +41,5 @@ count resets to 0 — that's the difference a named volume makes.
 | `/health/` | GET    | Is the app alive? (no DB)        |
 | `/db/`     | GET    | Can it reach Postgres? + count   |
 | `/ping/`   | POST   | Write one row                    |
+
+<!-- ci-pass-test: trivial valid change to verify CI passes and approval is required -->
