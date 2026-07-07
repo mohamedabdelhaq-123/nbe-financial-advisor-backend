@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 # ── Fail-fast env validation ──────────────────────────────────────────────────
@@ -52,6 +53,7 @@ INSTALLED_APPS = [
     "django.contrib.postgres",
     # API
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",  # backs POST /auth/logout (see core/views/auth.py)
     "drf_spectacular",
     'django_extensions',        # show_urls, shell_plus, etc.
     'storages',                 # django-storages (S3/SeaweedFS backend)
@@ -59,14 +61,47 @@ INSTALLED_APPS = [
     "core",
 ]
 
+# core.User is the auth model for the whole project (see PLAN.md Checkpoint 0)
+# — AdminUser (Administration domain) is deliberately NOT wired in here, since
+# it's a structurally separate credential space (API Design Guidelines §8).
+AUTH_USER_MODEL = "core.User"
+
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    # Every endpoint requires a valid JWT by default (API Design Guidelines §8);
+    # individual views (signup/login/refresh, and the health/ping/ask dev probes)
+    # opt out explicitly with AllowAny rather than the API being open by default.
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    # Wraps every DRF error response into the single shared shape from
+    # API Design Guidelines §10, and reclassifies serializer ValidationErrors
+    # as 422 (semantic/business-rule failures) rather than DRF's default 400 —
+    # see core/exceptions.py for the full rationale.
+    "EXCEPTION_HANDLER": "core.exceptions.api_exception_handler",
 }
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "NBE Financial Advisor API",
     "VERSION": "0.1.0",
     "SERVE_INCLUDE_SCHEMA": False,
+}
+
+SIMPLE_JWT = {
+    # Short-lived access token + longer-lived, rotating refresh token — standard
+    # JWT bearer pair per API Design Guidelines §8. Rotation + blacklist-after-
+    # rotation means a stolen refresh token can only be replayed once before
+    # it's rejected, without needing a separate revocation list to maintain by hand.
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "USER_ID_FIELD": "id",
+    "USER_ID_CLAIM": "user_id",
 }
 
 MIDDLEWARE = [
