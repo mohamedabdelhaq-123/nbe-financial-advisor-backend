@@ -94,4 +94,12 @@ class AdminProductUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Product
-        fields = ["title", "description", "categories", "tags", "features", "external_link", "is_active"]
+        fields = [
+            "title",
+            "description",
+            "categories",
+            "tags",
+            "features",
+            "external_link",
+            "is_active",
+        ]

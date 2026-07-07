@@ -38,7 +38,10 @@ def normalize(statement_file) -> dict:
     transactions = [
         {
             "transaction_date": (date.today() - timedelta(days=rng.randrange(1, 60))).isoformat(),
-            "merchant_raw": f"{merchants[rng.randrange(len(merchants))]} #{statement_file.id.hex[:6]}",
+            "merchant_raw": (
+                f"{merchants[rng.randrange(len(merchants))]} "
+                f"#{statement_file.id.hex[:6]}"
+            ),
             "category": categories[rng.randrange(len(categories))],
             "amount": round(rng.uniform(50, 5000), 2),
             "transaction_type": "debit",
@@ -140,7 +143,9 @@ def match_recommendations(query: str, active_products, top_k: int = 5) -> list[d
         # profile/goal signals instead (Data_Governance_Specs.md §6: "Reads
         # contextual signals from Profile and Budgets when matching is
         # profile-driven rather than query-driven").
-        return [{"product": product, "similarity_score": 0.5} for product in active_products[:top_k]]
+        return [
+            {"product": product, "similarity_score": 0.5} for product in active_products[:top_k]
+        ]
 
     query_terms = query.lower().split()
     scored = []

@@ -45,9 +45,7 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
 
 
 class BankAccountSerializer(serializers.ModelSerializer):
-    current_balance = serializers.DecimalField(
-        max_digits=14, decimal_places=2, read_only=True
-    )
+    current_balance = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
 
     class Meta:
         model = BankAccount

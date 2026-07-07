@@ -13,7 +13,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.exceptions import BusinessRuleError
-from core.models import AnomalyFlag, BankAccount, RecurringCharge, SpendingPatternInsight, Transaction
+from core.models import (
+    AnomalyFlag,
+    BankAccount,
+    RecurringCharge,
+    SpendingPatternInsight,
+    Transaction,
+)
 from core.serializers.aggregations import (
     AnomalyFlagSerializer,
     AnomalyResolveSerializer,
@@ -101,7 +107,9 @@ class TransactionListCreateView(ListAPIView):
             amount=data["amount"],
             transaction_type=data["transaction_type"],
         )
-        return Response(TransactionDetailSerializer(transaction).data, status=status.HTTP_201_CREATED)
+        return Response(
+            TransactionDetailSerializer(transaction).data, status=status.HTTP_201_CREATED
+        )
 
 
 class TransactionDetailView(mixins.RetrieveModelMixin, mixins.DestroyModelMixin, GenericAPIView):
@@ -181,20 +189,26 @@ class MonthlySummariesView(APIView):
 
         results = []
         for month in months:
-            month_qs = qs.filter(transaction_date__year=month.year, transaction_date__month=month.month)
-            total_spend = (
-                month_qs.filter(transaction_type__in=["debit", "fee"]).aggregate(t=Sum("amount"))["t"]
-                or Decimal("0")
+            month_qs = qs.filter(
+                transaction_date__year=month.year, transaction_date__month=month.month
             )
-            total_inflow = (
-                month_qs.filter(transaction_type="credit").aggregate(t=Sum("amount"))["t"] or Decimal("0")
-            )
+            total_spend = month_qs.filter(transaction_type__in=["debit", "fee"]).aggregate(
+                t=Sum("amount")
+            )["t"] or Decimal("0")
+            total_inflow = month_qs.filter(transaction_type="credit").aggregate(t=Sum("amount"))[
+                "t"
+            ] or Decimal("0")
             category_breakdown = {
                 row["category"]: row["total"]
-                for row in month_qs.exclude(category=None).values("category").annotate(total=Sum("amount"))
+                for row in month_qs.exclude(category=None)
+                .values("category")
+                .annotate(total=Sum("amount"))
             }
             top_merchants = [
-                {"merchant": row["merchant_normalized"] or row["merchant_raw"], "total": row["total"]}
+                {
+                    "merchant": row["merchant_normalized"] or row["merchant_raw"],
+                    "total": row["total"],
+                }
                 for row in month_qs.exclude(merchant_raw=None)
                 .values("merchant_normalized", "merchant_raw")
                 .annotate(total=Sum("amount"))
@@ -232,19 +246,28 @@ class CategoryBreakdownView(APIView):
         except ValueError as exc:
             raise ValidationError({"period": "Expected format YYYY-MM."}) from exc
 
-        qs = Transaction.objects.filter(user=request.user, transaction_date__year=year, transaction_date__month=month)
+        qs = Transaction.objects.filter(
+            user=request.user, transaction_date__year=year, transaction_date__month=month
+        )
         account_id = request.query_params.get("account_id")
         if account_id:
             qs = qs.filter(account_id=account_id)
 
-        rows = list(qs.exclude(category=None).values("category").annotate(total=Sum("amount")).order_by("-total"))
+        rows = list(
+            qs.exclude(category=None)
+            .values("category")
+            .annotate(total=Sum("amount"))
+            .order_by("-total")
+        )
         grand_total = sum((row["total"] for row in rows), Decimal("0"))
 
         breakdown = [
             {
                 "category": row["category"],
                 "amount": row["total"],
-                "percentage_of_total": round(float(row["total"] / grand_total * 100), 2) if grand_total else 0,
+                "percentage_of_total": (
+                    round(float(row["total"] / grand_total * 100), 2) if grand_total else 0
+                ),
             }
             for row in rows
         ]
@@ -348,7 +371,11 @@ class NetWorthView(APIView):
         ]
         total = sum((a["balance"] for a in per_account), Decimal("0"))
         return Response(
-            {"as_of_date": as_of, "total_across_accounts": total, "per_account_breakdown": per_account}
+            {
+                "as_of_date": as_of,
+                "total_across_accounts": total,
+                "per_account_breakdown": per_account,
+            }
         )
 
 
@@ -395,7 +422,13 @@ class StabilityScoreView(APIView):
         score = compute_stability_score(request.user)
         if score is None:
             return Response(
-                {"score": None, "label": "insufficient_data", "computed_for_period": period or "all"}
+                {
+                    "score": None,
+                    "label": "insufficient_data",
+                    "computed_for_period": period or "all",
+                }
             )
         label = "stable" if score >= 70 else "variable" if score >= 40 else "unstable"
-        return Response({"score": score, "label": label, "computed_for_period": period or "last_6_months"})
+        return Response(
+            {"score": score, "label": label, "computed_for_period": period or "last_6_months"}
+        )

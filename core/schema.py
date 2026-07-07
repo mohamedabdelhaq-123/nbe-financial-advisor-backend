@@ -19,7 +19,10 @@ class UserJWTAuthenticationScheme(OpenApiAuthenticationExtension):
             "type": "http",
             "scheme": "bearer",
             "bearerFormat": "JWT",
-            "description": "End-user token from POST /auth/login or /auth/signup. Rejected on /admin/* routes.",
+            "description": (
+                "End-user token from POST /auth/login or /auth/signup. "
+                "Rejected on /admin/* routes."
+            ),
         }
 
 
@@ -34,5 +37,8 @@ class AdminJWTAuthenticationScheme(OpenApiAuthenticationExtension):
             "type": "http",
             "scheme": "bearer",
             "bearerFormat": "JWT",
-            "description": "Admin token from POST /admin/auth/login. Never accepted on end-user routes.",
+            "description": (
+                "Admin token from POST /admin/auth/login. "
+                "Never accepted on end-user routes."
+            ),
         }

@@ -111,7 +111,9 @@ urlpatterns = [
     path("issues/", IssueListCreateView.as_view()),
     # 10. Recommendations (API_Endpoints_1.md §10)
     path("recommendations/", RecommendationsView.as_view()),
-    path("recommendations/<uuid:recommendation_id>/feedback/", RecommendationFeedbackView.as_view()),
+    path(
+        "recommendations/<uuid:recommendation_id>/feedback/", RecommendationFeedbackView.as_view()
+    ),
     # 12. Administration [admin] (API_Endpoints_1.md §12)
     path("admin/auth/login/", AdminLoginView.as_view()),
     path("admin/feedback/", AdminFeedbackListView.as_view()),

@@ -59,9 +59,9 @@ def _saved_so_far(user, since_date):
     """
     txns = Transaction.objects.filter(user=user, transaction_date__gte=since_date)
     inflow = txns.filter(transaction_type="credit").aggregate(t=Sum("amount"))["t"] or Decimal("0")
-    outflow = (
-        txns.filter(transaction_type__in=["debit", "fee"]).aggregate(t=Sum("amount"))["t"] or Decimal("0")
-    )
+    outflow = txns.filter(transaction_type__in=["debit", "fee"]).aggregate(t=Sum("amount"))[
+        "t"
+    ] or Decimal("0")
     return max(Decimal("0"), inflow - outflow)
 
 
@@ -104,7 +104,9 @@ def _snapshot(budget):
     return {
         "goal": {
             "name": budget.savings_goal_name,
-            "target_amount": float(budget.goal_target_amount) if budget.goal_target_amount is not None else None,
+            "target_amount": (
+                float(budget.goal_target_amount) if budget.goal_target_amount is not None else None
+            ),
             "target_months": budget.goal_timeline_months,
         },
         "allocations": [
@@ -152,7 +154,9 @@ class BudgetView(APIView):
         if Budget.objects.filter(user=request.user).exists():
             # One plan per user, no parallel rows (Data_Governance_Specs.md
             # §4) — PATCH is the only way to change an existing plan.
-            raise ConflictError("A budget plan already exists for this user. Use PATCH /budget to update it.")
+            raise ConflictError(
+                "A budget plan already exists for this user. Use PATCH /budget to update it."
+            )
 
         serializer = BudgetCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -171,7 +175,9 @@ class BudgetView(APIView):
 
     @extend_schema(request=BudgetUpdateSerializer, responses={200: BudgetResponseSerializer})
     def patch(self, request):
-        budget = get_object_or_404(Budget.objects.prefetch_related("allocations"), user=request.user)
+        budget = get_object_or_404(
+            Budget.objects.prefetch_related("allocations"), user=request.user
+        )
         serializer = BudgetUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
@@ -194,7 +200,9 @@ class BudgetView(APIView):
         if "allocations" in data:
             # Full replacement, not a merge (Data_Shapes_Budgets.md).
             budget.allocations.all().delete()
-            _apply_allocations(budget, data["allocations"], request.user.monthly_income or Decimal("0"))
+            _apply_allocations(
+                budget, data["allocations"], request.user.monthly_income or Decimal("0")
+            )
 
         budget.refresh_from_db()
         return Response(_serialize_budget(budget))
@@ -226,7 +234,9 @@ class BudgetProgressView(APIView):
 
     @extend_schema(responses={200: BudgetProgressResponseSerializer})
     def get(self, request):
-        budget = get_object_or_404(Budget.objects.prefetch_related("allocations"), user=request.user)
+        budget = get_object_or_404(
+            Budget.objects.prefetch_related("allocations"), user=request.user
+        )
         period = request.query_params.get("period") or date.today().strftime("%Y-%m")
         year, month = (int(p) for p in period.split("-"))
 
@@ -240,7 +250,9 @@ class BudgetProgressView(APIView):
                 transaction_type__in=["debit", "fee"],
             ).aggregate(t=Sum("amount"))["t"] or Decimal("0")
 
-            percentage_used = float(actual / alloc.allocated_amount * 100) if alloc.allocated_amount else 0.0
+            percentage_used = (
+                float(actual / alloc.allocated_amount * 100) if alloc.allocated_amount else 0.0
+            )
             if percentage_used >= 100:
                 category_status = "over_budget"
             elif percentage_used >= self.APPROACHING_LIMIT_THRESHOLD:
@@ -273,7 +285,9 @@ class SavingsProgressView(APIView):
         since = budget.created_at.date()
         saved_so_far = _saved_so_far(request.user, since)
         target = budget.goal_target_amount
-        percentage_complete = float(min(Decimal("100"), saved_so_far / target * 100)) if target else 0.0
+        percentage_complete = (
+            float(min(Decimal("100"), saved_so_far / target * 100)) if target else 0.0
+        )
 
         months_elapsed = max(1, _months_elapsed(since, date.today()))
         monthly_rate = saved_so_far / months_elapsed
@@ -356,29 +370,35 @@ class DashboardView(APIView):
                         "current_month_spend": Decimal("0"),
                         "current_month_inflow": Decimal("0"),
                     },
-                    "net_worth": {"total_across_accounts": Decimal("0"), "as_of_date": date.today()},
+                    "net_worth": {
+                        "total_across_accounts": Decimal("0"),
+                        "as_of_date": date.today(),
+                    },
                     "has_plan": False,
                 }
             )
 
         today = date.today()
         month_txns = Transaction.objects.filter(
-            user=request.user, transaction_date__year=today.year, transaction_date__month=today.month
+            user=request.user,
+            transaction_date__year=today.year,
+            transaction_date__month=today.month,
         )
-        current_month_spend = (
-            month_txns.filter(transaction_type__in=["debit", "fee"]).aggregate(t=Sum("amount"))["t"]
-            or Decimal("0")
-        )
-        current_month_inflow = (
-            month_txns.filter(transaction_type="credit").aggregate(t=Sum("amount"))["t"] or Decimal("0")
-        )
+        current_month_spend = month_txns.filter(transaction_type__in=["debit", "fee"]).aggregate(
+            t=Sum("amount")
+        )["t"] or Decimal("0")
+        current_month_inflow = month_txns.filter(transaction_type="credit").aggregate(
+            t=Sum("amount")
+        )["t"] or Decimal("0")
 
         allocations_summary = []
         for alloc in budget.allocations.all():
-            actual = month_txns.filter(category=alloc.category, transaction_type__in=["debit", "fee"]).aggregate(
-                t=Sum("amount")
-            )["t"] or Decimal("0")
-            percentage_used = float(actual / alloc.allocated_amount * 100) if alloc.allocated_amount else 0.0
+            actual = month_txns.filter(
+                category=alloc.category, transaction_type__in=["debit", "fee"]
+            ).aggregate(t=Sum("amount"))["t"] or Decimal("0")
+            percentage_used = (
+                float(actual / alloc.allocated_amount * 100) if alloc.allocated_amount else 0.0
+            )
             allocations_summary.append(
                 {
                     "category": alloc.category,
@@ -415,13 +435,17 @@ class DashboardGoalView(APIView):
     holding any separate goal-update logic of its own.
     """
 
-    @extend_schema(request=DashboardGoalRequestSerializer, responses={200: DashboardGoalResponseSerializer})
+    @extend_schema(
+        request=DashboardGoalRequestSerializer, responses={200: DashboardGoalResponseSerializer}
+    )
     def patch(self, request):
         goal_data = request.data.get("goal")
         if not goal_data:
             raise ValidationError({"goal": "This field is required."})
 
-        budget = get_object_or_404(Budget.objects.prefetch_related("allocations"), user=request.user)
+        budget = get_object_or_404(
+            Budget.objects.prefetch_related("allocations"), user=request.user
+        )
         serializer = BudgetUpdateSerializer(data={"goal": goal_data})
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data

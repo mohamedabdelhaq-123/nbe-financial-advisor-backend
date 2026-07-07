@@ -18,7 +18,9 @@ from core.serializers.feedback import (
 # Data_Shapes_Feedback.md: "for message, belong to a conversation owned by
 # the requesting user".
 _OWNERSHIP_CHECKS = {
-    "transaction": lambda target_id, user: Transaction.objects.filter(id=target_id, user=user).exists(),
+    "transaction": lambda target_id, user: Transaction.objects.filter(
+        id=target_id, user=user
+    ).exists(),
     "message": lambda target_id, user: Message.objects.filter(
         id=target_id, conversation__user=user
     ).exists(),
@@ -70,5 +72,7 @@ class IssueListCreateView(generics.ListCreateAPIView):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        issue = ReportedIssue.objects.create(user=request.user, description=serializer.validated_data["description"])
+        issue = ReportedIssue.objects.create(
+            user=request.user, description=serializer.validated_data["description"]
+        )
         return Response(IssueSerializer(issue).data, status=201)

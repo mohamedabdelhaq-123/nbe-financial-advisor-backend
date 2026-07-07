@@ -29,7 +29,11 @@ class ConversationListCreateView(generics.ListCreateAPIView):
     pagination_class = LimitOffsetPagination
 
     def get_serializer_class(self):
-        return ConversationSerializer if self.request.method == "POST" else ConversationListItemSerializer
+        return (
+            ConversationSerializer
+            if self.request.method == "POST"
+            else ConversationListItemSerializer
+        )
 
     def get_queryset(self):
         qs = Conversation.objects.filter(user=self.request.user)
@@ -93,8 +97,8 @@ class ConversationMessagesView(APIView):
             200: OpenApiResponse(
                 response=MessageDoneEventSerializer,
                 description=(
-                    "text/event-stream — a sequence of {\"event\": \"token\", \"data\": str} chunks "
-                    "followed by one terminal {\"event\": \"done\", \"data\": <this shape>} event. "
+                    'text/event-stream — a sequence of {"event": "token", "data": str} chunks '
+                    'followed by one terminal {"event": "done", "data": <this shape>} event. '
                     "Not a single JSON body; documented here as the terminal event's payload only."
                 ),
             )
@@ -106,7 +110,9 @@ class ConversationMessagesView(APIView):
         serializer.is_valid(raise_exception=True)
         content = serializer.validated_data["content"]
 
-        Message.objects.create(conversation=conversation, sender="user", content=content, stage="general")
+        Message.objects.create(
+            conversation=conversation, sender="user", content=content, stage="general"
+        )
 
         # The assistant's power to change data is deliberately narrow
         # (Architectural_Guidelines.md §7) — chat never writes to Budget
@@ -131,7 +137,9 @@ class ConversationMessagesView(APIView):
         # doesn't touch it automatically, so it's bumped explicitly here.
         conversation.save()
 
-        return StreamingHttpResponse(_sse_stream(assistant_message), content_type="text/event-stream")
+        return StreamingHttpResponse(
+            _sse_stream(assistant_message), content_type="text/event-stream"
+        )
 
 
 def _sse_stream(message: Message):
@@ -204,6 +212,10 @@ class ConversationAttachmentsView(APIView):
         conversation.save()
 
         return Response(
-            {"statement_id": str(statement.id), "status": statement.status, "message_id": str(message.id)},
+            {
+                "statement_id": str(statement.id),
+                "status": statement.status,
+                "message_id": str(message.id),
+            },
             status=202,
         )

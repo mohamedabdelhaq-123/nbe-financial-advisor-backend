@@ -83,7 +83,8 @@ class BudgetHistorySerializer(serializers.ModelSerializer):
 
 
 class GoalProgressSerializer(serializers.Serializer):
-    """Read-side goal shape: months_remaining instead of target_months (API Design Guidelines §4)."""
+    """Read-side goal shape: months_remaining instead of target_months
+    (API Design Guidelines §4)."""
 
     name = serializers.CharField(allow_null=True)
     target_amount = serializers.DecimalField(max_digits=14, decimal_places=2, allow_null=True)

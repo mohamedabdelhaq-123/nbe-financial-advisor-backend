@@ -7,7 +7,10 @@ from rest_framework.views import APIView
 
 from core.models import Product, Reaction, RecommendationLog
 from core.serializers.feedback import ReactionSerializer
-from core.serializers.recommendation import RecommendationFeedbackSerializer, RecommendationItemSerializer
+from core.serializers.recommendation import (
+    RecommendationFeedbackSerializer,
+    RecommendationItemSerializer,
+)
 from services import ai_service
 
 

@@ -10,7 +10,14 @@ from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from core.models import BankAccount, StatementFile, StatementNormalized, StatementOcrResult, Transaction, UserPreference
+from core.models import (
+    BankAccount,
+    StatementFile,
+    StatementNormalized,
+    StatementOcrResult,
+    Transaction,
+    UserPreference,
+)
 from core.serializers.statements import (
     StatementFileSerializer,
     StatementNormalizedResponseSerializer,
@@ -77,7 +84,7 @@ def _run_mock_pipeline(statement: StatementFile) -> None:
             txn["duplicate_of"] = str(existing.id)
             continue
 
-        new_txn = Transaction.objects.create(
+        Transaction.objects.create(
             user=statement.user,
             account=statement.account,
             statement=statement,
@@ -193,7 +200,9 @@ class StatementDetailView(generics.RetrieveDestroyAPIView):
         preferences, _ = UserPreference.objects.get_or_create(user=instance.user)
         if not preferences.retain_raw_documents:
             file_storage.delete_prefix(f"pfm-statements-raw/{instance.user_id}/{instance.id}/")
-            file_storage.delete_prefix(f"pfm-statements-artifacts/{instance.user_id}/{instance.id}/")
+            file_storage.delete_prefix(
+                f"pfm-statements-artifacts/{instance.user_id}/{instance.id}/"
+            )
         instance.delete()
 
 

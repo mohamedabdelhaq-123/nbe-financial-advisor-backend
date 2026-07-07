@@ -147,7 +147,11 @@ class AdminProductListCreateView(AdminAuthMixin, generics.ListCreateAPIView):
         return super().get_permissions()
 
     def get_serializer_class(self):
-        return AdminProductCreateSerializer if self.request.method == "POST" else AdminProductSerializer
+        return (
+            AdminProductCreateSerializer
+            if self.request.method == "POST"
+            else AdminProductSerializer
+        )
 
     def get_queryset(self):
         # Includes inactive products — unlike the user-facing GET

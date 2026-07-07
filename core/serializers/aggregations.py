@@ -52,7 +52,14 @@ class TransactionWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Transaction
-        fields = ["transaction_date", "merchant_raw", "category", "amount", "currency", "transaction_type"]
+        fields = [
+            "transaction_date",
+            "merchant_raw",
+            "category",
+            "amount",
+            "currency",
+            "transaction_type",
+        ]
         extra_kwargs = {
             "category": {"required": False},
             "currency": {"required": False},
@@ -127,7 +134,9 @@ class MonthlySummaryItemSerializer(serializers.Serializer):
     account_id = serializers.UUIDField(allow_null=True)
     total_spend = serializers.DecimalField(max_digits=14, decimal_places=2)
     total_inflow = serializers.DecimalField(max_digits=14, decimal_places=2)
-    category_breakdown = serializers.DictField(child=serializers.DecimalField(max_digits=14, decimal_places=2))
+    category_breakdown = serializers.DictField(
+        child=serializers.DecimalField(max_digits=14, decimal_places=2)
+    )
     top_merchants = TopMerchantSerializer(many=True)
 
 

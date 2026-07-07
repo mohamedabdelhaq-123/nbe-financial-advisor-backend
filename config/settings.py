@@ -55,8 +55,8 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",  # backs POST /auth/logout (see core/views/auth.py)
     "drf_spectacular",
-    'django_extensions',        # show_urls, shell_plus, etc.
-    'storages',                 # django-storages (S3/SeaweedFS backend)
+    "django_extensions",  # show_urls, shell_plus, etc.
+    "storages",  # django-storages (S3/SeaweedFS backend)
     # Project apps
     "core",
 ]
