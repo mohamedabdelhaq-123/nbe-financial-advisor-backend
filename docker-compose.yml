@@ -24,6 +24,7 @@ services:
       POSTGRES_HOST: postgres              # <-- reach the DB by service name, not localhost
       POSTGRES_PORT: 5432
       DJANGO_DEBUG: ${DJANGO_DEBUG:-1}
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
     ports:
       - "8000:8000"
     depends_on:
