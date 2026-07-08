@@ -7,3 +7,4 @@ openapi.yaml
 deploy/.env
 .vscode/
 PLAN.md
+.aider*
