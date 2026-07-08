@@ -2,7 +2,7 @@ from django.db import connection
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from .models import Ping
+from core.models import Ping
 
 
 def health(request):
