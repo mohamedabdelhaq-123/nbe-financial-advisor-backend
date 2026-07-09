@@ -147,9 +147,9 @@ If `allocations` is included, it replaces the full set (not a partial merge) and
 
 ## GET /budget/starter-templates
 
-**Auth:** Required (still gated behind standard user auth, not public, since the suggested-template flag depends on the authenticated user's income/goal signals from onboarding) · **Scoping:** none — reference data, not user-scoped (Data Governance Specs §4; File System Structure §4) · **Query params:** none
+**Auth:** Public (`AllowAny`) — the frontend renders these during onboarding, before the user has an account/token. The templates are reference data, not user-scoped (Data Governance Specs §4; File System Structure §4), so nothing is leaked by serving them unauthenticated. The `is_suggested` flag is the only user-dependent part: when a valid token *is* present it's tailored to that user's income/dependents signals; unauthenticated (or for a user with no qualifying signals) it falls back to flagging `balanced`. · **Scoping:** none · **Query params:** none
 
-**Response `200`** — array, one flagged `is_suggested: true` based on the user's income/goal inputs from onboarding:
+**Response `200`** — array, one flagged `is_suggested: true` (tailored to the user's income/goal inputs when authenticated, else `balanced`):
 ```json
 [
   {

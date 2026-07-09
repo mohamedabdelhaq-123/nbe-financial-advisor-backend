@@ -51,6 +51,14 @@ Originally `transactions` just went back to `null` once a statement reached `pro
 
 Once `is_processing` existed, `pending_extraction`/`pending_normalization`/`pending_approval` were saying the same thing twice: `is_processing=false` already means "not actively running," so a status *name* built around "pending" was redundant with a field that already carries that meaning precisely. Renamed the four values to `extraction | normalization | approval | processed` — the status names the phase the statement is at/working toward; `is_processing` says whether that phase is live right now. A migration (`0005_alter_statementfile_status`) renames the choices/default and includes a data migration for any existing rows, since this changes stored string values, not just a Python-side constant.
 
+### Addendum — file metadata onto the list, split from transactions
+
+The inline fields ended up split across the two response tiers by weight. The **file metadata** — `file_size`/`file_type` (new columns, captured from the raw file at upload) plus the normalization facts `bank_name`/`account_hint`/`model_used`/`adjusted_at` — moved up onto the base `StatementFileSerializer`, so it rides on `GET /statements` (the list) too, not just the detail shape: a documents screen wants "which bank / what file / when parsed" per row without a follow-up call. The heavy **`transactions`** array stays on `StatementDetailSerializer` only — a paginated list has no reason to drag a full transaction array per row, and the detail route is "for the transactions." Since the metadata getters now run per list row, `latest_normalized_record` became a prefetch-friendly `cached_property` and the list queryset gained `select_related("account").prefetch_related("normalized_records")`, keeping the list at a constant handful of queries rather than N+1.
+
+### Addendum — `GET /budget/starter-templates` made public
+
+Onboarding renders the starter templates before the user has a token, so the route moved to `AllowAny`. The templates are reference data, not user-scoped, so nothing leaks; the only user-dependent bit — the `is_suggested` flag — falls back to flagging `balanced` when there's no authenticated user (or no qualifying income/dependents signals), and still tailors to `aggressive_savings` for a signed-in steady-income, no-dependents user.
+
 ---
 
 ## 3. What changed elsewhere

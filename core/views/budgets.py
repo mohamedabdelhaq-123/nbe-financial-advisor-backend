@@ -7,6 +7,7 @@ from drf_spectacular.utils import extend_schema
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.generics import ListAPIView
 from rest_framework.pagination import LimitOffsetPagination
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -319,16 +320,30 @@ class SavingsProgressView(APIView):
 class StarterTemplatesView(APIView):
     """GET /budget/starter-templates"""
 
+    # Public: the frontend shows these during onboarding, before the user has
+    # an account/token. The reference templates themselves aren't user-scoped
+    # (Data Governance Specs §4), so there's nothing to leak — only the
+    # is_suggested flag depends on the user, and that gracefully falls back to
+    # a sensible default when there's no authenticated user (see below).
+    permission_classes = [AllowAny]
+
     @extend_schema(responses={200: StarterTemplateSerializer(many=True)})
     def get(self, request):
         templates = file_storage.get_onboarding_templates()
         # Simple heuristic for which template gets is_suggested=true — a real
         # implementation would ground this via the AI service's planning
         # signals (System_Architecture.md §7's reference-template grounding).
-        # This picks "aggressive_savings" only for steady-income users with
-        # no dependents (more room to safely save), "balanced" otherwise.
+        # Picks "aggressive_savings" only for a signed-in steady-income user
+        # with no dependents (more room to safely save); "balanced" otherwise,
+        # which is also the default an anonymous onboarding visitor sees since
+        # no income/dependents signals exist for them yet.
         suggested_key = "balanced"
-        if request.user.income_steadiness == "steady" and request.user.dependents_count == 0:
+        user = request.user
+        if (
+            user.is_authenticated
+            and user.income_steadiness == "steady"
+            and user.dependents_count == 0
+        ):
             suggested_key = "aggressive_savings"
         for template in templates:
             template["is_suggested"] = template["template_key"] == suggested_key
