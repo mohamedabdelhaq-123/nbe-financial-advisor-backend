@@ -34,6 +34,20 @@ def ocr_artifact_key(user_id, statement_id) -> str:
     return f"pfm-statements-artifacts/{user_id}/{statement_id}/ocr/"
 
 
+def store_raw_file(object_key: str, file_bytes: bytes) -> None:
+    """
+    Mock upload of the raw statement bytes to `object_key`. No-op today, like
+    every other function here — a real implementation's PUT call belongs in
+    this body. The call site (create_statement_from_upload() in
+    core/views/statements.py) already wraps this in a try/except: a raised
+    exception here means POST /statements fails outright with no
+    StatementFile row persisted — there is no retryable "record created but
+    not stored" status (PLAN.md), so this is the one call in the ingestion
+    path that must fail before any row is written.
+    """
+    return None
+
+
 def get_signed_url(object_key: str) -> str:
     """
     Mock signed URL. A real implementation asks SeaweedFS's Filer gateway for

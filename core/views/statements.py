@@ -10,6 +10,7 @@ from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.exceptions import BusinessRuleError
 from core.models import (
     BankAccount,
     StatementFile,
@@ -26,22 +27,20 @@ from core.serializers.statements import (
 from services import ai_service, file_storage
 
 
-def _run_mock_pipeline(statement: StatementFile) -> None:
+def _run_extraction(statement: StatementFile) -> None:
     """
-    Runs the OCR + normalization pipeline mock inline, synchronously, right
-    inside the request/response cycle of POST /statements.
-
-    In the real implementation this is where Django would enqueue a Celery
-    job and return immediately with status="pending" (API Design Guidelines
-    §9), with the AI service call happening later, out of band. No
-    Celery/async worker is wired up yet (see PLAN.md §5's open items), so
-    there's no async boundary to actually return across — by the time
-    POST /statements sends its response, this function has already run to
-    completion and the row reflects its final state. The 202 status *code*
-    is kept regardless, since that's the contract the frontend is expected
-    to build against once the real async pipeline lands.
+    Phase 1/2 of the ingestion pipeline (MinerU/OCR), synchronous today for
+    the same reason noted on _run_normalization() below. On failure, status
+    is left at pending_extraction and failure_reason/failed_phase record why
+    — PATCH /statements/{id} is the only way to retry this phase (PLAN.md).
     """
-    result = ai_service.normalize(statement)
+    try:
+        result = ai_service.normalize(statement)
+    except Exception as exc:
+        statement.failure_reason = str(exc)
+        statement.failed_phase = StatementFile.PHASE_EXTRACTION
+        statement.save(update_fields=["failure_reason", "failed_phase"])
+        return
 
     StatementOcrResult.objects.create(
         statement=statement,
@@ -49,6 +48,38 @@ def _run_mock_pipeline(statement: StatementFile) -> None:
         ocr_engine=result["ocr"]["engine"],
         confidence_score=Decimal(str(result["ocr"]["confidence_score"])),
     )
+
+    statement.status = StatementFile.STATUS_PENDING_NORMALIZATION
+    statement.failure_reason = None
+    statement.failed_phase = None
+    statement.save(update_fields=["status", "failure_reason", "failed_phase"])
+
+
+def _run_normalization(statement: StatementFile) -> None:
+    """
+    Phase 2/2 (Normalization Agent). Resolves bank properties and writes the
+    proposed transaction array to normalized_json for the user to review —
+    nothing is written to the ledger here anymore; that only happens via
+    POST /statements/{id}/transactions once the user approves the whole
+    batch (PLAN.md). duplicate_of is still computed here for display, but is
+    re-checked at approval time rather than trusted, since time may have
+    passed since this ran.
+
+    Both this and _run_extraction() call ai_service.normalize() independently
+    rather than sharing one result — the mock bundles OCR + LLM output in one
+    deterministic, seeded-by-statement-id call (see its docstring), so a
+    second call for the same statement reproduces the same data. This mirrors
+    the two separate calls a real integration would make (Pipeline.md §2:
+    MinerU and the Normalization Agent are distinct steps) without requiring
+    state to be threaded between two separate HTTP requests.
+    """
+    try:
+        result = ai_service.normalize(statement)
+    except Exception as exc:
+        statement.failure_reason = str(exc)
+        statement.failed_phase = StatementFile.PHASE_NORMALIZATION
+        statement.save(update_fields=["failure_reason", "failed_phase"])
+        return
 
     normalized = result["normalized"]
 
@@ -67,12 +98,9 @@ def _run_mock_pipeline(statement: StatementFile) -> None:
     for txn in normalized["transactions"]:
         transaction_date = date.fromisoformat(txn["transaction_date"])
         amount = Decimal(str(txn["amount"]))
-        # Duplicate-prevention guardrail (System_Architecture.md §8): a
-        # composite match on (user, account, date, amount, raw merchant text)
-        # runs before insert, regardless of origin. Doing the lookup directly
-        # here (rather than calling Transaction.is_duplicate(), which only
-        # returns a bool) lets us record *which* existing transaction this
-        # duplicates, per Data_Shapes_Statements.md's `duplicate_of` field.
+        # Preview-only duplicate check (System_Architecture.md §8) — informs
+        # the user before they approve; POST /statements/{id}/transactions
+        # re-runs this same lookup at commit time rather than trusting it.
         existing = Transaction.objects.filter(
             user=statement.user,
             account=statement.account,
@@ -80,23 +108,8 @@ def _run_mock_pipeline(statement: StatementFile) -> None:
             amount=amount,
             merchant_raw=txn["merchant_raw"],
         ).first()
-        if existing is not None:
-            txn["duplicate_of"] = str(existing.id)
-            continue
-
-        Transaction.objects.create(
-            user=statement.user,
-            account=statement.account,
-            statement=statement,
-            transaction_date=transaction_date,
-            merchant_raw=txn["merchant_raw"],
-            category=txn.get("category"),
-            amount=amount,
-            transaction_type=txn.get("transaction_type"),
-            source="statement",
-        )
+        txn["duplicate_of"] = str(existing.id) if existing is not None else None
         transaction_dates.append(transaction_date)
-        txn["duplicate_of"] = None
 
     StatementNormalized.objects.create(
         statement=statement,
@@ -104,29 +117,48 @@ def _run_mock_pipeline(statement: StatementFile) -> None:
         model_used=result["model_used"],
     )
 
-    statement.status = "normalized"
+    statement.status = StatementFile.STATUS_PENDING_APPROVAL
+    statement.failure_reason = None
+    statement.failed_phase = None
     if transaction_dates:
         statement.start_transaction_date = min(transaction_dates)
         statement.last_transaction_date = max(transaction_dates)
     statement.save(
-        update_fields=["account", "status", "start_transaction_date", "last_transaction_date"]
+        update_fields=[
+            "account",
+            "status",
+            "failure_reason",
+            "failed_phase",
+            "start_transaction_date",
+            "last_transaction_date",
+        ]
     )
 
 
 def create_statement_from_upload(user, file_obj, account_id=None) -> StatementFile:
     """
-    The full upload -> checksum-dedupe -> mock-pipeline flow, factored out of
-    StatementListCreateView.post() so the Conversations domain's
-    POST /chat/conversations/{id}/attachments can reuse it exactly —
-    Data_Shapes_Conversations.md: "Shortcut into the Statements pipeline...
-    same underlying processing as POST /statements". Raises the same
-    ValidationError/404 a direct upload would, so both call sites behave
-    identically (API Design Guidelines §1: "one backend, one write path").
+    The full upload -> checksum-dedupe -> store -> auto-chained-pipeline
+    flow, factored out of StatementListCreateView.post() so the
+    Conversations domain's POST /chat/conversations/{id}/attachments can
+    reuse it exactly — Data_Shapes_Conversations.md: "Shortcut into the
+    Statements pipeline... same underlying processing as POST /statements".
+    Raises the same ValidationError/BusinessRuleError/404 a direct upload
+    would, so both call sites behave identically (API Design Guidelines §1:
+    "one backend, one write path").
+
+    A StatementFile row is only ever created once the file is successfully
+    stored (PLAN.md) — if storage fails, this raises before anything is
+    persisted, and there is nothing for the caller to retry; they re-submit
+    a fresh upload. Once the row exists, extraction and normalization are
+    auto-chained synchronously (same one-shot happy path Pipeline.md §2
+    describes), stopping wherever a phase fails — PATCH /statements/{id} is
+    then the only way to resume from there.
     """
     if not file_obj:
         raise ValidationError({"file": "This field is required."})
 
-    checksum = file_storage.compute_checksum(file_obj.read())
+    file_bytes = file_obj.read()
+    checksum = file_storage.compute_checksum(file_bytes)
 
     if StatementFile.objects.filter(user=user, checksum=checksum).exists():
         # File-level duplicate-upload check (DB_Schema.md's
@@ -144,16 +176,26 @@ def create_statement_from_upload(user, file_obj, account_id=None) -> StatementFi
 
     extension = file_obj.name.rsplit(".", 1)[-1].lower() if "." in file_obj.name else "bin"
     statement_id = uuid.uuid4()
+    seaweed_file_id = file_storage.raw_statement_key(user.id, statement_id, extension)
+
+    try:
+        file_storage.store_raw_file(seaweed_file_id, file_bytes)
+    except Exception as exc:
+        raise BusinessRuleError(f"The file could not be stored: {exc}", code="storage_failed")
+
     statement = StatementFile.objects.create(
         id=statement_id,
         user=user,
         account=account,
-        seaweed_file_id=file_storage.raw_statement_key(user.id, statement_id, extension),
+        seaweed_file_id=seaweed_file_id,
         checksum=checksum,
-        status="pending",
+        status=StatementFile.STATUS_PENDING_EXTRACTION,
     )
 
-    _run_mock_pipeline(statement)
+    _run_extraction(statement)
+    if statement.status == StatementFile.STATUS_PENDING_NORMALIZATION:
+        _run_normalization(statement)
+
     return statement
 
 
