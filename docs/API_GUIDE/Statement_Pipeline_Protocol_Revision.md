@@ -35,6 +35,10 @@ The first draft's single-transaction endpoint and `partially_processed` state ar
 
 Initially the proposed batch lived behind its own `GET /statements/{id}/normalized` route, separate from the statement's status. In practice that meant two calls to reach the same milestone: check status, then fetch the batch once it turned out to be `pending_approval`. Retired that route and inlined a `transactions` field directly onto `POST`/`GET`/`PATCH /statements/{id}` instead — populated only at `pending_approval`, `null` otherwise (and deliberately absent from the `GET /statements` list response, to avoid bloating a paginated payload with full transaction arrays no list screen needs). One response now carries both "where is this statement" and "what am I approving."
 
+### Addendum — is_processing
+
+The status model as shipped couldn't distinguish "this phase is actively running right now" from "this phase stopped and is sitting idle waiting for a retry" — both look identical (`status` unchanged, `failure_reason` null) from the outside. That's invisible today only because the pipeline is fully synchronous within one request; it becomes a real bug the moment any phase runs across a request boundary (a Celery worker, for instance) and a client polls mid-flight. Added `is_processing` (boolean) to close the gap now rather than retrofitting it later: set `true` at the start of each phase runner, `false` at the end regardless of outcome. It's always `false` in any response today, by construction, but the field is correct the moment that stops being true. It also does double duty as a concurrency guard — `PATCH /statements/{id}` now rejects a retry (`code: "already_processing"`) if a phase is already marked running on that statement, closing off the double-click-retry race.
+
 ---
 
 ## 3. What changed elsewhere
@@ -44,4 +48,4 @@ Initially the proposed batch lived behind its own `GET /statements/{id}/normaliz
 - `API_Endpoints_1.md` §4 — added `PATCH /statements/{id}` and `POST /statements/{id}/transactions` to the route list.
 - `Pipeline.md` §2 — the ingestion diagram now shows the user approval gate sitting between normalization and ledger insert, with a note clarifying this doesn't contradict the pipeline's "no back-and-forth mid-flow" rule (that rule is about the agentic processing itself, not the ordinary REST review step after it finishes).
 - `core/views/statements.py` — `_run_mock_pipeline` split into `_run_extraction`/`_run_normalization`/`advance_statement_to`; ledger writes moved into the new `StatementTransactionApprovalView`.
-- `core/serializers/statements.py` — `failure_reason` stopped being a hardcoded-null placeholder; added `failed_phase`, `StatementPatchSerializer`, and the transaction-approval request/response serializers.
+- `core/serializers/statements.py` — `failure_reason` stopped being a hardcoded-null placeholder; added `failed_phase`, `is_processing`, `StatementPatchSerializer`, and the transaction-approval request/response serializers.

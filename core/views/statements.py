@@ -38,12 +38,16 @@ def _run_extraction(statement: StatementFile) -> None:
     is left at pending_extraction and failure_reason/failed_phase record why
     — PATCH /statements/{id} is the only way to retry this phase (PLAN.md).
     """
+    statement.is_processing = True
+    statement.save(update_fields=["is_processing"])
+
     try:
         result = ai_service.normalize(statement)
     except Exception as exc:
         statement.failure_reason = str(exc)
         statement.failed_phase = StatementFile.PHASE_EXTRACTION
-        statement.save(update_fields=["failure_reason", "failed_phase"])
+        statement.is_processing = False
+        statement.save(update_fields=["failure_reason", "failed_phase", "is_processing"])
         return
 
     StatementOcrResult.objects.create(
@@ -56,7 +60,8 @@ def _run_extraction(statement: StatementFile) -> None:
     statement.status = StatementFile.STATUS_PENDING_NORMALIZATION
     statement.failure_reason = None
     statement.failed_phase = None
-    statement.save(update_fields=["status", "failure_reason", "failed_phase"])
+    statement.is_processing = False
+    statement.save(update_fields=["status", "failure_reason", "failed_phase", "is_processing"])
 
 
 def _run_normalization(statement: StatementFile) -> None:
@@ -77,12 +82,16 @@ def _run_normalization(statement: StatementFile) -> None:
     MinerU and the Normalization Agent are distinct steps) without requiring
     state to be threaded between two separate HTTP requests.
     """
+    statement.is_processing = True
+    statement.save(update_fields=["is_processing"])
+
     try:
         result = ai_service.normalize(statement)
     except Exception as exc:
         statement.failure_reason = str(exc)
         statement.failed_phase = StatementFile.PHASE_NORMALIZATION
-        statement.save(update_fields=["failure_reason", "failed_phase"])
+        statement.is_processing = False
+        statement.save(update_fields=["failure_reason", "failed_phase", "is_processing"])
         return
 
     normalized = result["normalized"]
@@ -124,6 +133,7 @@ def _run_normalization(statement: StatementFile) -> None:
     statement.status = StatementFile.STATUS_PENDING_APPROVAL
     statement.failure_reason = None
     statement.failed_phase = None
+    statement.is_processing = False
     if transaction_dates:
         statement.start_transaction_date = min(transaction_dates)
         statement.last_transaction_date = max(transaction_dates)
@@ -133,6 +143,7 @@ def _run_normalization(statement: StatementFile) -> None:
             "status",
             "failure_reason",
             "failed_phase",
+            "is_processing",
             "start_transaction_date",
             "last_transaction_date",
         ]
@@ -293,6 +304,14 @@ class StatementDetailView(generics.RetrieveDestroyAPIView):
             raise BusinessRuleError(
                 "This statement has already been processed and cannot be retried.",
                 code="already_processed",
+            )
+        if statement.is_processing:
+            # Guards against two overlapping PATCH retries firing on the
+            # same statement (e.g. a double-clicked retry button) — without
+            # this, both would re-run the same phase concurrently.
+            raise BusinessRuleError(
+                "This statement is currently being processed; try again shortly.",
+                code="already_processing",
             )
         if _STATUS_ORDER.index(target_status) <= _STATUS_ORDER.index(statement.status):
             raise BusinessRuleError(

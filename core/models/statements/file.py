@@ -54,6 +54,15 @@ class StatementFile(models.Model):
     failed_phase = models.CharField(
         max_length=20, choices=FAILED_PHASE_CHOICES, blank=True, null=True
     )
+    # True only while a phase runner is actively executing (set/cleared by
+    # _run_extraction/_run_normalization in core/views/statements.py) —
+    # without this, "pending_extraction, failure_reason=null" is ambiguous
+    # between "never attempted yet" and "a background worker is running
+    # this right now" once the pipeline stops being fully synchronous.
+    # Always false in any response today (nothing runs across requests
+    # yet), but also doubles as a guard against two overlapping PATCH
+    # retries firing on the same statement.
+    is_processing = models.BooleanField(default=False)
     start_transaction_date = models.DateField(blank=True, null=True)
     last_transaction_date = models.DateField(blank=True, null=True)
     upload_date = models.DateTimeField(auto_now_add=True)

@@ -15,6 +15,7 @@ class StatementFileSerializer(serializers.ModelSerializer):
             "id",
             "account_id",
             "status",
+            "is_processing",
             "failure_reason",
             "failed_phase",
             "start_transaction_date",

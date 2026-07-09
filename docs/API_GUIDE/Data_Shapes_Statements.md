@@ -9,11 +9,12 @@ Per-endpoint spec for the Statements domain: document upload, OCR, and normaliza
 
 `statement_files.status` is one of `pending_extraction | pending_normalization | pending_approval | processed`, and reflects **the last successfully completed phase**, not a phase currently running or one that errored. There is no `record_created`/`stored`/`failed` status: a `StatementFile` row is only ever created once its raw file is successfully stored (see `POST /statements` below), so there is nothing to represent before that point, and a failed phase leaves `status` exactly where it was rather than moving to a dedicated failure state.
 
-Two fields carry retry context instead:
+Three fields carry retry/liveness context instead:
+- `is_processing` (`boolean`) — true only while a phase runner is actively executing. Distinguishes "a background process is working on this right now" from "this phase stopped and is sitting idle" — without it, `pending_extraction` with no error would be ambiguous between those two states once processing isn't fully synchronous within one request. Always `false` in any response today (nothing runs across separate requests yet — see Pipeline.md §2), but the field exists so the status model stays correct once it does.
 - `failure_reason` (`string | null`) — set when the most recently attempted phase errored, cleared on the next successful phase.
 - `failed_phase` (`"extraction" | "normalization" | null`) — which phase `failure_reason` refers to.
 
-`PATCH /statements/{statement_id}` is the **only** retry mechanism, and only for the `extraction`/`normalization` phases — see below. A failure during file storage itself is not retryable at all: `POST /statements` returns an error and no row is persisted (nothing to retry against, nothing to `GET`); the client re-submits a fresh upload.
+`PATCH /statements/{statement_id}` is the **only** retry mechanism, and only for the `extraction`/`normalization` phases — see below. It also doubles as a guard against two overlapping retries on the same statement: a `PATCH` while `is_processing` is `true` is rejected (`code: "already_processing"`) rather than starting redundant/concurrent work. A failure during file storage itself is not retryable at all: `POST /statements` returns an error and no row is persisted (nothing to retry against, nothing to `GET`); the client re-submits a fresh upload.
 
 ---
 
@@ -57,6 +58,7 @@ account_id:  uuid, optional  // if known upfront; the Normalization Agent may ot
   "id": "uuid",
   "account_id": "uuid | null",
   "status": "string  // pending_extraction | pending_normalization | pending_approval",
+  "is_processing": "boolean  // always false here today — see 'Statement Status & Retry Model' above",
   "failure_reason": "string | null",
   "failed_phase": "string | null  // extraction | normalization | null",
   "upload_date": "timestamp",
@@ -85,6 +87,7 @@ account_id:  uuid, optional  // if known upfront; the Normalization Agent may ot
       "id": "uuid",
       "account_id": "uuid | null",
       "status": "string  // pending_extraction | pending_normalization | pending_approval | processed",
+      "is_processing": "boolean",
       "failure_reason": "string | null",
       "failed_phase": "string | null  // extraction | normalization | null",
       "start_transaction_date": "date | null",
@@ -118,7 +121,7 @@ account_id:  uuid, optional  // if known upfront; the Normalization Agent may ot
 
 **Response `200`** — same shape as `GET /statements/{statement_id}`. If a phase fails partway through a cascade, the response reflects wherever it stopped, with `failure_reason`/`failed_phase` set — this is not itself an error response.
 
-**Response `422`** if `status` isn't one of the two valid target values, if the target isn't ahead of the statement's current status (`code: "invalid_status_transition"`), or if the statement is already `processed` (`code: "already_processed"`).
+**Response `422`** if `status` isn't one of the two valid target values, if the target isn't ahead of the statement's current status (`code: "invalid_status_transition"`), if the statement is already `processed` (`code: "already_processed"`), or if a phase is already running on this statement (`code: "already_processing"` — guards against two overlapping retries).
 
 ---
 

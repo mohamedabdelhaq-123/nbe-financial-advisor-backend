@@ -104,6 +104,7 @@ CREATE TABLE statement_files (
                                  -- stored/failed status (docs/API_GUIDE/Data_Shapes_Statements.md)
     failure_reason               TEXT,                     -- why the current pending_* phase last failed, if it did
     failed_phase                 VARCHAR(20),               -- extraction|normalization|null
+    is_processing                BOOLEAN NOT NULL DEFAULT false, -- true only while a phase runner is actively executing
     start_transaction_date       DATE,
     last_transaction_date        DATE,
     upload_date                 TIMESTAMPTZ NOT NULL DEFAULT now(),
