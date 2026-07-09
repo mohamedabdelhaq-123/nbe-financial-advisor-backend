@@ -24,6 +24,30 @@ class StatementFileSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class StatementDetailSerializer(StatementFileSerializer):
+    """Single-resource shape (POST /statements, GET/PATCH /statements/{id})
+    — adds the proposed transaction batch inline so the frontend doesn't
+    need a second call to see what it's approving. Deliberately not on the
+    list serializer above (GET /statements) — embedding full transaction
+    arrays into every row of a paginated list is unbounded payload for no
+    benefit, since a list screen doesn't need per-row approval detail."""
+
+    transactions = serializers.SerializerMethodField()
+
+    class Meta(StatementFileSerializer.Meta):
+        fields = StatementFileSerializer.Meta.fields + ["transactions"]
+
+    def get_transactions(self, obj) -> list | None:
+        # Only meaningful while awaiting approval — once processed, the
+        # ledger is the source of truth and Statements' job is finished
+        # (Data_Governance_Specs.md §2: "not queried again for analytics"),
+        # so this deliberately doesn't try to keep mirroring ledger state.
+        if obj.status != StatementFile.STATUS_PENDING_APPROVAL:
+            return None
+        payload = obj.normalized_payload
+        return payload.get("transactions", []) if payload else None
+
+
 class StatementPatchSerializer(serializers.Serializer):
     """PATCH /statements/{id} — validates the requested retry/advance target
     is a real, patchable status. Forward-vs-backward and already-processed
@@ -47,16 +71,6 @@ class StatementOcrResultResponseSerializer(serializers.Serializer):
     confidence_score = serializers.DecimalField(max_digits=4, decimal_places=3, allow_null=True)
     processed_at = serializers.DateTimeField()
     artifact_url = serializers.CharField()
-
-
-class StatementNormalizedResponseSerializer(serializers.Serializer):
-    """GET /statements/{id}/normalized — output-only, same pattern."""
-
-    statement_id = serializers.UUIDField()
-    model_used = serializers.CharField(allow_null=True)
-    adjusted_at = serializers.DateTimeField()
-    transaction_count = serializers.IntegerField()
-    normalized_json = serializers.JSONField()
 
 
 class TransactionApprovalItemSerializer(serializers.Serializer):

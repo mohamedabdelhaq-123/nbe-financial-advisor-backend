@@ -17,6 +17,28 @@ Two fields carry retry context instead:
 
 ---
 
+## Proposed Transactions (inline, not a separate endpoint)
+
+`POST /statements` and `GET`/`PATCH /statements/{statement_id}` all return a `transactions` field alongside the statement's status — there is no separate call needed to fetch the proposed batch once normalization finishes. It is:
+- an **array** of proposed rows when `status == "pending_approval"` — this is the not-yet-committed batch for the user to review before calling `POST /statements/{statement_id}/transactions`;
+- `null` at every other status, including `processed` — once approved, the ledger (`GET /transactions`) is the source of truth, and Statements' job is finished (Data Governance Specs §2: "not queried again for analytics").
+
+**Not** present on `GET /statements` (the list endpoint) — embedding full transaction arrays into every row of a paginated list is unnecessary payload for a screen that doesn't need per-row approval detail.
+
+Each row:
+```json
+{
+  "transaction_date": "date",
+  "merchant_raw": "string",
+  "category": "string | null",
+  "amount": "number",
+  "transaction_type": "string  // debit | credit | fee | transfer",
+  "duplicate_of": "uuid | null  // advisory only — a point-in-time check from when normalization ran, re-checked for real at approval time"
+}
+```
+
+---
+
 ## POST /statements
 
 **Auth:** Required · **Scoping:** implicit self · **Query params:** none
@@ -37,7 +59,8 @@ account_id:  uuid, optional  // if known upfront; the Normalization Agent may ot
   "status": "string  // pending_extraction | pending_normalization | pending_approval",
   "failure_reason": "string | null",
   "failed_phase": "string | null  // extraction | normalization | null",
-  "upload_date": "timestamp"
+  "upload_date": "timestamp",
+  "transactions": "array | null  // see 'Proposed Transactions' above — populated if the auto-chain already reached pending_approval in this call"
 }
 ```
 
@@ -78,7 +101,7 @@ account_id:  uuid, optional  // if known upfront; the Normalization Agent may ot
 
 **Auth:** Required · **Scoping:** implicit self; `404` if not owned by caller · **Query params:** none
 
-**Response `200`** — same shape as one item above, polled until `status` reaches `processed`, or until `failure_reason` is non-null and the client offers a retry via `PATCH` (API Design Guidelines §9).
+**Response `200`** — same shape as the `POST /statements` response (list item fields **plus** `transactions`, see "Proposed Transactions" above), polled until `status` reaches `processed`, or until `failure_reason` is non-null and the client offers a retry via `PATCH` (API Design Guidelines §9).
 
 ---
 
@@ -128,45 +151,11 @@ Removes the `statement_files` row and its raw/artifact files (subject to `retain
 
 ---
 
-## GET /statements/{statement_id}/normalized
-
-**Auth:** Required · **Scoping:** implicit self, via parent statement ownership · **Query params:** none
-
-The proposed, **not-yet-committed** transaction batch for the user to review — nothing here is in the ledger until `POST /statements/{statement_id}/transactions` is called (see below). `duplicate_of` is a point-in-time check computed when normalization ran; it's advisory for display only and is re-checked for real at approval time, since another statement could have inserted a colliding row since.
-
-**Response `200`**
-```json
-{
-  "statement_id": "uuid",
-  "model_used": "string | null",
-  "adjusted_at": "timestamp",
-  "transaction_count": "integer",
-  "normalized_json": {
-    "bank_name": "string",
-    "account_hint": "string",
-    "transactions": [
-      {
-        "transaction_date": "date",
-        "merchant_raw": "string",
-        "category": "string | null",
-        "amount": "number",
-        "transaction_type": "string  // debit | credit | fee | transfer",
-        "duplicate_of": "uuid | null  // advisory only, see above"
-      }
-    ]
-  }
-}
-```
-
-**Response `404`** if normalization hasn't completed yet (`statement_files.status` not yet `pending_approval` or later).
-
----
-
 ## POST /statements/{statement_id}/transactions
 
 **Auth:** Required · **Scoping:** implicit self; `404` if not owned by caller · **Query params:** none
 
-Approves the whole proposed batch **atomically** — there is no per-transaction approval endpoint and no partial approval. Only valid while `status == "pending_approval"`. The submitted array must be the same length as `normalized_json.transactions` (rows are matched by position, not by an id — there is nothing else to address a row by in this design); a length mismatch is rejected rather than treated as a partial submission.
+Approves the whole proposed batch **atomically** — there is no per-transaction approval endpoint and no partial approval. Only valid while `status == "pending_approval"`. The submitted array must be the same length as the `transactions` array returned inline by `GET`/`PATCH /statements/{statement_id}` (rows are matched by position, not by an id — there is nothing else to address a row by in this design); a length mismatch is rejected rather than treated as a partial submission.
 
 **Request**
 ```json
@@ -180,7 +169,7 @@ Approves the whole proposed batch **atomically** — there is no per-transaction
   }
 ]
 ```
-Any field here overrides the corresponding value the user saw in `GET .../normalized` — this is how in-flight corrections (a fixed category, a corrected amount) reach the ledger.
+Any field here overrides the corresponding value the user saw in the inline `transactions` array — this is how in-flight corrections (a fixed category, a corrected amount) reach the ledger.
 
 **Behavior:** For each row, the duplicate check (System Architecture §8) is re-run against the ledger at commit time. A duplicate is **skipped**, not treated as an error — it's reported back with `duplicate_of` set instead of `transaction_id`. Every other row is inserted into `transactions` with `source: "statement"` and `statement_id` set to this statement. Once every row is resolved, the statement advances straight to `status: "processed"`.
 

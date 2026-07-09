@@ -31,6 +31,10 @@ The first draft additionally put a retry-triggering mechanism on `POST /statemen
 
 The first draft's single-transaction endpoint and `partially_processed` state are gone — approval is a single yes/no action on the whole reviewed batch, not a row-by-row workflow.
 
+### Addendum — inlining the proposed transactions
+
+Initially the proposed batch lived behind its own `GET /statements/{id}/normalized` route, separate from the statement's status. In practice that meant two calls to reach the same milestone: check status, then fetch the batch once it turned out to be `pending_approval`. Retired that route and inlined a `transactions` field directly onto `POST`/`GET`/`PATCH /statements/{id}` instead — populated only at `pending_approval`, `null` otherwise (and deliberately absent from the `GET /statements` list response, to avoid bloating a paginated payload with full transaction arrays no list screen needs). One response now carries both "where is this statement" and "what am I approving."
+
 ---
 
 ## 3. What changed elsewhere

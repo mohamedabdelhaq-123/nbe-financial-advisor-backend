@@ -21,8 +21,8 @@ from core.models import (
     UserPreference,
 )
 from core.serializers.statements import (
+    StatementDetailSerializer,
     StatementFileSerializer,
-    StatementNormalizedResponseSerializer,
     StatementOcrResultResponseSerializer,
     StatementPatchSerializer,
     TransactionApprovalItemSerializer,
@@ -264,13 +264,16 @@ class StatementListCreateView(generics.ListAPIView):
         statement = create_statement_from_upload(
             request.user, request.FILES.get("file"), account_id=request.data.get("account_id")
         )
-        return Response(StatementFileSerializer(statement).data, status=status.HTTP_202_ACCEPTED)
+        # Single-resource detail shape (not the lean list one above) — if the
+        # auto-chain already reached pending_approval in this same call, the
+        # proposed transactions come back here for free, no second GET needed.
+        return Response(StatementDetailSerializer(statement).data, status=status.HTTP_202_ACCEPTED)
 
 
 class StatementDetailView(generics.RetrieveDestroyAPIView):
     """GET/DELETE/PATCH /statements/{statement_id}"""
 
-    serializer_class = StatementFileSerializer
+    serializer_class = StatementDetailSerializer
     lookup_url_kwarg = "statement_id"
 
     def get_queryset(self):
@@ -298,7 +301,7 @@ class StatementDetailView(generics.RetrieveDestroyAPIView):
             )
 
         advance_statement_to(statement, target_status)
-        return Response(StatementFileSerializer(statement).data)
+        return Response(StatementDetailSerializer(statement).data)
 
     def perform_destroy(self, instance):
         # Removes the statement_files row and its raw/artifact files (subject
@@ -335,26 +338,6 @@ class StatementOcrResultView(APIView):
                 "artifact_url": file_storage.get_signed_url(
                     file_storage.ocr_artifact_key(statement.user_id, statement.id)
                 ),
-            }
-        )
-
-
-class StatementNormalizedView(APIView):
-    """GET /statements/{statement_id}/normalized"""
-
-    @extend_schema(responses={200: StatementNormalizedResponseSerializer})
-    def get(self, request, statement_id):
-        statement = get_object_or_404(StatementFile, id=statement_id, user=request.user)
-        record = statement.normalized_records.order_by("-adjusted_at").first()
-        if record is None:
-            raise NotFound("Normalized result not available yet.")
-        return Response(
-            {
-                "statement_id": str(statement.id),
-                "model_used": record.model_used,
-                "adjusted_at": record.adjusted_at,
-                "transaction_count": len(record.normalized_json.get("transactions", [])),
-                "normalized_json": record.normalized_json,
             }
         )
 

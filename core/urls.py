@@ -43,7 +43,6 @@ from core.views import (
     StarterTemplatesView,
     StatementDetailView,
     StatementListCreateView,
-    StatementNormalizedView,
     StatementOcrResultView,
     StatementTransactionApprovalView,
     TransactionDetailView,
@@ -77,7 +76,6 @@ urlpatterns = [
     path("statements/", StatementListCreateView.as_view()),
     path("statements/<uuid:statement_id>/", StatementDetailView.as_view()),
     path("statements/<uuid:statement_id>/ocr-result/", StatementOcrResultView.as_view()),
-    path("statements/<uuid:statement_id>/normalized/", StatementNormalizedView.as_view()),
     path(
         "statements/<uuid:statement_id>/transactions/",
         StatementTransactionApprovalView.as_view(),
