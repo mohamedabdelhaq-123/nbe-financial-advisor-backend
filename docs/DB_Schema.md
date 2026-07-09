@@ -97,7 +97,13 @@ CREATE TABLE statement_files (
     template_id                 UUID REFERENCES bank_statement_templates(id) ON DELETE SET NULL,
     seaweed_file_id              VARCHAR(255) NOT NULL,   -- raw file location
     checksum                    VARCHAR(64) NOT NULL,     -- file-level duplicate-upload check
-    status                      VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending|processing|normalized|failed
+    status                      VARCHAR(30) NOT NULL DEFAULT 'pending_extraction',
+                                 -- pending_extraction|pending_normalization|pending_approval|processed
+                                 -- reflects the last successfully completed phase; a row only ever
+                                 -- exists once its file is stored, so there is no record_created/
+                                 -- stored/failed status (docs/API_GUIDE/Data_Shapes_Statements.md)
+    failure_reason               TEXT,                     -- why the current pending_* phase last failed, if it did
+    failed_phase                 VARCHAR(20),               -- extraction|normalization|null
     start_transaction_date       DATE,
     last_transaction_date        DATE,
     upload_date                 TIMESTAMPTZ NOT NULL DEFAULT now(),

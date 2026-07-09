@@ -33,9 +33,15 @@ Normalization Agent
    → if no template match: LLM infers the column mapping, a new template is created for future reuse
    → maps bank-specific columns to the canonical transaction schema
    → resolves/creates the bank_accounts record
-   → runs duplicate detection before insert (composite key: user, account, date, amount, raw merchant)
-   → generates a semantically rich internal description per transaction, embeds it (not stored as
-     separate text — only the vector persists; merchant_raw keeps the original statement text)
+   → runs a preview duplicate check (composite key: user, account, date, amount, raw merchant) and
+     writes the proposed transaction batch to statement_normalized.normalized_json — NOT yet inserted
+   │
+   ▼
+User approval gate (REST, not agentic — docs/API_GUIDE/Data_Shapes_Statements.md)
+   → user reviews/corrects the proposed batch, POSTs it back in full
+   → duplicate check re-runs for real at this point; the rest insert, generating a semantically rich
+     internal description per transaction and embedding it (not stored as separate text — only the
+     vector persists; merchant_raw keeps the original statement text)
    │
    ▼
 Transactions ledger (Aggregations) — the single source of truth from this point forward
@@ -47,7 +53,9 @@ anomaly detection, monthly summary computation, spending-pattern insights refres
 
 **Why MinerU is not an agent:** it has no reasoning step and no decision to make — it is a deterministic transformation (bytes in, structured text/tables out). Calling it a "tool" rather than an "agent" throughout this document is deliberate: nothing downstream should expect it to handle ambiguity or make a judgment call.
 
-**Where this pipeline ends:** once transactions are written and background jobs have run, this pipeline's information flow is complete. It does not loop back to ask the user anything — any follow-up (confirming an extraction, correcting a category) happens through the ordinary Conversations/Records write path, not as a continuation of this pipeline.
+**The approval gate is not a loop-back.** "No back-and-forth with the user mid-flow" (§1) describes the AI processing itself — extraction and normalization run start-to-finish without pausing to ask the model anything. The user-facing review step between normalization and ledger insert is an ordinary REST request/response (`GET .../normalized` then `POST .../transactions`), not a continuation of an agentic loop; the Normalization Agent's job is finished the moment it writes `normalized_json`.
+
+**Where this pipeline ends:** once transactions are written and background jobs have run, this pipeline's information flow is complete. It does not loop back to ask the user anything — any further follow-up (correcting a category after the fact) happens through the ordinary Conversations/Records write path, not as a continuation of this pipeline.
 
 ---
 
