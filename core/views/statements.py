@@ -2,6 +2,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
+from django.db import transaction as db_transaction
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
@@ -24,6 +25,8 @@ from core.serializers.statements import (
     StatementNormalizedResponseSerializer,
     StatementOcrResultResponseSerializer,
     StatementPatchSerializer,
+    TransactionApprovalItemSerializer,
+    TransactionApprovalResponseSerializer,
 )
 from services import ai_service, file_storage
 
@@ -353,4 +356,102 @@ class StatementNormalizedView(APIView):
                 "transaction_count": len(record.normalized_json.get("transactions", [])),
                 "normalized_json": record.normalized_json,
             }
+        )
+
+
+class StatementTransactionApprovalView(APIView):
+    """POST /statements/{statement_id}/transactions
+
+    Approves the whole proposed transaction batch atomically — no per-
+    transaction endpoint and no partial approval (PLAN.md). Only valid
+    while the statement is pending_approval; the submitted array must be
+    the same length as the proposed one (matched by position, not by an
+    id — there's nothing else to match on in this design). Duplicates are
+    re-checked against the ledger at commit time rather than trusted from
+    the normalize-time `duplicate_of` snapshot, since time may have passed;
+    a duplicate is skipped, not treated as an error. Advances the statement
+    straight to processed once every row is resolved.
+    """
+
+    @extend_schema(
+        request=TransactionApprovalItemSerializer(many=True),
+        responses={200: TransactionApprovalResponseSerializer},
+    )
+    def post(self, request, statement_id):
+        statement = get_object_or_404(StatementFile, id=statement_id, user=request.user)
+
+        if statement.status != StatementFile.STATUS_PENDING_APPROVAL:
+            raise BusinessRuleError(
+                "This statement is not awaiting transaction approval.",
+                code="invalid_status_transition",
+            )
+
+        proposed = (statement.normalized_payload or {}).get("transactions", [])
+        item_serializer = TransactionApprovalItemSerializer(data=request.data, many=True)
+        item_serializer.is_valid(raise_exception=True)
+        submitted = item_serializer.validated_data
+
+        if len(submitted) != len(proposed):
+            raise BusinessRuleError(
+                f"Expected {len(proposed)} transactions, got {len(submitted)} — "
+                "the full proposed batch must be submitted together.",
+                code="transaction_count_mismatch",
+            )
+
+        resolved = []
+        with db_transaction.atomic():
+            for row in submitted:
+                merchant_raw = row.get("merchant_raw")
+                # Re-run at commit time (System_Architecture.md §8) rather than
+                # trusting the normalize-time duplicate_of snapshot — another
+                # statement could have inserted a colliding row since then.
+                existing = Transaction.objects.filter(
+                    user=statement.user,
+                    account=statement.account,
+                    transaction_date=row["transaction_date"],
+                    amount=row["amount"],
+                    merchant_raw=merchant_raw,
+                ).first()
+                if existing is not None:
+                    resolved.append(
+                        {
+                            "transaction_date": row["transaction_date"],
+                            "merchant_raw": merchant_raw,
+                            "amount": row["amount"],
+                            "transaction_id": None,
+                            "duplicate_of": existing.id,
+                        }
+                    )
+                    continue
+
+                created = Transaction.objects.create(
+                    user=statement.user,
+                    account=statement.account,
+                    statement=statement,
+                    transaction_date=row["transaction_date"],
+                    merchant_raw=merchant_raw,
+                    category=row.get("category"),
+                    amount=row["amount"],
+                    transaction_type=row.get("transaction_type"),
+                    source="statement",
+                )
+                resolved.append(
+                    {
+                        "transaction_date": row["transaction_date"],
+                        "merchant_raw": merchant_raw,
+                        "amount": row["amount"],
+                        "transaction_id": created.id,
+                        "duplicate_of": None,
+                    }
+                )
+
+            statement.status = StatementFile.STATUS_PROCESSED
+            statement.failure_reason = None
+            statement.failed_phase = None
+            statement.save(update_fields=["status", "failure_reason", "failed_phase"])
+
+        return Response(
+            TransactionApprovalResponseSerializer(
+                {"statement_status": statement.status, "resolved": resolved}
+            ).data
         )

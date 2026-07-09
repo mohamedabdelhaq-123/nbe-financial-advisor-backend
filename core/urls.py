@@ -45,6 +45,7 @@ from core.views import (
     StatementListCreateView,
     StatementNormalizedView,
     StatementOcrResultView,
+    StatementTransactionApprovalView,
     TransactionDetailView,
     TransactionListCreateView,
     db_check,
@@ -77,6 +78,10 @@ urlpatterns = [
     path("statements/<uuid:statement_id>/", StatementDetailView.as_view()),
     path("statements/<uuid:statement_id>/ocr-result/", StatementOcrResultView.as_view()),
     path("statements/<uuid:statement_id>/normalized/", StatementNormalizedView.as_view()),
+    path(
+        "statements/<uuid:statement_id>/transactions/",
+        StatementTransactionApprovalView.as_view(),
+    ),
     # 5. Transactions (API_Endpoints_1.md §5)
     path("transactions/", TransactionListCreateView.as_view()),
     path("transactions/<uuid:transaction_id>/", TransactionDetailView.as_view()),

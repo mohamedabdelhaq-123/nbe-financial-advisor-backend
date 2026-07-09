@@ -57,3 +57,38 @@ class StatementNormalizedResponseSerializer(serializers.Serializer):
     adjusted_at = serializers.DateTimeField()
     transaction_count = serializers.IntegerField()
     normalized_json = serializers.JSONField()
+
+
+class TransactionApprovalItemSerializer(serializers.Serializer):
+    """POST /statements/{id}/transactions — one row of the submitted batch.
+    Matched to the proposed normalized_json array by position, not by an
+    id (PLAN.md: no per-transaction addressing in this design) — the whole
+    array is submitted and resolved together, corrections and all."""
+
+    transaction_date = serializers.DateField()
+    merchant_raw = serializers.CharField(
+        max_length=500, allow_blank=True, allow_null=True, required=False
+    )
+    category = serializers.CharField(
+        max_length=100, allow_blank=True, allow_null=True, required=False
+    )
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    transaction_type = serializers.CharField(
+        max_length=20, allow_blank=True, allow_null=True, required=False
+    )
+
+
+class TransactionApprovalResultSerializer(serializers.Serializer):
+    """One resolved row in the response — either inserted (transaction_id
+    set) or skipped as a ledger duplicate (duplicate_of set)."""
+
+    transaction_date = serializers.DateField()
+    merchant_raw = serializers.CharField(allow_blank=True, allow_null=True)
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    transaction_id = serializers.UUIDField(allow_null=True)
+    duplicate_of = serializers.UUIDField(allow_null=True)
+
+
+class TransactionApprovalResponseSerializer(serializers.Serializer):
+    statement_status = serializers.CharField()
+    resolved = TransactionApprovalResultSerializer(many=True)

@@ -50,6 +50,7 @@ from core.views.statements import (
     StatementListCreateView,
     StatementNormalizedView,
     StatementOcrResultView,
+    StatementTransactionApprovalView,
 )
 
 __all__ = [
@@ -70,6 +71,7 @@ __all__ = [
     "StatementDetailView",
     "StatementOcrResultView",
     "StatementNormalizedView",
+    "StatementTransactionApprovalView",
     "TransactionListCreateView",
     "TransactionDetailView",
     "MonthlySummariesView",
