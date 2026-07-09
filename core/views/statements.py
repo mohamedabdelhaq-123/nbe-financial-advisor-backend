@@ -23,6 +23,7 @@ from core.serializers.statements import (
     StatementFileSerializer,
     StatementNormalizedResponseSerializer,
     StatementOcrResultResponseSerializer,
+    StatementPatchSerializer,
 )
 from services import ai_service, file_storage
 
@@ -135,6 +136,47 @@ def _run_normalization(statement: StatementFile) -> None:
     )
 
 
+# Ordered so a target status's index can be compared against the current
+# status's index to tell "forward" from "backward/same" (PATCH validation
+# below) and to drive the retry cascade.
+_STATUS_ORDER = [
+    StatementFile.STATUS_PENDING_EXTRACTION,
+    StatementFile.STATUS_PENDING_NORMALIZATION,
+    StatementFile.STATUS_PENDING_APPROVAL,
+    StatementFile.STATUS_PROCESSED,
+]
+
+# Which phase function runs *from* a given status. STATUS_PENDING_APPROVAL
+# and STATUS_PROCESSED have no entry — the former only ever advances via the
+# transaction-approval endpoint, never PATCH; the latter is terminal.
+_PHASE_RUNNERS = {
+    StatementFile.STATUS_PENDING_EXTRACTION: _run_extraction,
+    StatementFile.STATUS_PENDING_NORMALIZATION: _run_normalization,
+}
+
+
+def advance_statement_to(statement: StatementFile, target_status: str) -> None:
+    """
+    Retries/resumes the pipeline from wherever `statement` currently is, one
+    phase at a time, stopping once `target_status` is reached or a phase
+    fails (leaving failure_reason/failed_phase set by that phase's runner).
+    Requesting a target further out than the next phase cascades through the
+    intermediate ones in this same call, mirroring the auto-chain behavior
+    of create_statement_from_upload().
+    """
+    target_rank = _STATUS_ORDER.index(target_status)
+    while _STATUS_ORDER.index(statement.status) < target_rank:
+        runner = _PHASE_RUNNERS.get(statement.status)
+        if runner is None:
+            break
+        status_before = statement.status
+        runner(statement)
+        if statement.status == status_before:
+            # The phase attempted and failed — its runner already recorded
+            # failure_reason/failed_phase and left status where it was.
+            break
+
+
 def create_statement_from_upload(user, file_obj, account_id=None) -> StatementFile:
     """
     The full upload -> checksum-dedupe -> store -> auto-chained-pipeline
@@ -223,13 +265,37 @@ class StatementListCreateView(generics.ListAPIView):
 
 
 class StatementDetailView(generics.RetrieveDestroyAPIView):
-    """GET/DELETE /statements/{statement_id}"""
+    """GET/DELETE/PATCH /statements/{statement_id}"""
 
     serializer_class = StatementFileSerializer
     lookup_url_kwarg = "statement_id"
 
     def get_queryset(self):
         return StatementFile.objects.filter(user=self.request.user)
+
+    def patch(self, request, *args, **kwargs):
+        # Retry/resume, never a general field update — see PLAN.md
+        # Checkpoint 3. Only the pipeline phases, not the file upload, are
+        # retryable this way (services/file_storage.py's store_raw_file()
+        # docstring: a storage failure never leaves a row to PATCH at all).
+        statement = self.get_object()
+        serializer = StatementPatchSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        target_status = serializer.validated_data["status"]
+
+        if statement.status == StatementFile.STATUS_PROCESSED:
+            raise BusinessRuleError(
+                "This statement has already been processed and cannot be retried.",
+                code="already_processed",
+            )
+        if _STATUS_ORDER.index(target_status) <= _STATUS_ORDER.index(statement.status):
+            raise BusinessRuleError(
+                "Target status must be ahead of the statement's current status.",
+                code="invalid_status_transition",
+            )
+
+        advance_statement_to(statement, target_status)
+        return Response(StatementFileSerializer(statement).data)
 
     def perform_destroy(self, instance):
         # Removes the statement_files row and its raw/artifact files (subject
