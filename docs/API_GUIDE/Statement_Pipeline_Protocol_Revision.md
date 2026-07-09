@@ -41,7 +41,11 @@ The status model as shipped couldn't distinguish "this phase is actively running
 
 ### Addendum — file metadata alongside the proposed transactions
 
-Inlining `transactions` (previous addendum) still left a gap: `bank_name`, `account_hint`, `model_used`, and `adjusted_at` — everything the old `GET /statements/{id}/normalized` route used to return besides the transaction array itself — never made it onto the new inline shape. Added as four more fields on `StatementDetailSerializer`, sourced from the same `statement_normalized` row `transactions` reads from. The key difference: these describe the normalization *event*, not the mutable pending batch, so they stay populated after `processed` — only `transactions` goes back to `null` once approved.
+Inlining `transactions` (previous addendum) still left a gap: `bank_name`, `account_hint`, `model_used`, and `adjusted_at` — everything the old `GET /statements/{id}/normalized` route used to return besides the transaction array itself — never made it onto the new inline shape. Added as four more fields on `StatementDetailSerializer`, sourced from the same `statement_normalized` row `transactions` reads from. These describe the normalization *event*, not the mutable pending batch, so they stay populated after `processed` regardless of what `transactions` does.
+
+### Addendum — transactions switches source once processed
+
+Originally `transactions` just went back to `null` once a statement reached `processed`, on the reasoning that Statements' job is finished at that point (Data Governance Specs §2) and the ledger is the real source of truth. In practice that left no way to see "what did this statement actually produce" through this endpoint at all — `GET /transactions` has no `statement_id` filter, so there was no path back to it. `get_transactions()` now branches on status instead of just gating on it: `pending_approval` still returns the proposed preview from `normalized_json`; `processed` now returns the real rows from `obj.transactions` (the `Transaction.statement` reverse relation), serialized with the existing `TransactionListSerializer` from the Aggregations domain rather than inventing a second shape. This isn't a second copy of ledger data — it's a live read through the same FK, so the single-source-of-truth rule still holds; only the *shape returned* switches, not where the data is kept.
 
 ---
 

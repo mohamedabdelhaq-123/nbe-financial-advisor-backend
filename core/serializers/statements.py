@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from core.models import StatementFile
+from core.serializers.aggregations import TransactionListSerializer
 
 
 class StatementFileSerializer(serializers.ModelSerializer):
@@ -51,14 +52,22 @@ class StatementDetailSerializer(StatementFileSerializer):
         ]
 
     def get_transactions(self, obj) -> list | None:
-        # Only meaningful while awaiting approval — once processed, the
-        # ledger is the source of truth and Statements' job is finished
-        # (Data_Governance_Specs.md §2: "not queried again for analytics"),
-        # so this deliberately doesn't try to keep mirroring ledger state.
-        if obj.status != StatementFile.STATUS_PENDING_APPROVAL:
-            return None
-        payload = obj.normalized_payload
-        return payload.get("transactions", []) if payload else None
+        # Two different sources depending on status, same field name — the
+        # frontend always reads `transactions` without needing to know
+        # which stage produced it:
+        #  - pending_approval: the not-yet-committed proposed array from
+        #    normalized_json, for the user to review/correct.
+        #  - processed: the real ledger rows this statement produced
+        #    (Transaction.statement, related_name="transactions"), once
+        #    Statements' job is finished (Data_Governance_Specs.md §2) and
+        #    the ledger is the source of truth — not the frozen proposal.
+        if obj.status == StatementFile.STATUS_PENDING_APPROVAL:
+            payload = obj.normalized_payload
+            return payload.get("transactions", []) if payload else None
+        if obj.status == StatementFile.STATUS_PROCESSED:
+            ledger_rows = obj.transactions.order_by("-transaction_date")
+            return TransactionListSerializer(ledger_rows, many=True).data
+        return None
 
     def get_bank_name(self, obj) -> str | None:
         payload = obj.normalized_payload

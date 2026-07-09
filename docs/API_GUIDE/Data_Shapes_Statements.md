@@ -22,22 +22,23 @@ Three fields carry retry/liveness context instead:
 
 `POST /statements` and `GET`/`PATCH /statements/{statement_id}` all return `transactions`, `bank_name`, `account_hint`, `model_used`, and `adjusted_at` alongside the statement's status — there is no separate call needed once normalization finishes. These come from the two writes normalization makes (`statement_normalized` row), but have different lifetimes:
 
-- **`transactions`** (`array | null`) — the not-yet-committed batch for the user to review before calling `POST /statements/{statement_id}/transactions`. Only an array while `status == "pending_approval"`; `null` at every other status, including `processed` — once approved, the ledger (`GET /transactions`) is the source of truth, and Statements' job is finished (Data Governance Specs §2: "not queried again for analytics").
-- **`bank_name`**, **`account_hint`**, **`model_used`**, **`adjusted_at`** — historical facts about the normalization run itself, not the mutable pending batch. Populated as soon as a `statement_normalized` row exists (`pending_approval` or later) and **stay populated after `processed`** — unlike `transactions`, these don't move to the ledger, they describe the file.
+- **`transactions`** (`array | null`) — same field name, two different sources depending on `status`, so the frontend never needs a second call or a second field to know what it's looking at:
+  - `status == "pending_approval"`: the **not-yet-committed proposed batch** from `normalized_json`, for the user to review/correct before calling `POST /statements/{statement_id}/transactions`. Row shape:
+    ```json
+    {
+      "transaction_date": "date",
+      "merchant_raw": "string",
+      "category": "string | null",
+      "amount": "number",
+      "transaction_type": "string  // debit | credit | fee | transfer",
+      "duplicate_of": "uuid | null  // advisory only — a point-in-time check from when normalization ran, re-checked for real at approval time"
+    }
+    ```
+  - `status == "processed"`: the **real ledger rows** this statement produced (`GET /transactions`'s item shape — `id`, `account_id`, `statement_id`, `merchant_normalized`, `confidence_score`, `balance`, `created_at`, etc. — see Data Shapes Aggregations), read live off `transactions` via `statement_id`. Not a second copy of the data — the ledger stays the single source of truth (Data Governance Specs §7); this is a read-through, not a duplicate write.
+  - `pending_extraction` / `pending_normalization`: `null` — nothing to show yet.
+- **`bank_name`**, **`account_hint`**, **`model_used`**, **`adjusted_at`** — historical facts about the normalization run itself, not the pending batch. Populated as soon as a `statement_normalized` row exists (`pending_approval` or later) and **stay populated after `processed`** too, unlike the proposed-array flavor of `transactions`.
 
 **None of these are present on `GET /statements`** (the list endpoint) — embedding this into every row of a paginated list is unnecessary payload for a screen that doesn't need per-row detail.
-
-Each `transactions` row:
-```json
-{
-  "transaction_date": "date",
-  "merchant_raw": "string",
-  "category": "string | null",
-  "amount": "number",
-  "transaction_type": "string  // debit | credit | fee | transfer",
-  "duplicate_of": "uuid | null  // advisory only — a point-in-time check from when normalization ran, re-checked for real at approval time"
-}
-```
 
 ---
 
