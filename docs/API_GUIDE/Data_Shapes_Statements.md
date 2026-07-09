@@ -7,10 +7,10 @@ Per-endpoint spec for the Statements domain: document upload, OCR, and normaliza
 
 ## Statement Status & Retry Model
 
-`statement_files.status` is one of `pending_extraction | pending_normalization | pending_approval | processed`, and reflects **the last successfully completed phase**, not a phase currently running or one that errored. There is no `record_created`/`stored`/`failed` status: a `StatementFile` row is only ever created once its raw file is successfully stored (see `POST /statements` below), so there is nothing to represent before that point, and a failed phase leaves `status` exactly where it was rather than moving to a dedicated failure state.
+`statement_files.status` is one of `extraction | normalization | approval | processed` — it names **the phase the statement is currently at/working toward**, not whether that phase is actively running or has errored (that's `is_processing`/`failure_reason` below). No `pending_` prefix: baking "pending" into the status name would just repeat what `is_processing` already says. There is also no `record_created`/`stored`/`failed` status: a `StatementFile` row is only ever created once its raw file is successfully stored (see `POST /statements` below), so there is nothing to represent before that point, and a failed phase leaves `status` exactly where it was rather than moving to a dedicated failure state.
 
 Three fields carry retry/liveness context instead:
-- `is_processing` (`boolean`) — true only while a phase runner is actively executing. Distinguishes "a background process is working on this right now" from "this phase stopped and is sitting idle" — without it, `pending_extraction` with no error would be ambiguous between those two states once processing isn't fully synchronous within one request. Always `false` in any response today (nothing runs across separate requests yet — see Pipeline.md §2), but the field exists so the status model stays correct once it does.
+- `is_processing` (`boolean`) — true only while a phase runner is actively executing. Distinguishes "a background process is working on this right now" from "this phase stopped and is sitting idle" — without it, `extraction` with no error would be ambiguous between those two states once processing isn't fully synchronous within one request. Always `false` in any response today (nothing runs across separate requests yet — see Pipeline.md §2), but the field exists so the status model stays correct once it does.
 - `failure_reason` (`string | null`) — set when the most recently attempted phase errored, cleared on the next successful phase.
 - `failed_phase` (`"extraction" | "normalization" | null`) — which phase `failure_reason` refers to.
 
@@ -23,7 +23,7 @@ Three fields carry retry/liveness context instead:
 `POST /statements` and `GET`/`PATCH /statements/{statement_id}` all return `transactions`, `bank_name`, `account_hint`, `model_used`, and `adjusted_at` alongside the statement's status — there is no separate call needed once normalization finishes. These come from the two writes normalization makes (`statement_normalized` row), but have different lifetimes:
 
 - **`transactions`** (`array | null`) — same field name, two different sources depending on `status`, so the frontend never needs a second call or a second field to know what it's looking at:
-  - `status == "pending_approval"`: the **not-yet-committed proposed batch** from `normalized_json`, for the user to review/correct before calling `POST /statements/{statement_id}/transactions`. Row shape:
+  - `status == "approval"`: the **not-yet-committed proposed batch** from `normalized_json`, for the user to review/correct before calling `POST /statements/{statement_id}/transactions`. Row shape:
     ```json
     {
       "transaction_date": "date",
@@ -35,8 +35,8 @@ Three fields carry retry/liveness context instead:
     }
     ```
   - `status == "processed"`: the **real ledger rows** this statement produced (`GET /transactions`'s item shape — `id`, `account_id`, `statement_id`, `merchant_normalized`, `confidence_score`, `balance`, `created_at`, etc. — see Data Shapes Aggregations), read live off `transactions` via `statement_id`. Not a second copy of the data — the ledger stays the single source of truth (Data Governance Specs §7); this is a read-through, not a duplicate write.
-  - `pending_extraction` / `pending_normalization`: `null` — nothing to show yet.
-- **`bank_name`**, **`account_hint`**, **`model_used`**, **`adjusted_at`** — historical facts about the normalization run itself, not the pending batch. Populated as soon as a `statement_normalized` row exists (`pending_approval` or later) and **stay populated after `processed`** too, unlike the proposed-array flavor of `transactions`.
+  - `extraction` / `normalization`: `null` — nothing to show yet.
+- **`bank_name`**, **`account_hint`**, **`model_used`**, **`adjusted_at`** — historical facts about the normalization run itself, not the pending batch. Populated as soon as a `statement_normalized` row exists (`approval` or later) and **stay populated after `processed`** too, unlike the proposed-array flavor of `transactions`.
 
 **None of these are present on `GET /statements`** (the list endpoint) — embedding this into every row of a paginated list is unnecessary payload for a screen that doesn't need per-row detail.
 
@@ -59,7 +59,7 @@ account_id:  uuid, optional  // if known upfront; the Normalization Agent may ot
 {
   "id": "uuid",
   "account_id": "uuid | null",
-  "status": "string  // pending_extraction | pending_normalization | pending_approval",
+  "status": "string  // extraction | normalization | approval",
   "is_processing": "boolean  // always false here today — see 'Statement Status & Retry Model' above",
   "failure_reason": "string | null",
   "failed_phase": "string | null  // extraction | normalization | null",
@@ -80,7 +80,7 @@ account_id:  uuid, optional  // if known upfront; the Normalization Agent may ot
 
 ## GET /statements
 
-**Auth:** Required · **Scoping:** implicit self · **Query params:** `status` (optional filter: `pending_extraction`/`pending_normalization`/`pending_approval`/`processed`), `account_id` (optional filter), `limit` (integer, optional, page size — frontend-controlled), `offset` (integer, optional, default 0) · **Pagination:** Offset — DRF `LimitOffsetPagination` (API Design Guidelines §5) · **Default sort:** `upload_date DESC` (most recent upload first, matches the Documents tab's reverse-chronological display — Design §6)
+**Auth:** Required · **Scoping:** implicit self · **Query params:** `status` (optional filter: `extraction`/`normalization`/`approval`/`processed`), `account_id` (optional filter), `limit` (integer, optional, page size — frontend-controlled), `offset` (integer, optional, default 0) · **Pagination:** Offset — DRF `LimitOffsetPagination` (API Design Guidelines §5) · **Default sort:** `upload_date DESC` (most recent upload first, matches the Documents tab's reverse-chronological display — Design §6)
 
 **Response `200`**
 ```json
@@ -92,7 +92,7 @@ account_id:  uuid, optional  // if known upfront; the Normalization Agent may ot
     {
       "id": "uuid",
       "account_id": "uuid | null",
-      "status": "string  // pending_extraction | pending_normalization | pending_approval | processed",
+      "status": "string  // extraction | normalization | approval | processed",
       "is_processing": "boolean",
       "failure_reason": "string | null",
       "failed_phase": "string | null  // extraction | normalization | null",
@@ -120,10 +120,10 @@ account_id:  uuid, optional  // if known upfront; the Normalization Agent may ot
 
 **Request**
 ```json
-{ "status": "pending_normalization" | "pending_approval" }
+{ "status": "normalization" | "approval" }
 ```
 
-**Behavior:** Resumes/retries the pipeline from the statement's current status toward the requested target — never a general field update. Requesting a target further out than the next phase cascades through the intermediate ones in the same call (e.g. `pending_extraction → pending_approval` runs extraction then normalization). Only forward targets are accepted; `pending_extraction` and `processed` are never valid request values — the former has no runner to retry into it (file storage isn't retryable, see above), the latter is only reachable via `POST /statements/{statement_id}/transactions`.
+**Behavior:** Resumes/retries the pipeline from the statement's current status toward the requested target — never a general field update. Requesting a target further out than the next phase cascades through the intermediate ones in the same call (e.g. `extraction → approval` runs extraction then normalization). Only forward targets are accepted; `extraction` and `processed` are never valid request values — the former has no runner to retry into it (file storage isn't retryable, see above), the latter is only reachable via `POST /statements/{statement_id}/transactions`.
 
 **Response `200`** — same shape as `GET /statements/{statement_id}`. If a phase fails partway through a cascade, the response reflects wherever it stopped, with `failure_reason`/`failed_phase` set — this is not itself an error response.
 
@@ -156,7 +156,7 @@ Removes the `statement_files` row and its raw/artifact files (subject to `retain
 }
 ```
 
-**Response `404`** if OCR hasn't completed yet (`statement_files.status` still `pending_extraction`).
+**Response `404`** if OCR hasn't completed yet (`statement_files.status` still `extraction`).
 
 ---
 
@@ -164,7 +164,7 @@ Removes the `statement_files` row and its raw/artifact files (subject to `retain
 
 **Auth:** Required · **Scoping:** implicit self; `404` if not owned by caller · **Query params:** none
 
-Approves the whole proposed batch **atomically** — there is no per-transaction approval endpoint and no partial approval. Only valid while `status == "pending_approval"`. The submitted array must be the same length as the `transactions` array returned inline by `GET`/`PATCH /statements/{statement_id}` (rows are matched by position, not by an id — there is nothing else to address a row by in this design); a length mismatch is rejected rather than treated as a partial submission.
+Approves the whole proposed batch **atomically** — there is no per-transaction approval endpoint and no partial approval. Only valid while `status == "approval"`. The submitted array must be the same length as the `transactions` array returned inline by `GET`/`PATCH /statements/{statement_id}` (rows are matched by position, not by an id — there is nothing else to address a row by in this design); a length mismatch is rejected rather than treated as a partial submission.
 
 **Request**
 ```json
@@ -198,7 +198,7 @@ Any field here overrides the corresponding value the user saw in the inline `tra
 }
 ```
 
-**Response `422`** if the statement isn't `pending_approval` (`code: "invalid_status_transition"` — covers both "not normalized yet" and "already processed") or if the submitted array's length doesn't match the proposed one (`code: "transaction_count_mismatch"`).
+**Response `422`** if the statement isn't `approval` (`code: "invalid_status_transition"` — covers both "not normalized yet" and "already processed") or if the submitted array's length doesn't match the proposed one (`code: "transaction_count_mismatch"`).
 
 ---
 

@@ -7,18 +7,21 @@ class StatementFile(models.Model):
     # A row only ever exists once its file is stored (see
     # core/views/statements.py::create_statement_from_upload) — there is no
     # "record_created"/"stored" status here, a storage failure never
-    # persists a row at all. Status reflects the last successfully
-    # completed phase; `failure_reason`/`failed_phase` below carry retry
-    # context for whichever `pending_*` phase hasn't advanced yet, instead
-    # of a separate `failed` status per phase.
-    STATUS_PENDING_EXTRACTION = "pending_extraction"
-    STATUS_PENDING_NORMALIZATION = "pending_normalization"
-    STATUS_PENDING_APPROVAL = "pending_approval"
+    # persists a row at all. Status names the phase the statement is
+    # currently at/working toward — no "pending_" prefix, since
+    # `is_processing` below already says whether that phase is actively
+    # running; baking "pending" into the name too would just be saying the
+    # same thing twice. `failure_reason`/`failed_phase` carry retry context
+    # for whichever phase hasn't advanced yet, instead of a separate
+    # `failed` status per phase.
+    STATUS_EXTRACTION = "extraction"
+    STATUS_NORMALIZATION = "normalization"
+    STATUS_APPROVAL = "approval"
     STATUS_PROCESSED = "processed"
     STATUS_CHOICES = [
-        (STATUS_PENDING_EXTRACTION, "Pending extraction"),
-        (STATUS_PENDING_NORMALIZATION, "Pending normalization"),
-        (STATUS_PENDING_APPROVAL, "Pending approval"),
+        (STATUS_EXTRACTION, "Extraction"),
+        (STATUS_NORMALIZATION, "Normalization"),
+        (STATUS_APPROVAL, "Approval"),
         (STATUS_PROCESSED, "Processed"),
     ]
 
@@ -47,16 +50,14 @@ class StatementFile(models.Model):
     )
     seaweed_file_id = models.CharField(max_length=255)
     checksum = models.CharField(max_length=64)
-    status = models.CharField(
-        max_length=30, choices=STATUS_CHOICES, default=STATUS_PENDING_EXTRACTION
-    )
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default=STATUS_EXTRACTION)
     failure_reason = models.TextField(blank=True, null=True)
     failed_phase = models.CharField(
         max_length=20, choices=FAILED_PHASE_CHOICES, blank=True, null=True
     )
     # True only while a phase runner is actively executing (set/cleared by
     # _run_extraction/_run_normalization in core/views/statements.py) —
-    # without this, "pending_extraction, failure_reason=null" is ambiguous
+    # without this, "status=extraction, failure_reason=null" is ambiguous
     # between "never attempted yet" and "a background worker is running
     # this right now" once the pipeline stops being fully synchronous.
     # Always false in any response today (nothing runs across requests

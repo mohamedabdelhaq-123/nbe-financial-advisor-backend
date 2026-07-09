@@ -17,7 +17,7 @@ This is the second draft of this document. The first draft (over-built: a separa
 ## 2. Final Design
 
 ### Status model
-`statement_files.status`: `pending_extraction | pending_normalization | pending_approval | processed`. Status reflects **the last successfully completed phase** — not a phase in progress, not a dedicated `failed` value. `failure_reason` and `failed_phase` (`extraction | normalization | null`) carry retry context, cleared on every successful transition.
+`statement_files.status`: `extraction | normalization | approval | processed`. Status reflects **the last successfully completed phase** — not a phase in progress, not a dedicated `failed` value. `failure_reason` and `failed_phase` (`extraction | normalization | null`) carry retry context, cleared on every successful transition.
 
 There is deliberately **no `record_created`/`stored` status**. A `StatementFile` row is only ever created after its file is successfully stored (`core/views/statements.py::create_statement_from_upload`) — a storage failure raises before any row is persisted, so there's nothing to represent and nothing to retry. This was the key simplification over the first draft, which had invented a `PUT /statements/{id}/file` retry endpoint for a case that, once the upload/creation step is atomic, never actually needs retrying via the API — the client just re-submits a fresh `POST`.
 
@@ -33,7 +33,7 @@ The first draft's single-transaction endpoint and `partially_processed` state ar
 
 ### Addendum — inlining the proposed transactions
 
-Initially the proposed batch lived behind its own `GET /statements/{id}/normalized` route, separate from the statement's status. In practice that meant two calls to reach the same milestone: check status, then fetch the batch once it turned out to be `pending_approval`. Retired that route and inlined a `transactions` field directly onto `POST`/`GET`/`PATCH /statements/{id}` instead — populated only at `pending_approval`, `null` otherwise (and deliberately absent from the `GET /statements` list response, to avoid bloating a paginated payload with full transaction arrays no list screen needs). One response now carries both "where is this statement" and "what am I approving."
+Initially the proposed batch lived behind its own `GET /statements/{id}/normalized` route, separate from the statement's status. In practice that meant two calls to reach the same milestone: check status, then fetch the batch once it turned out to be `approval`. Retired that route and inlined a `transactions` field directly onto `POST`/`GET`/`PATCH /statements/{id}` instead — populated only at `approval`, `null` otherwise (and deliberately absent from the `GET /statements` list response, to avoid bloating a paginated payload with full transaction arrays no list screen needs). One response now carries both "where is this statement" and "what am I approving."
 
 ### Addendum — is_processing
 
@@ -45,7 +45,11 @@ Inlining `transactions` (previous addendum) still left a gap: `bank_name`, `acco
 
 ### Addendum — transactions switches source once processed
 
-Originally `transactions` just went back to `null` once a statement reached `processed`, on the reasoning that Statements' job is finished at that point (Data Governance Specs §2) and the ledger is the real source of truth. In practice that left no way to see "what did this statement actually produce" through this endpoint at all — `GET /transactions` has no `statement_id` filter, so there was no path back to it. `get_transactions()` now branches on status instead of just gating on it: `pending_approval` still returns the proposed preview from `normalized_json`; `processed` now returns the real rows from `obj.transactions` (the `Transaction.statement` reverse relation), serialized with the existing `TransactionListSerializer` from the Aggregations domain rather than inventing a second shape. This isn't a second copy of ledger data — it's a live read through the same FK, so the single-source-of-truth rule still holds; only the *shape returned* switches, not where the data is kept.
+Originally `transactions` just went back to `null` once a statement reached `processed`, on the reasoning that Statements' job is finished at that point (Data Governance Specs §2) and the ledger is the real source of truth. In practice that left no way to see "what did this statement actually produce" through this endpoint at all — `GET /transactions` has no `statement_id` filter, so there was no path back to it. `get_transactions()` now branches on status instead of just gating on it: `approval` still returns the proposed preview from `normalized_json`; `processed` now returns the real rows from `obj.transactions` (the `Transaction.statement` reverse relation), serialized with the existing `TransactionListSerializer` from the Aggregations domain rather than inventing a second shape. This isn't a second copy of ledger data — it's a live read through the same FK, so the single-source-of-truth rule still holds; only the *shape returned* switches, not where the data is kept.
+
+### Addendum — dropping the `pending_` prefix
+
+Once `is_processing` existed, `pending_extraction`/`pending_normalization`/`pending_approval` were saying the same thing twice: `is_processing=false` already means "not actively running," so a status *name* built around "pending" was redundant with a field that already carries that meaning precisely. Renamed the four values to `extraction | normalization | approval | processed` — the status names the phase the statement is at/working toward; `is_processing` says whether that phase is live right now. A migration (`0005_alter_statementfile_status`) renames the choices/default and includes a data migration for any existing rows, since this changes stored string values, not just a Python-side constant.
 
 ---
 

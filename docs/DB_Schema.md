@@ -97,12 +97,15 @@ CREATE TABLE statement_files (
     template_id                 UUID REFERENCES bank_statement_templates(id) ON DELETE SET NULL,
     seaweed_file_id              VARCHAR(255) NOT NULL,   -- raw file location
     checksum                    VARCHAR(64) NOT NULL,     -- file-level duplicate-upload check
-    status                      VARCHAR(30) NOT NULL DEFAULT 'pending_extraction',
-                                 -- pending_extraction|pending_normalization|pending_approval|processed
-                                 -- reflects the last successfully completed phase; a row only ever
-                                 -- exists once its file is stored, so there is no record_created/
-                                 -- stored/failed status (docs/API_GUIDE/Data_Shapes_Statements.md)
-    failure_reason               TEXT,                     -- why the current pending_* phase last failed, if it did
+    status                      VARCHAR(30) NOT NULL DEFAULT 'extraction',
+                                 -- extraction|normalization|approval|processed
+                                 -- names the phase the statement is currently at/working toward; no
+                                 -- "pending_" prefix — is_processing already says whether that phase
+                                 -- is actively running, so baking "pending" into the name too would
+                                 -- just say the same thing twice. A row only ever exists once its
+                                 -- file is stored, so there is no record_created/stored/failed
+                                 -- status (docs/API_GUIDE/Data_Shapes_Statements.md)
+    failure_reason               TEXT,                     -- why the current phase last failed, if it did
     failed_phase                 VARCHAR(20),               -- extraction|normalization|null
     is_processing                BOOLEAN NOT NULL DEFAULT false, -- true only while a phase runner is actively executing
     start_transaction_date       DATE,

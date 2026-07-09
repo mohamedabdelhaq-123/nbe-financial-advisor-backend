@@ -55,13 +55,13 @@ class StatementDetailSerializer(StatementFileSerializer):
         # Two different sources depending on status, same field name — the
         # frontend always reads `transactions` without needing to know
         # which stage produced it:
-        #  - pending_approval: the not-yet-committed proposed array from
+        #  - approval: the not-yet-committed proposed array from
         #    normalized_json, for the user to review/correct.
         #  - processed: the real ledger rows this statement produced
         #    (Transaction.statement, related_name="transactions"), once
         #    Statements' job is finished (Data_Governance_Specs.md §2) and
         #    the ledger is the source of truth — not the frozen proposal.
-        if obj.status == StatementFile.STATUS_PENDING_APPROVAL:
+        if obj.status == StatementFile.STATUS_APPROVAL:
             payload = obj.normalized_payload
             return payload.get("transactions", []) if payload else None
         if obj.status == StatementFile.STATUS_PROCESSED:
@@ -81,7 +81,7 @@ class StatementDetailSerializer(StatementFileSerializer):
         # Unlike transactions, this and adjusted_at are historical facts
         # about the normalization run itself, not the mutable pending
         # batch — they stay populated after processed too, not just at
-        # pending_approval.
+        # the approval phase.
         record = obj.latest_normalized_record
         return record.model_used if record else None
 
@@ -98,8 +98,8 @@ class StatementPatchSerializer(serializers.Serializer):
 
     status = serializers.ChoiceField(
         choices=[
-            StatementFile.STATUS_PENDING_NORMALIZATION,
-            StatementFile.STATUS_PENDING_APPROVAL,
+            StatementFile.STATUS_NORMALIZATION,
+            StatementFile.STATUS_APPROVAL,
         ]
     )
 

@@ -42,7 +42,7 @@ DELETE /accounts/{account_id}
 ```
 POST   /statements                        # upload (multipart) — stores the file, auto-chains extraction/normalization
 GET    /statements
-GET    /statements/{statement_id}         # includes the proposed transactions inline once pending_approval
+GET    /statements/{statement_id}         # includes the proposed transactions inline once at the approval phase
 PATCH  /statements/{statement_id}         # retry/resume a stuck extraction or normalization phase
 DELETE /statements/{statement_id}
 GET    /statements/{statement_id}/ocr-result

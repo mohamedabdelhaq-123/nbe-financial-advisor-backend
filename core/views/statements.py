@@ -35,8 +35,8 @@ def _run_extraction(statement: StatementFile) -> None:
     """
     Phase 1/2 of the ingestion pipeline (MinerU/OCR), synchronous today for
     the same reason noted on _run_normalization() below. On failure, status
-    is left at pending_extraction and failure_reason/failed_phase record why
-    — PATCH /statements/{id} is the only way to retry this phase (PLAN.md).
+    is left at extraction and failure_reason/failed_phase record why —
+    PATCH /statements/{id} is the only way to retry this phase (PLAN.md).
     """
     statement.is_processing = True
     statement.save(update_fields=["is_processing"])
@@ -57,7 +57,7 @@ def _run_extraction(statement: StatementFile) -> None:
         confidence_score=Decimal(str(result["ocr"]["confidence_score"])),
     )
 
-    statement.status = StatementFile.STATUS_PENDING_NORMALIZATION
+    statement.status = StatementFile.STATUS_NORMALIZATION
     statement.failure_reason = None
     statement.failed_phase = None
     statement.is_processing = False
@@ -130,7 +130,7 @@ def _run_normalization(statement: StatementFile) -> None:
         model_used=result["model_used"],
     )
 
-    statement.status = StatementFile.STATUS_PENDING_APPROVAL
+    statement.status = StatementFile.STATUS_APPROVAL
     statement.failure_reason = None
     statement.failed_phase = None
     statement.is_processing = False
@@ -154,18 +154,18 @@ def _run_normalization(statement: StatementFile) -> None:
 # status's index to tell "forward" from "backward/same" (PATCH validation
 # below) and to drive the retry cascade.
 _STATUS_ORDER = [
-    StatementFile.STATUS_PENDING_EXTRACTION,
-    StatementFile.STATUS_PENDING_NORMALIZATION,
-    StatementFile.STATUS_PENDING_APPROVAL,
+    StatementFile.STATUS_EXTRACTION,
+    StatementFile.STATUS_NORMALIZATION,
+    StatementFile.STATUS_APPROVAL,
     StatementFile.STATUS_PROCESSED,
 ]
 
-# Which phase function runs *from* a given status. STATUS_PENDING_APPROVAL
-# and STATUS_PROCESSED have no entry — the former only ever advances via the
+# Which phase function runs *from* a given status. STATUS_APPROVAL and
+# STATUS_PROCESSED have no entry — the former only ever advances via the
 # transaction-approval endpoint, never PATCH; the latter is terminal.
 _PHASE_RUNNERS = {
-    StatementFile.STATUS_PENDING_EXTRACTION: _run_extraction,
-    StatementFile.STATUS_PENDING_NORMALIZATION: _run_normalization,
+    StatementFile.STATUS_EXTRACTION: _run_extraction,
+    StatementFile.STATUS_NORMALIZATION: _run_normalization,
 }
 
 
@@ -245,11 +245,11 @@ def create_statement_from_upload(user, file_obj, account_id=None) -> StatementFi
         account=account,
         seaweed_file_id=seaweed_file_id,
         checksum=checksum,
-        status=StatementFile.STATUS_PENDING_EXTRACTION,
+        status=StatementFile.STATUS_EXTRACTION,
     )
 
     _run_extraction(statement)
-    if statement.status == StatementFile.STATUS_PENDING_NORMALIZATION:
+    if statement.status == StatementFile.STATUS_NORMALIZATION:
         _run_normalization(statement)
 
     return statement
@@ -276,7 +276,7 @@ class StatementListCreateView(generics.ListAPIView):
             request.user, request.FILES.get("file"), account_id=request.data.get("account_id")
         )
         # Single-resource detail shape (not the lean list one above) — if the
-        # auto-chain already reached pending_approval in this same call, the
+        # auto-chain already reached approval in this same call, the
         # proposed transactions come back here for free, no second GET needed.
         return Response(StatementDetailSerializer(statement).data, status=status.HTTP_202_ACCEPTED)
 
@@ -366,8 +366,8 @@ class StatementTransactionApprovalView(APIView):
 
     Approves the whole proposed transaction batch atomically — no per-
     transaction endpoint and no partial approval (PLAN.md). Only valid
-    while the statement is pending_approval; the submitted array must be
-    the same length as the proposed one (matched by position, not by an
+    while the statement is at the approval phase; the submitted array must
+    be the same length as the proposed one (matched by position, not by an
     id — there's nothing else to match on in this design). Duplicates are
     re-checked against the ledger at commit time rather than trusted from
     the normalize-time `duplicate_of` snapshot, since time may have passed;
@@ -382,7 +382,7 @@ class StatementTransactionApprovalView(APIView):
     def post(self, request, statement_id):
         statement = get_object_or_404(StatementFile, id=statement_id, user=request.user)
 
-        if statement.status != StatementFile.STATUS_PENDING_APPROVAL:
+        if statement.status != StatementFile.STATUS_APPROVAL:
             raise BusinessRuleError(
                 "This statement is not awaiting transaction approval.",
                 code="invalid_status_transition",
