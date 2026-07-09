@@ -52,7 +52,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django.contrib.postgres",
     # API
-    "corsheaders",                               # django-cors-headers (Phase 1 — dev wiring)
+    "corsheaders",  # django-cors-headers (Phase 1 — dev wiring)
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",  # backs POST /auth/logout (see core/views/auth.py)
     "drf_spectacular",
