@@ -90,7 +90,13 @@ class StatementFile(models.Model):
         return self.ocr_results.order_by("-processed_at").first()
 
     @property
+    def latest_normalized_record(self):
+        """The latest StatementNormalized row itself (not just its JSON payload) — lets
+        callers also reach model_used/adjusted_at, not only the data normalized_payload exposes."""
+        return self.normalized_records.order_by("-adjusted_at").first()
+
+    @property
     def normalized_payload(self):
         """Fetches the latest structured JSON block without hitting intermediate tables manually."""
-        record = self.normalized_records.order_by("-adjusted_at").first()
+        record = self.latest_normalized_record
         return record.normalized_json if record else None

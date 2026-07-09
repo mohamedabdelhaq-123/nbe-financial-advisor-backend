@@ -27,16 +27,28 @@ class StatementFileSerializer(serializers.ModelSerializer):
 
 class StatementDetailSerializer(StatementFileSerializer):
     """Single-resource shape (POST /statements, GET/PATCH /statements/{id})
-    — adds the proposed transaction batch inline so the frontend doesn't
-    need a second call to see what it's approving. Deliberately not on the
-    list serializer above (GET /statements) — embedding full transaction
-    arrays into every row of a paginated list is unbounded payload for no
-    benefit, since a list screen doesn't need per-row approval detail."""
+    — adds the proposed transaction batch, plus the file-level metadata
+    normalization produced (bank_name/account_hint/model_used/adjusted_at),
+    inline so the frontend doesn't need a second call to see what it's
+    approving or where it came from. Deliberately not on the list
+    serializer above (GET /statements) — embedding this into every row of
+    a paginated list is unbounded payload for no benefit, since a list
+    screen doesn't need per-row approval detail."""
 
     transactions = serializers.SerializerMethodField()
+    bank_name = serializers.SerializerMethodField()
+    account_hint = serializers.SerializerMethodField()
+    model_used = serializers.SerializerMethodField()
+    adjusted_at = serializers.SerializerMethodField()
 
     class Meta(StatementFileSerializer.Meta):
-        fields = StatementFileSerializer.Meta.fields + ["transactions"]
+        fields = StatementFileSerializer.Meta.fields + [
+            "transactions",
+            "bank_name",
+            "account_hint",
+            "model_used",
+            "adjusted_at",
+        ]
 
     def get_transactions(self, obj) -> list | None:
         # Only meaningful while awaiting approval — once processed, the
@@ -47,6 +59,26 @@ class StatementDetailSerializer(StatementFileSerializer):
             return None
         payload = obj.normalized_payload
         return payload.get("transactions", []) if payload else None
+
+    def get_bank_name(self, obj) -> str | None:
+        payload = obj.normalized_payload
+        return payload.get("bank_name") if payload else None
+
+    def get_account_hint(self, obj) -> str | None:
+        payload = obj.normalized_payload
+        return payload.get("account_hint") if payload else None
+
+    def get_model_used(self, obj) -> str | None:
+        # Unlike transactions, this and adjusted_at are historical facts
+        # about the normalization run itself, not the mutable pending
+        # batch — they stay populated after processed too, not just at
+        # pending_approval.
+        record = obj.latest_normalized_record
+        return record.model_used if record else None
+
+    def get_adjusted_at(self, obj):
+        record = obj.latest_normalized_record
+        return record.adjusted_at if record else None
 
 
 class StatementPatchSerializer(serializers.Serializer):

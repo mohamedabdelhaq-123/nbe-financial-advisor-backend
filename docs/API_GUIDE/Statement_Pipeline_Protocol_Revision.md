@@ -39,6 +39,10 @@ Initially the proposed batch lived behind its own `GET /statements/{id}/normaliz
 
 The status model as shipped couldn't distinguish "this phase is actively running right now" from "this phase stopped and is sitting idle waiting for a retry" — both look identical (`status` unchanged, `failure_reason` null) from the outside. That's invisible today only because the pipeline is fully synchronous within one request; it becomes a real bug the moment any phase runs across a request boundary (a Celery worker, for instance) and a client polls mid-flight. Added `is_processing` (boolean) to close the gap now rather than retrofitting it later: set `true` at the start of each phase runner, `false` at the end regardless of outcome. It's always `false` in any response today, by construction, but the field is correct the moment that stops being true. It also does double duty as a concurrency guard — `PATCH /statements/{id}` now rejects a retry (`code: "already_processing"`) if a phase is already marked running on that statement, closing off the double-click-retry race.
 
+### Addendum — file metadata alongside the proposed transactions
+
+Inlining `transactions` (previous addendum) still left a gap: `bank_name`, `account_hint`, `model_used`, and `adjusted_at` — everything the old `GET /statements/{id}/normalized` route used to return besides the transaction array itself — never made it onto the new inline shape. Added as four more fields on `StatementDetailSerializer`, sourced from the same `statement_normalized` row `transactions` reads from. The key difference: these describe the normalization *event*, not the mutable pending batch, so they stay populated after `processed` — only `transactions` goes back to `null` once approved.
+
 ---
 
 ## 3. What changed elsewhere

@@ -18,15 +18,16 @@ Three fields carry retry/liveness context instead:
 
 ---
 
-## Proposed Transactions (inline, not a separate endpoint)
+## Proposed Transactions & File Metadata (inline, not a separate endpoint)
 
-`POST /statements` and `GET`/`PATCH /statements/{statement_id}` all return a `transactions` field alongside the statement's status — there is no separate call needed to fetch the proposed batch once normalization finishes. It is:
-- an **array** of proposed rows when `status == "pending_approval"` — this is the not-yet-committed batch for the user to review before calling `POST /statements/{statement_id}/transactions`;
-- `null` at every other status, including `processed` — once approved, the ledger (`GET /transactions`) is the source of truth, and Statements' job is finished (Data Governance Specs §2: "not queried again for analytics").
+`POST /statements` and `GET`/`PATCH /statements/{statement_id}` all return `transactions`, `bank_name`, `account_hint`, `model_used`, and `adjusted_at` alongside the statement's status — there is no separate call needed once normalization finishes. These come from the two writes normalization makes (`statement_normalized` row), but have different lifetimes:
 
-**Not** present on `GET /statements` (the list endpoint) — embedding full transaction arrays into every row of a paginated list is unnecessary payload for a screen that doesn't need per-row approval detail.
+- **`transactions`** (`array | null`) — the not-yet-committed batch for the user to review before calling `POST /statements/{statement_id}/transactions`. Only an array while `status == "pending_approval"`; `null` at every other status, including `processed` — once approved, the ledger (`GET /transactions`) is the source of truth, and Statements' job is finished (Data Governance Specs §2: "not queried again for analytics").
+- **`bank_name`**, **`account_hint`**, **`model_used`**, **`adjusted_at`** — historical facts about the normalization run itself, not the mutable pending batch. Populated as soon as a `statement_normalized` row exists (`pending_approval` or later) and **stay populated after `processed`** — unlike `transactions`, these don't move to the ledger, they describe the file.
 
-Each row:
+**None of these are present on `GET /statements`** (the list endpoint) — embedding this into every row of a paginated list is unnecessary payload for a screen that doesn't need per-row detail.
+
+Each `transactions` row:
 ```json
 {
   "transaction_date": "date",
@@ -62,7 +63,11 @@ account_id:  uuid, optional  // if known upfront; the Normalization Agent may ot
   "failure_reason": "string | null",
   "failed_phase": "string | null  // extraction | normalization | null",
   "upload_date": "timestamp",
-  "transactions": "array | null  // see 'Proposed Transactions' above — populated if the auto-chain already reached pending_approval in this call"
+  "transactions": "array | null  // see 'Proposed Transactions & File Metadata' above",
+  "bank_name": "string | null",
+  "account_hint": "string | null",
+  "model_used": "string | null",
+  "adjusted_at": "timestamp | null"
 }
 ```
 
@@ -104,7 +109,7 @@ account_id:  uuid, optional  // if known upfront; the Normalization Agent may ot
 
 **Auth:** Required · **Scoping:** implicit self; `404` if not owned by caller · **Query params:** none
 
-**Response `200`** — same shape as the `POST /statements` response (list item fields **plus** `transactions`, see "Proposed Transactions" above), polled until `status` reaches `processed`, or until `failure_reason` is non-null and the client offers a retry via `PATCH` (API Design Guidelines §9).
+**Response `200`** — same shape as the `POST /statements` response (list item fields **plus** `transactions`/`bank_name`/`account_hint`/`model_used`/`adjusted_at`, see "Proposed Transactions & File Metadata" above), polled until `status` reaches `processed`, or until `failure_reason` is non-null and the client offers a retry via `PATCH` (API Design Guidelines §9).
 
 ---
 
