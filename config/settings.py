@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django.contrib.postgres",
     # API
+    "corsheaders",                               # django-cors-headers (Phase 1 — dev wiring)
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",  # backs POST /auth/logout (see core/views/auth.py)
     "drf_spectacular",
@@ -127,6 +128,10 @@ SIMPLE_JWT = {
 }
 
 MIDDLEWARE = [
+    # CorsMiddleware must be first — before any middleware that can generate
+    # responses (SecurityMiddleware, CommonMiddleware) so preflight OPTIONS
+    # requests get the CORS headers before being short-circuited.
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -135,6 +140,19 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+# ── CORS (django-cors-headers) ─────────────────────────────────────────────────
+# Covers the Vite dev server (:5173) and the deploy nginx proxy (:8080).
+# In production, DJANGO_CORS_ALLOWED_ORIGINS should be set to the real domain.
+CORS_ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get(
+        "DJANGO_CORS_ALLOWED_ORIGINS",
+        "http://localhost:5173,http://localhost:8080,http://127.0.0.1:5173",
+    ).split(",")
+    if o.strip()
+]
+CORS_ALLOW_CREDENTIALS = True
 
 ROOT_URLCONF = "config.urls"
 
