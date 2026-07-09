@@ -5,10 +5,23 @@ from core.serializers.aggregations import TransactionListSerializer
 
 
 class StatementFileSerializer(serializers.ModelSerializer):
+    """List/base shape (GET /statements, and inherited by everything below).
+
+    Carries the file-level metadata — file_size/file_type plus what
+    normalization resolved (bank_name/account_hint/model_used/adjusted_at) —
+    so a document list can show "which bank / what file / when parsed"
+    without a per-row detail call. The heavy part (the transaction array
+    itself) stays on StatementDetailSerializer: a list screen wants the
+    metadata, the detail screen wants the transactions (Data_Shapes_Statements.md)."""
+
     # Renamed from DRF's default `account` (PrimaryKeyRelatedField) to
     # `account_id` to match the `_id`-suffixed foreign-reference convention
     # used throughout docs/API_GUIDE/Data_Shapes_*.md.
     account_id = serializers.PrimaryKeyRelatedField(source="account", read_only=True)
+    bank_name = serializers.SerializerMethodField()
+    account_hint = serializers.SerializerMethodField()
+    model_used = serializers.SerializerMethodField()
+    adjusted_at = serializers.SerializerMethodField()
 
     class Meta:
         model = StatementFile
@@ -19,37 +32,68 @@ class StatementFileSerializer(serializers.ModelSerializer):
             "is_processing",
             "failure_reason",
             "failed_phase",
-            "start_transaction_date",
-            "last_transaction_date",
-            "upload_date",
-        ]
-        read_only_fields = fields
-
-
-class StatementDetailSerializer(StatementFileSerializer):
-    """Single-resource shape (POST /statements, GET/PATCH /statements/{id})
-    — adds the proposed transaction batch, plus the file-level metadata
-    normalization produced (bank_name/account_hint/model_used/adjusted_at),
-    inline so the frontend doesn't need a second call to see what it's
-    approving or where it came from. Deliberately not on the list
-    serializer above (GET /statements) — embedding this into every row of
-    a paginated list is unbounded payload for no benefit, since a list
-    screen doesn't need per-row approval detail."""
-
-    transactions = serializers.SerializerMethodField()
-    bank_name = serializers.SerializerMethodField()
-    account_hint = serializers.SerializerMethodField()
-    model_used = serializers.SerializerMethodField()
-    adjusted_at = serializers.SerializerMethodField()
-
-    class Meta(StatementFileSerializer.Meta):
-        fields = StatementFileSerializer.Meta.fields + [
-            "transactions",
+            "file_size",
+            "file_type",
             "bank_name",
             "account_hint",
             "model_used",
             "adjusted_at",
+            "start_transaction_date",
+            "last_transaction_date",
+            "upload_date",
         ]
+        # Only the model-backed fields — the four SerializerMethodFields above
+        # are read-only by nature and must not be listed here (DRF rejects a
+        # declared field in read_only_fields).
+        read_only_fields = [
+            "id",
+            "account_id",
+            "status",
+            "is_processing",
+            "failure_reason",
+            "failed_phase",
+            "file_size",
+            "file_type",
+            "start_transaction_date",
+            "last_transaction_date",
+            "upload_date",
+        ]
+
+    def get_bank_name(self, obj) -> str | None:
+        payload = obj.normalized_payload
+        return payload.get("bank_name") if payload else None
+
+    def get_account_hint(self, obj) -> str | None:
+        payload = obj.normalized_payload
+        return payload.get("account_hint") if payload else None
+
+    def get_model_used(self, obj) -> str | None:
+        # These describe the normalization run itself, not the mutable
+        # pending batch — so they stay populated after processed too, unlike
+        # the proposed-array flavor of `transactions` on the detail shape.
+        record = obj.latest_normalized_record
+        return record.model_used if record else None
+
+    def get_adjusted_at(self, obj) -> str | None:
+        # SerializerMethodField can't infer the type — annotate so the
+        # generated OpenAPI schema types it as a (ISO-8601 string) timestamp
+        # rather than defaulting to a bare string with a spectacular warning.
+        record = obj.latest_normalized_record
+        return record.adjusted_at if record else None
+
+
+class StatementDetailSerializer(StatementFileSerializer):
+    """Single-resource shape (POST /statements, GET/PATCH /statements/{id}).
+
+    Everything the list carries, plus the transaction array itself — the
+    detail route is where a client goes to review/approve the proposed batch
+    or see the committed ledger rows. Kept off the list serializer above so a
+    paginated document list isn't dragging a full transaction array per row."""
+
+    transactions = serializers.SerializerMethodField()
+
+    class Meta(StatementFileSerializer.Meta):
+        fields = StatementFileSerializer.Meta.fields + ["transactions"]
 
     def get_transactions(self, obj) -> list | None:
         # Two different sources depending on status, same field name — the
@@ -68,26 +112,6 @@ class StatementDetailSerializer(StatementFileSerializer):
             ledger_rows = obj.transactions.order_by("-transaction_date")
             return TransactionListSerializer(ledger_rows, many=True).data
         return None
-
-    def get_bank_name(self, obj) -> str | None:
-        payload = obj.normalized_payload
-        return payload.get("bank_name") if payload else None
-
-    def get_account_hint(self, obj) -> str | None:
-        payload = obj.normalized_payload
-        return payload.get("account_hint") if payload else None
-
-    def get_model_used(self, obj) -> str | None:
-        # Unlike transactions, this and adjusted_at are historical facts
-        # about the normalization run itself, not the mutable pending
-        # batch — they stay populated after processed too, not just at
-        # the approval phase.
-        record = obj.latest_normalized_record
-        return record.model_used if record else None
-
-    def get_adjusted_at(self, obj):
-        record = obj.latest_normalized_record
-        return record.adjusted_at if record else None
 
 
 class StatementPatchSerializer(serializers.Serializer):

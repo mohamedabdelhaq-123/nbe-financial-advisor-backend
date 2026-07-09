@@ -97,6 +97,8 @@ CREATE TABLE statement_files (
     template_id                 UUID REFERENCES bank_statement_templates(id) ON DELETE SET NULL,
     seaweed_file_id              VARCHAR(255) NOT NULL,   -- raw file location
     checksum                    VARCHAR(64) NOT NULL,     -- file-level duplicate-upload check
+    file_size                    BIGINT,                   -- raw file size in bytes, captured at upload (null for seed rows)
+    file_type                    VARCHAR(20),               -- file extension: pdf | jpg | png
     status                      VARCHAR(30) NOT NULL DEFAULT 'extraction',
                                  -- extraction|normalization|approval|processed
                                  -- names the phase the statement is currently at/working toward; no

@@ -1,6 +1,7 @@
 import uuid
 
 from django.db import models
+from django.utils.functional import cached_property
 
 
 class StatementFile(models.Model):
@@ -50,6 +51,11 @@ class StatementFile(models.Model):
     )
     seaweed_file_id = models.CharField(max_length=255)
     checksum = models.CharField(max_length=64)
+    # Captured at upload from the raw file itself (create_statement_from_upload).
+    # Nullable so pre-existing rows and synthetic seed data (which have no real
+    # backing file) don't need backfilling.
+    file_size = models.PositiveBigIntegerField(blank=True, null=True)  # bytes
+    file_type = models.CharField(max_length=20, blank=True, null=True)  # extension: pdf | jpg | png
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default=STATUS_EXTRACTION)
     failure_reason = models.TextField(blank=True, null=True)
     failed_phase = models.CharField(
@@ -90,11 +96,18 @@ class StatementFile(models.Model):
         """Quick shortcut to grab the latest raw engine extraction metrics."""
         return self.ocr_results.order_by("-processed_at").first()
 
-    @property
+    @cached_property
     def latest_normalized_record(self):
         """The latest StatementNormalized row itself (not just its JSON payload) — lets
-        callers also reach model_used/adjusted_at, not only the data normalized_payload exposes."""
-        return self.normalized_records.order_by("-adjusted_at").first()
+        callers also reach model_used/adjusted_at, not only the data normalized_payload exposes.
+
+        Reads via `.all()` + a Python max (rather than `.order_by().first()`) so a
+        `prefetch_related("normalized_records")` on a list queryset is actually used —
+        avoids an N+1 now that the file-metadata fields (which all funnel through here)
+        serialize on GET /statements too. cached_property so the four serializer getters
+        that read this share one evaluation per instance."""
+        records = list(self.normalized_records.all())
+        return max(records, key=lambda record: record.adjusted_at) if records else None
 
     @property
     def normalized_payload(self):

@@ -245,6 +245,8 @@ def create_statement_from_upload(user, file_obj, account_id=None) -> StatementFi
         account=account,
         seaweed_file_id=seaweed_file_id,
         checksum=checksum,
+        file_size=len(file_bytes),
+        file_type=extension,
         status=StatementFile.STATUS_EXTRACTION,
     )
 
@@ -262,7 +264,15 @@ class StatementListCreateView(generics.ListAPIView):
     pagination_class = LimitOffsetPagination
 
     def get_queryset(self):
-        qs = StatementFile.objects.filter(user=self.request.user)
+        # select_related(account) + prefetch(normalized_records) keep the
+        # newly-inlined metadata fields (bank_name/account_hint/model_used/
+        # adjusted_at, all funnelling through latest_normalized_record) from
+        # turning the list into an N+1 — see StatementFile.latest_normalized_record.
+        qs = (
+            StatementFile.objects.filter(user=self.request.user)
+            .select_related("account")
+            .prefetch_related("normalized_records")
+        )
         status_param = self.request.query_params.get("status")
         if status_param:
             qs = qs.filter(status=status_param)
