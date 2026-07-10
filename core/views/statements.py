@@ -2,6 +2,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
+from django.db import transaction as db_transaction
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
@@ -10,6 +11,7 @@ from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.exceptions import BusinessRuleError
 from core.models import (
     BankAccount,
     StatementFile,
@@ -19,29 +21,35 @@ from core.models import (
     UserPreference,
 )
 from core.serializers.statements import (
+    StatementDetailSerializer,
     StatementFileSerializer,
-    StatementNormalizedResponseSerializer,
     StatementOcrResultResponseSerializer,
+    StatementPatchSerializer,
+    StatementUploadRequestSerializer,
+    TransactionApprovalItemSerializer,
+    TransactionApprovalResponseSerializer,
 )
 from services import ai_service, file_storage
 
 
-def _run_mock_pipeline(statement: StatementFile) -> None:
+def _run_extraction(statement: StatementFile) -> None:
     """
-    Runs the OCR + normalization pipeline mock inline, synchronously, right
-    inside the request/response cycle of POST /statements.
+    Phase 1/2 of the ingestion pipeline (MinerU/OCR), synchronous today for
+    the same reason noted on _run_normalization() below. On failure, status
+    is left at uploaded and failure_reason/failed_phase record why —
+    PATCH /statements/{id} is the only way to retry this phase (PLAN.md).
+    """
+    statement.is_processing = True
+    statement.save(update_fields=["is_processing"])
 
-    In the real implementation this is where Django would enqueue a Celery
-    job and return immediately with status="pending" (API Design Guidelines
-    §9), with the AI service call happening later, out of band. No
-    Celery/async worker is wired up yet (see PLAN.md §5's open items), so
-    there's no async boundary to actually return across — by the time
-    POST /statements sends its response, this function has already run to
-    completion and the row reflects its final state. The 202 status *code*
-    is kept regardless, since that's the contract the frontend is expected
-    to build against once the real async pipeline lands.
-    """
-    result = ai_service.normalize(statement)
+    try:
+        result = ai_service.normalize(statement)
+    except Exception as exc:
+        statement.failure_reason = str(exc)
+        statement.failed_phase = StatementFile.PHASE_EXTRACTION
+        statement.is_processing = False
+        statement.save(update_fields=["failure_reason", "failed_phase", "is_processing"])
+        return
 
     StatementOcrResult.objects.create(
         statement=statement,
@@ -49,6 +57,43 @@ def _run_mock_pipeline(statement: StatementFile) -> None:
         ocr_engine=result["ocr"]["engine"],
         confidence_score=Decimal(str(result["ocr"]["confidence_score"])),
     )
+
+    statement.status = StatementFile.STATUS_EXTRACTED
+    statement.failure_reason = None
+    statement.failed_phase = None
+    statement.is_processing = False
+    statement.save(update_fields=["status", "failure_reason", "failed_phase", "is_processing"])
+
+
+def _run_normalization(statement: StatementFile) -> None:
+    """
+    Phase 2/2 (Normalization Agent). Resolves bank properties and writes the
+    proposed transaction array to normalized_json for the user to review —
+    nothing is written to the ledger here anymore; that only happens via
+    POST /statements/{id}/transactions once the user approves the whole
+    batch (PLAN.md). duplicate_of is still computed here for display, but is
+    re-checked at approval time rather than trusted, since time may have
+    passed since this ran.
+
+    Both this and _run_extraction() call ai_service.normalize() independently
+    rather than sharing one result — the mock bundles OCR + LLM output in one
+    deterministic, seeded-by-statement-id call (see its docstring), so a
+    second call for the same statement reproduces the same data. This mirrors
+    the two separate calls a real integration would make (Pipeline.md §2:
+    MinerU and the Normalization Agent are distinct steps) without requiring
+    state to be threaded between two separate HTTP requests.
+    """
+    statement.is_processing = True
+    statement.save(update_fields=["is_processing"])
+
+    try:
+        result = ai_service.normalize(statement)
+    except Exception as exc:
+        statement.failure_reason = str(exc)
+        statement.failed_phase = StatementFile.PHASE_NORMALIZATION
+        statement.is_processing = False
+        statement.save(update_fields=["failure_reason", "failed_phase", "is_processing"])
+        return
 
     normalized = result["normalized"]
 
@@ -67,12 +112,9 @@ def _run_mock_pipeline(statement: StatementFile) -> None:
     for txn in normalized["transactions"]:
         transaction_date = date.fromisoformat(txn["transaction_date"])
         amount = Decimal(str(txn["amount"]))
-        # Duplicate-prevention guardrail (System_Architecture.md §8): a
-        # composite match on (user, account, date, amount, raw merchant text)
-        # runs before insert, regardless of origin. Doing the lookup directly
-        # here (rather than calling Transaction.is_duplicate(), which only
-        # returns a bool) lets us record *which* existing transaction this
-        # duplicates, per Data_Shapes_Statements.md's `duplicate_of` field.
+        # Preview-only duplicate check (System_Architecture.md §8) — informs
+        # the user before they approve; POST /statements/{id}/transactions
+        # re-runs this same lookup at commit time rather than trusting it.
         existing = Transaction.objects.filter(
             user=statement.user,
             account=statement.account,
@@ -80,23 +122,8 @@ def _run_mock_pipeline(statement: StatementFile) -> None:
             amount=amount,
             merchant_raw=txn["merchant_raw"],
         ).first()
-        if existing is not None:
-            txn["duplicate_of"] = str(existing.id)
-            continue
-
-        Transaction.objects.create(
-            user=statement.user,
-            account=statement.account,
-            statement=statement,
-            transaction_date=transaction_date,
-            merchant_raw=txn["merchant_raw"],
-            category=txn.get("category"),
-            amount=amount,
-            transaction_type=txn.get("transaction_type"),
-            source="statement",
-        )
+        txn["duplicate_of"] = str(existing.id) if existing is not None else None
         transaction_dates.append(transaction_date)
-        txn["duplicate_of"] = None
 
     StatementNormalized.objects.create(
         statement=statement,
@@ -104,29 +131,128 @@ def _run_mock_pipeline(statement: StatementFile) -> None:
         model_used=result["model_used"],
     )
 
-    statement.status = "normalized"
+    statement.status = StatementFile.STATUS_NORMALIZED
+    statement.failure_reason = None
+    statement.failed_phase = None
+    statement.is_processing = False
     if transaction_dates:
         statement.start_transaction_date = min(transaction_dates)
         statement.last_transaction_date = max(transaction_dates)
     statement.save(
-        update_fields=["account", "status", "start_transaction_date", "last_transaction_date"]
+        update_fields=[
+            "account",
+            "status",
+            "failure_reason",
+            "failed_phase",
+            "is_processing",
+            "start_transaction_date",
+            "last_transaction_date",
+        ]
     )
 
 
-def create_statement_from_upload(user, file_obj, account_id=None) -> StatementFile:
+# Ordered so a target status's index can be compared against the current
+# status's index to tell "forward" from "backward/same" (PATCH validation
+# below) and to drive the retry cascade.
+_STATUS_ORDER = [
+    StatementFile.STATUS_UPLOADED,
+    StatementFile.STATUS_EXTRACTED,
+    StatementFile.STATUS_NORMALIZED,
+    StatementFile.STATUS_APPROVED,
+]
+
+# Which phase function runs *from* a given status. STATUS_NORMALIZED and
+# STATUS_APPROVED have no entry — the former only ever advances via the
+# transaction-approval endpoint, never PATCH; the latter is terminal.
+_PHASE_RUNNERS = {
+    StatementFile.STATUS_UPLOADED: _run_extraction,
+    StatementFile.STATUS_EXTRACTED: _run_normalization,
+}
+
+
+def advance_statement_to(statement: StatementFile, target_status: str) -> None:
     """
-    The full upload -> checksum-dedupe -> mock-pipeline flow, factored out of
-    StatementListCreateView.post() so the Conversations domain's
-    POST /chat/conversations/{id}/attachments can reuse it exactly —
-    Data_Shapes_Conversations.md: "Shortcut into the Statements pipeline...
-    same underlying processing as POST /statements". Raises the same
-    ValidationError/404 a direct upload would, so both call sites behave
-    identically (API Design Guidelines §1: "one backend, one write path").
+    The single place that drives the pipeline forward toward `target_status`
+    — both create_statement_from_upload()'s initial auto-chain and
+    StatementDetailView.patch()'s retry go through this, so the same guards
+    apply to both instead of being duplicated per call site.
+
+    Raises BusinessRuleError if the statement is already approved
+    (`already_approved`), a phase is already running on it
+    (`already_processing` — guards against two overlapping callers, e.g. a
+    double-clicked retry, re-running the same phase concurrently), or
+    `target_status` isn't strictly ahead of the statement's current status
+    (`invalid_status_transition`).
+
+    Otherwise resumes one phase at a time, stopping once `target_status` is
+    reached or a phase fails (leaving failure_reason/failed_phase set by
+    that phase's runner — a mid-cascade failure returns normally rather
+    than raising; it's a valid outcome, not a request error). Requesting a
+    target further out than the next phase cascades through the
+    intermediate ones in this same call.
+    """
+    if statement.status == StatementFile.STATUS_APPROVED:
+        raise BusinessRuleError(
+            "This statement has already been approved and cannot be retried.",
+            code="already_approved",
+        )
+    if statement.is_processing:
+        raise BusinessRuleError(
+            "This statement is currently being processed; try again shortly.",
+            code="already_processing",
+        )
+    target_rank = _STATUS_ORDER.index(target_status)
+    if target_rank <= _STATUS_ORDER.index(statement.status):
+        raise BusinessRuleError(
+            "Target status must be ahead of the statement's current status.",
+            code="invalid_status_transition",
+        )
+
+    while _STATUS_ORDER.index(statement.status) < target_rank:
+        runner = _PHASE_RUNNERS.get(statement.status)
+        if runner is None:
+            break
+        status_before = statement.status
+        runner(statement)
+        if statement.status == status_before:
+            # The phase attempted and failed — its runner already recorded
+            # failure_reason/failed_phase and left status where it was.
+            break
+
+
+def create_statement_from_upload(
+    user, file_obj, account_id=None, target_status=None
+) -> StatementFile:
+    """
+    The full upload -> checksum-dedupe -> store -> auto-chained-pipeline
+    flow, factored out of StatementListCreateView.post() so the
+    Conversations domain's POST /chat/conversations/{id}/attachments can
+    reuse it exactly — Data_Shapes_Conversations.md: "Shortcut into the
+    Statements pipeline... same underlying processing as POST /statements".
+    Raises the same ValidationError/BusinessRuleError/404 a direct upload
+    would, so both call sites behave identically (API Design Guidelines §1:
+    "one backend, one write path").
+
+    A StatementFile row is only ever created once the file is successfully
+    stored (PLAN.md) — if storage fails, this raises before anything is
+    persisted, and there is nothing for the caller to retry; they re-submit
+    a fresh upload. Once the row exists, the pipeline auto-chains toward
+    `target_status` via advance_statement_to() — the same function
+    StatementDetailView.patch() uses to retry, so a fresh upload and a
+    retry drive the pipeline identically. Defaults to STATUS_NORMALIZED —
+    the furthest point reachable by auto-chaining (STATUS_APPROVED is only
+    reachable via the transaction-approval endpoint, never a status flag),
+    and the original always-chain-to-the-end behavior — when the caller
+    (e.g. the Conversations shortcut) doesn't pass one; POST /statements
+    lets the client choose explicitly via StatementUploadRequestSerializer's
+    optional `status` field. Stops wherever a phase fails — PATCH
+    /statements/{id} is then the way to resume from there.
     """
     if not file_obj:
         raise ValidationError({"file": "This field is required."})
 
-    checksum = file_storage.compute_checksum(file_obj.read())
+    file_bytes = file_obj.read()
+    checksum = file_storage.compute_checksum(file_bytes)
 
     if StatementFile.objects.filter(user=user, checksum=checksum).exists():
         # File-level duplicate-upload check (DB_Schema.md's
@@ -144,16 +270,25 @@ def create_statement_from_upload(user, file_obj, account_id=None) -> StatementFi
 
     extension = file_obj.name.rsplit(".", 1)[-1].lower() if "." in file_obj.name else "bin"
     statement_id = uuid.uuid4()
+    seaweed_file_id = file_storage.raw_statement_key(user.id, statement_id, extension)
+
+    try:
+        file_storage.store_raw_file(seaweed_file_id, file_bytes)
+    except Exception as exc:
+        raise BusinessRuleError(f"The file could not be stored: {exc}", code="storage_failed")
+
     statement = StatementFile.objects.create(
         id=statement_id,
         user=user,
         account=account,
-        seaweed_file_id=file_storage.raw_statement_key(user.id, statement_id, extension),
+        seaweed_file_id=seaweed_file_id,
         checksum=checksum,
-        status="pending",
+        file_size=len(file_bytes),
+        file_type=extension,
+        status=StatementFile.STATUS_UPLOADED,
     )
 
-    _run_mock_pipeline(statement)
+    advance_statement_to(statement, target_status or StatementFile.STATUS_NORMALIZED)
     return statement
 
 
@@ -164,7 +299,15 @@ class StatementListCreateView(generics.ListAPIView):
     pagination_class = LimitOffsetPagination
 
     def get_queryset(self):
-        qs = StatementFile.objects.filter(user=self.request.user)
+        # select_related(account) + prefetch(normalized_records) keep the
+        # newly-inlined metadata fields (bank_name/account_hint/model_used/
+        # adjusted_at, all funnelling through latest_normalized_record) from
+        # turning the list into an N+1 — see StatementFile.latest_normalized_record.
+        qs = (
+            StatementFile.objects.filter(user=self.request.user)
+            .select_related("account")
+            .prefetch_related("normalized_records")
+        )
         status_param = self.request.query_params.get("status")
         if status_param:
             qs = qs.filter(status=status_param)
@@ -173,21 +316,56 @@ class StatementListCreateView(generics.ListAPIView):
             qs = qs.filter(account_id=account_id)
         return qs.order_by("-upload_date")
 
+    @extend_schema(
+        request=StatementUploadRequestSerializer,
+        responses={202: StatementDetailSerializer},
+    )
     def post(self, request, *args, **kwargs):
+        upload = StatementUploadRequestSerializer(data=request.data)
+        upload.is_valid(raise_exception=True)
         statement = create_statement_from_upload(
-            request.user, request.FILES.get("file"), account_id=request.data.get("account_id")
+            request.user,
+            upload.validated_data["file"],
+            account_id=upload.validated_data.get("account_id"),
+            # Defaults to STATUS_NORMALIZED inside create_statement_from_upload
+            # when omitted — the serializer's own `default` already resolves
+            # that, but .get() here keeps this call site symmetrical with
+            # the "no explicit target" contract other callers rely on.
+            target_status=upload.validated_data.get("status"),
         )
-        return Response(StatementFileSerializer(statement).data, status=status.HTTP_202_ACCEPTED)
+        # Single-resource detail shape (not the lean list one above) — if the
+        # auto-chain already reached normalized in this same call, the
+        # proposed transactions come back here for free, no second GET needed.
+        return Response(StatementDetailSerializer(statement).data, status=status.HTTP_202_ACCEPTED)
 
 
 class StatementDetailView(generics.RetrieveDestroyAPIView):
-    """GET/DELETE /statements/{statement_id}"""
+    """GET/DELETE/PATCH /statements/{statement_id}"""
 
-    serializer_class = StatementFileSerializer
+    serializer_class = StatementDetailSerializer
     lookup_url_kwarg = "statement_id"
 
     def get_queryset(self):
         return StatementFile.objects.filter(user=self.request.user)
+
+    @extend_schema(
+        request=StatementPatchSerializer,
+        responses={200: StatementDetailSerializer},
+    )
+    def patch(self, request, *args, **kwargs):
+        # Retry/resume, never a general field update — see PLAN.md
+        # Checkpoint 3. Only the pipeline phases, not the file upload, are
+        # retryable this way (services/file_storage.py's store_raw_file()
+        # docstring: a storage failure never leaves a row to PATCH at all).
+        # All the already_processed/already_processing/forward-only guards
+        # live in advance_statement_to() — the same function POST /statements
+        # calls for its own initial auto-chain, so both call sites enforce
+        # identical rules instead of duplicating them here.
+        statement = self.get_object()
+        serializer = StatementPatchSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        advance_statement_to(statement, serializer.validated_data["status"])
+        return Response(StatementDetailSerializer(statement).data)
 
     def perform_destroy(self, instance):
         # Removes the statement_files row and its raw/artifact files (subject
@@ -228,21 +406,101 @@ class StatementOcrResultView(APIView):
         )
 
 
-class StatementNormalizedView(APIView):
-    """GET /statements/{statement_id}/normalized"""
+class StatementTransactionApprovalView(APIView):
+    """POST /statements/{statement_id}/transactions
 
-    @extend_schema(responses={200: StatementNormalizedResponseSerializer})
-    def get(self, request, statement_id):
+    Approves the whole proposed transaction batch atomically — no per-
+    transaction endpoint and no partial approval (PLAN.md). Only valid
+    while the statement is normalized (awaiting the user's approval
+    decision); the submitted array must be the same length as the proposed
+    one (matched by position, not by an id — there's nothing else to match
+    on in this design). Duplicates are re-checked against the ledger at
+    commit time rather than trusted from the normalize-time `duplicate_of`
+    snapshot, since time may have passed; a duplicate is skipped, not
+    treated as an error. Advances the statement straight to approved once
+    every row is resolved — this is the endpoint that action names itself
+    after, unlike the status names elsewhere in this pipeline.
+    """
+
+    @extend_schema(
+        request=TransactionApprovalItemSerializer(many=True),
+        responses={200: TransactionApprovalResponseSerializer},
+    )
+    def post(self, request, statement_id):
         statement = get_object_or_404(StatementFile, id=statement_id, user=request.user)
-        record = statement.normalized_records.order_by("-adjusted_at").first()
-        if record is None:
-            raise NotFound("Normalized result not available yet.")
+
+        if statement.status != StatementFile.STATUS_NORMALIZED:
+            raise BusinessRuleError(
+                "This statement is not awaiting transaction approval.",
+                code="invalid_status_transition",
+            )
+
+        proposed = (statement.normalized_payload or {}).get("transactions", [])
+        item_serializer = TransactionApprovalItemSerializer(data=request.data, many=True)
+        item_serializer.is_valid(raise_exception=True)
+        submitted = item_serializer.validated_data
+
+        if len(submitted) != len(proposed):
+            raise BusinessRuleError(
+                f"Expected {len(proposed)} transactions, got {len(submitted)} — "
+                "the full proposed batch must be submitted together.",
+                code="transaction_count_mismatch",
+            )
+
+        resolved = []
+        with db_transaction.atomic():
+            for row in submitted:
+                merchant_raw = row.get("merchant_raw")
+                # Re-run at commit time (System_Architecture.md §8) rather than
+                # trusting the normalize-time duplicate_of snapshot — another
+                # statement could have inserted a colliding row since then.
+                existing = Transaction.objects.filter(
+                    user=statement.user,
+                    account=statement.account,
+                    transaction_date=row["transaction_date"],
+                    amount=row["amount"],
+                    merchant_raw=merchant_raw,
+                ).first()
+                if existing is not None:
+                    resolved.append(
+                        {
+                            "transaction_date": row["transaction_date"],
+                            "merchant_raw": merchant_raw,
+                            "amount": row["amount"],
+                            "transaction_id": None,
+                            "duplicate_of": existing.id,
+                        }
+                    )
+                    continue
+
+                created = Transaction.objects.create(
+                    user=statement.user,
+                    account=statement.account,
+                    statement=statement,
+                    transaction_date=row["transaction_date"],
+                    merchant_raw=merchant_raw,
+                    category=row.get("category"),
+                    amount=row["amount"],
+                    transaction_type=row.get("transaction_type"),
+                    source="statement",
+                )
+                resolved.append(
+                    {
+                        "transaction_date": row["transaction_date"],
+                        "merchant_raw": merchant_raw,
+                        "amount": row["amount"],
+                        "transaction_id": created.id,
+                        "duplicate_of": None,
+                    }
+                )
+
+            statement.status = StatementFile.STATUS_APPROVED
+            statement.failure_reason = None
+            statement.failed_phase = None
+            statement.save(update_fields=["status", "failure_reason", "failed_phase"])
+
         return Response(
-            {
-                "statement_id": str(statement.id),
-                "model_used": record.model_used,
-                "adjusted_at": record.adjusted_at,
-                "transaction_count": len(record.normalized_json.get("transactions", [])),
-                "normalized_json": record.normalized_json,
-            }
+            TransactionApprovalResponseSerializer(
+                {"statement_status": statement.status, "resolved": resolved}
+            ).data
         )

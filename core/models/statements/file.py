@@ -1,9 +1,41 @@
 import uuid
 
 from django.db import models
+from django.utils.functional import cached_property
 
 
 class StatementFile(models.Model):
+    # A row only ever exists once its file is stored (see
+    # core/views/statements.py::create_statement_from_upload) — there is no
+    # "record_created"/"stored" status here, a storage failure never
+    # persists a row at all. Each status names the phase that has already
+    # completed — "uploaded" means the upload step is done (extraction
+    # hasn't run yet), not "an upload is pending" — so there's no verb-vs-
+    # status ambiguity like the old "approval" status name had against the
+    # "approve" action on POST .../transactions. No "pending_" prefix either:
+    # `is_processing` below already says whether the *next* phase is
+    # actively running; baking "pending" into the status name too would
+    # just say the same thing twice. `failure_reason`/`failed_phase` carry
+    # retry context for whichever phase hasn't completed yet, instead of a
+    # separate `failed` status per phase.
+    STATUS_UPLOADED = "uploaded"
+    STATUS_EXTRACTED = "extracted"
+    STATUS_NORMALIZED = "normalized"
+    STATUS_APPROVED = "approved"
+    STATUS_CHOICES = [
+        (STATUS_UPLOADED, "Uploaded"),
+        (STATUS_EXTRACTED, "Extracted"),
+        (STATUS_NORMALIZED, "Normalized"),
+        (STATUS_APPROVED, "Approved"),
+    ]
+
+    PHASE_EXTRACTION = "extraction"
+    PHASE_NORMALIZATION = "normalization"
+    FAILED_PHASE_CHOICES = [
+        (PHASE_EXTRACTION, "Extraction"),
+        (PHASE_NORMALIZATION, "Normalization"),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey("User", on_delete=models.CASCADE, related_name="statement_files")
     account = models.ForeignKey(
@@ -22,7 +54,25 @@ class StatementFile(models.Model):
     )
     seaweed_file_id = models.CharField(max_length=255)
     checksum = models.CharField(max_length=64)
-    status = models.CharField(max_length=20, default="pending")
+    # Captured at upload from the raw file itself (create_statement_from_upload).
+    # Nullable so pre-existing rows and synthetic seed data (which have no real
+    # backing file) don't need backfilling.
+    file_size = models.PositiveBigIntegerField(blank=True, null=True)  # bytes
+    file_type = models.CharField(max_length=20, blank=True, null=True)  # extension: pdf | jpg | png
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default=STATUS_UPLOADED)
+    failure_reason = models.TextField(blank=True, null=True)
+    failed_phase = models.CharField(
+        max_length=20, choices=FAILED_PHASE_CHOICES, blank=True, null=True
+    )
+    # True only while a phase runner is actively executing (set/cleared by
+    # _run_extraction/_run_normalization in core/views/statements.py) —
+    # without this, "status=uploaded, failure_reason=null" is ambiguous
+    # between "extraction never attempted yet" and "a background worker is
+    # running it right now" once the pipeline stops being fully synchronous.
+    # Always false in any response today (nothing runs across requests
+    # yet), but also doubles as a guard against two overlapping PATCH
+    # retries firing on the same statement.
+    is_processing = models.BooleanField(default=False)
     start_transaction_date = models.DateField(blank=True, null=True)
     last_transaction_date = models.DateField(blank=True, null=True)
     upload_date = models.DateTimeField(auto_now_add=True)
@@ -41,16 +91,29 @@ class StatementFile(models.Model):
 
     @property
     def is_fully_processed(self):
-        """Returns True if the document successfully crossed the extraction finish line."""
-        return self.status == "processed"
+        """Returns True if the document's transactions were approved and committed to the ledger."""
+        return self.status == self.STATUS_APPROVED
 
     @property
     def latest_ocr_run(self):
         """Quick shortcut to grab the latest raw engine extraction metrics."""
         return self.ocr_results.order_by("-processed_at").first()
 
+    @cached_property
+    def latest_normalized_record(self):
+        """The latest StatementNormalized row itself (not just its JSON payload) — lets
+        callers also reach model_used/adjusted_at, not only the data normalized_payload exposes.
+
+        Reads via `.all()` + a Python max (rather than `.order_by().first()`) so a
+        `prefetch_related("normalized_records")` on a list queryset is actually used —
+        avoids an N+1 now that the file-metadata fields (which all funnel through here)
+        serialize on GET /statements too. cached_property so the four serializer getters
+        that read this share one evaluation per instance."""
+        records = list(self.normalized_records.all())
+        return max(records, key=lambda record: record.adjusted_at) if records else None
+
     @property
     def normalized_payload(self):
         """Fetches the latest structured JSON block without hitting intermediate tables manually."""
-        record = self.normalized_records.order_by("-adjusted_at").first()
+        record = self.latest_normalized_record
         return record.normalized_json if record else None
