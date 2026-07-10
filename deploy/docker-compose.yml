@@ -43,11 +43,22 @@ services:
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8001"
     environment:
+      # Own (read-write) database — a SEPARATE database (ai_appdb) owned by a
+      # dedicated least-privilege role. The AI service migrates & owns these
+      # tables; it holds NO superuser creds and cannot touch Django's appdb.
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-appdb}
-      POSTGRES_USER: ${POSTGRES_USER:-appuser}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apppass}
+      POSTGRES_DB: ${AI_DB_NAME:-ai_appdb}
+      POSTGRES_USER: ${AI_DB_USER:-ai_user}
+      POSTGRES_PASSWORD: ${AI_DB_PASSWORD:-ai_db_pass}
+      # Backend (Django-owned) database — READ-ONLY role, SELECT only.
+      # Same Postgres server, but appdb via a locked-down role so writes are
+      # rejected by the DB itself.
+      BACKEND_DB_HOST: postgres
+      BACKEND_DB_PORT: 5432
+      BACKEND_DB_NAME: ${POSTGRES_DB:-appdb}
+      BACKEND_DB_USER: ai_readonly
+      BACKEND_DB_PASSWORD: ${AI_READONLY_PASSWORD:-ai_readonly_pass}
       USE_MOCK_LLM: ${USE_MOCK_LLM:-1}
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
@@ -66,8 +77,13 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-appdb}
       POSTGRES_USER: ${POSTGRES_USER:-appuser}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apppass}
+      # Consumed by initdb/10-ai-roles.sh to provision the AI roles + database.
+      AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-ai_readonly_pass}
+      AI_DB_PASSWORD: ${AI_DB_PASSWORD:-ai_db_pass}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Runs ONCE on first cluster init: creates ai_user + ai_appdb + ai_readonly.
+      - ./initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-appuser} -d ${POSTGRES_DB:-appdb}"]
       interval: 10s
