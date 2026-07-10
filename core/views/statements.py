@@ -25,6 +25,7 @@ from core.serializers.statements import (
     StatementFileSerializer,
     StatementOcrResultResponseSerializer,
     StatementPatchSerializer,
+    StatementUploadRequestSerializer,
     TransactionApprovalItemSerializer,
     TransactionApprovalResponseSerializer,
 )
@@ -281,6 +282,10 @@ class StatementListCreateView(generics.ListAPIView):
             qs = qs.filter(account_id=account_id)
         return qs.order_by("-upload_date")
 
+    @extend_schema(
+        request=StatementUploadRequestSerializer,
+        responses={202: StatementDetailSerializer},
+    )
     def post(self, request, *args, **kwargs):
         statement = create_statement_from_upload(
             request.user, request.FILES.get("file"), account_id=request.data.get("account_id")

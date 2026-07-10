@@ -1,7 +1,24 @@
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from core.models import StatementFile
 from core.serializers.aggregations import TransactionListSerializer
+
+
+@extend_schema_field(OpenApiTypes.BINARY)
+class _BinaryFileField(serializers.FileField):
+    """Plain FileField, annotated for schema generation only.
+
+    Has to be a field *class* decorated with @extend_schema_field, not a
+    decorated instance — DRF re-instantiates every declared field via
+    Field.__deepcopy__(), which reconstructs from the original __init__
+    args/kwargs rather than copying instance state (see
+    rest_framework.fields.Field.__deepcopy__), so an override set on an
+    instance is silently dropped the moment it's bound to a serializer.
+    A class-level override survives because it's inherited by the fresh
+    instance instead of depending on copied instance state.
+    """
 
 
 class StatementFileSerializer(serializers.ModelSerializer):
@@ -112,6 +129,25 @@ class StatementDetailSerializer(StatementFileSerializer):
             ledger_rows = obj.transactions.order_by("-transaction_date")
             return TransactionListSerializer(ledger_rows, many=True).data
         return None
+
+
+class StatementUploadRequestSerializer(serializers.Serializer):
+    """POST /statements — input-only, documents the multipart request body
+    for drf-spectacular. Never actually used to validate: the view reads
+    request.FILES/request.data directly (create_statement_from_upload()),
+    same pattern as StatementOcrResultResponseSerializer's docstring below
+    for the output side. Without this, drf-spectacular falls back to
+    StatementFileSerializer (a fully read_only response shape with no
+    `file` field at all) as the request body, which renders as an empty,
+    unusable form in Swagger UI."""
+
+    # Without COMPONENT_SPLIT_REQUEST (a global setting affecting every
+    # serializer's schema naming, not just this one), drf-spectacular can't
+    # tell this FileField is write-only and defaults to the read-side
+    # `use_url` behavior (format: uri — a string, not a file picker). Scoped
+    # override instead of flipping that project-wide setting for one field.
+    file = _BinaryFileField()
+    account_id = serializers.UUIDField(required=False)
 
 
 class StatementPatchSerializer(serializers.Serializer):
