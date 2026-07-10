@@ -58,9 +58,10 @@ The Statements responses split into two tiers by weight, so a document list stay
 ```
 file:        binary, required (pdf | jpg | png)
 account_id:  uuid, optional  // if known upfront; the Normalization Agent may otherwise resolve/create one
+status:      "normalization" | "approval", optional, default "approval"  // how far to auto-chain in this call
 ```
 
-**Behavior:** Uploads and stores the file, then auto-chains through extraction and normalization synchronously in the same call (the "one-shot" ingestion pipeline — Pipeline.md §2), stopping wherever a phase fails. The response always reflects however far the pipeline actually got.
+**Behavior:** Uploads and stores the file, then auto-chains the pipeline synchronously in the same call, up through `status` (or all the way to `approval` — the original always-chain-to-the-end behavior — if omitted), stopping earlier if a phase fails. Pass `"normalization"` to stop right after extraction instead of running normalization too. Both this and `PATCH /statements/{statement_id}` drive the pipeline through the same underlying function, so the same rules apply to both — a target that isn't `normalization`/`approval` is rejected the same way in either place.
 
 **Response `202`** (async — API Design Guidelines §9)
 ```json

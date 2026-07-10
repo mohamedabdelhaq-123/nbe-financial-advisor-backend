@@ -59,6 +59,16 @@ The inline fields ended up split across the two response tiers by weight. The **
 
 Onboarding renders the starter templates before the user has a token, so the route moved to `AllowAny`. The templates are reference data, not user-scoped, so nothing leaks; the only user-dependent bit — the `is_suggested` flag — falls back to flagging `balanced` when there's no authenticated user (or no qualifying income/dependents signals), and still tailors to `aggressive_savings` for a signed-in steady-income, no-dependents user.
 
+### Addendum — one guarded entry point for both POST and PATCH
+
+`create_statement_from_upload()` (POST's initial chain) and `StatementDetailView.patch()` (retry) had each grown their own copy of "is this transition allowed" — POST just called `_run_extraction`/`_run_normalization` inline and checked the resulting status by hand; PATCH had the already-processed/already-processing/forward-only checks written out before calling `advance_statement_to()`. Moved all three guards *into* `advance_statement_to()` itself, so it's not just the cascade loop that's shared — it's the whole "is this move legal" decision. POST now calls it too, instead of duplicating the two-line cascade a second time.
+
+That unification made an actual feature easy to add cheaply: `POST /statements` now takes an optional `status` field (`normalization` | `approval`, same choices `PATCH` accepts, default `approval` — the original always-chain-to-the-end behavior), so a client can stop the initial upload right after extraction instead of always running normalization too. Both serializers' `status` `ChoiceField`s now read from one shared `_ADVANCE_TARGET_CHOICES` constant rather than two separately-typed-out lists.
+
+### Addendum — PATCH was missing `@extend_schema` (same bug as POST, found later)
+
+`StatementDetailView.patch()` had the identical gap the first Swagger-UI fix addressed on `POST /statements`: no `@extend_schema`, so drf-spectacular fell back to `StatementDetailSerializer` (fully read-only) as PATCH's request body too — `status` never appeared as an editable field in Swagger UI. Same fix: `@extend_schema(request=StatementPatchSerializer, responses={200: StatementDetailSerializer})`. Worth noting for next time: any hand-written `def post`/`patch`/`put` on a generic view needs this checked explicitly — drf-spectacular does not warn when it silently substitutes the wrong serializer, it just produces a technically-valid but useless schema.
+
 ---
 
 ## 3. What changed elsewhere

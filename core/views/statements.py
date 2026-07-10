@@ -172,14 +172,42 @@ _PHASE_RUNNERS = {
 
 def advance_statement_to(statement: StatementFile, target_status: str) -> None:
     """
-    Retries/resumes the pipeline from wherever `statement` currently is, one
-    phase at a time, stopping once `target_status` is reached or a phase
-    fails (leaving failure_reason/failed_phase set by that phase's runner).
-    Requesting a target further out than the next phase cascades through the
-    intermediate ones in this same call, mirroring the auto-chain behavior
-    of create_statement_from_upload().
+    The single place that drives the pipeline forward toward `target_status`
+    — both create_statement_from_upload()'s initial auto-chain and
+    StatementDetailView.patch()'s retry go through this, so the same guards
+    apply to both instead of being duplicated per call site.
+
+    Raises BusinessRuleError if the statement is already processed
+    (`already_processed`), a phase is already running on it
+    (`already_processing` — guards against two overlapping callers, e.g. a
+    double-clicked retry, re-running the same phase concurrently), or
+    `target_status` isn't strictly ahead of the statement's current status
+    (`invalid_status_transition`).
+
+    Otherwise resumes one phase at a time, stopping once `target_status` is
+    reached or a phase fails (leaving failure_reason/failed_phase set by
+    that phase's runner — a mid-cascade failure returns normally rather
+    than raising; it's a valid outcome, not a request error). Requesting a
+    target further out than the next phase cascades through the
+    intermediate ones in this same call.
     """
+    if statement.status == StatementFile.STATUS_PROCESSED:
+        raise BusinessRuleError(
+            "This statement has already been processed and cannot be retried.",
+            code="already_processed",
+        )
+    if statement.is_processing:
+        raise BusinessRuleError(
+            "This statement is currently being processed; try again shortly.",
+            code="already_processing",
+        )
     target_rank = _STATUS_ORDER.index(target_status)
+    if target_rank <= _STATUS_ORDER.index(statement.status):
+        raise BusinessRuleError(
+            "Target status must be ahead of the statement's current status.",
+            code="invalid_status_transition",
+        )
+
     while _STATUS_ORDER.index(statement.status) < target_rank:
         runner = _PHASE_RUNNERS.get(statement.status)
         if runner is None:
@@ -192,7 +220,9 @@ def advance_statement_to(statement: StatementFile, target_status: str) -> None:
             break
 
 
-def create_statement_from_upload(user, file_obj, account_id=None) -> StatementFile:
+def create_statement_from_upload(
+    user, file_obj, account_id=None, target_status=None
+) -> StatementFile:
     """
     The full upload -> checksum-dedupe -> store -> auto-chained-pipeline
     flow, factored out of StatementListCreateView.post() so the
@@ -206,10 +236,15 @@ def create_statement_from_upload(user, file_obj, account_id=None) -> StatementFi
     A StatementFile row is only ever created once the file is successfully
     stored (PLAN.md) — if storage fails, this raises before anything is
     persisted, and there is nothing for the caller to retry; they re-submit
-    a fresh upload. Once the row exists, extraction and normalization are
-    auto-chained synchronously (same one-shot happy path Pipeline.md §2
-    describes), stopping wherever a phase fails — PATCH /statements/{id} is
-    then the only way to resume from there.
+    a fresh upload. Once the row exists, the pipeline auto-chains toward
+    `target_status` via advance_statement_to() — the same function
+    StatementDetailView.patch() uses to retry, so a fresh upload and a
+    retry drive the pipeline identically. Defaults to STATUS_APPROVAL (the
+    original always-chain-to-the-end behavior) when the caller (e.g. the
+    Conversations shortcut) doesn't pass one; POST /statements lets the
+    client choose explicitly via StatementUploadRequestSerializer's
+    optional `status` field. Stops wherever a phase fails — PATCH
+    /statements/{id} is then the way to resume from there.
     """
     if not file_obj:
         raise ValidationError({"file": "This field is required."})
@@ -251,10 +286,7 @@ def create_statement_from_upload(user, file_obj, account_id=None) -> StatementFi
         status=StatementFile.STATUS_EXTRACTION,
     )
 
-    _run_extraction(statement)
-    if statement.status == StatementFile.STATUS_NORMALIZATION:
-        _run_normalization(statement)
-
+    advance_statement_to(statement, target_status or StatementFile.STATUS_APPROVAL)
     return statement
 
 
@@ -287,8 +319,17 @@ class StatementListCreateView(generics.ListAPIView):
         responses={202: StatementDetailSerializer},
     )
     def post(self, request, *args, **kwargs):
+        upload = StatementUploadRequestSerializer(data=request.data)
+        upload.is_valid(raise_exception=True)
         statement = create_statement_from_upload(
-            request.user, request.FILES.get("file"), account_id=request.data.get("account_id")
+            request.user,
+            upload.validated_data["file"],
+            account_id=upload.validated_data.get("account_id"),
+            # Defaults to STATUS_APPROVAL inside create_statement_from_upload
+            # when omitted — the serializer's own `default` already resolves
+            # that, but .get() here keeps this call site symmetrical with
+            # the "no explicit target" contract other callers rely on.
+            target_status=upload.validated_data.get("status"),
         )
         # Single-resource detail shape (not the lean list one above) — if the
         # auto-chain already reached approval in this same call, the
@@ -305,36 +346,23 @@ class StatementDetailView(generics.RetrieveDestroyAPIView):
     def get_queryset(self):
         return StatementFile.objects.filter(user=self.request.user)
 
+    @extend_schema(
+        request=StatementPatchSerializer,
+        responses={200: StatementDetailSerializer},
+    )
     def patch(self, request, *args, **kwargs):
         # Retry/resume, never a general field update — see PLAN.md
         # Checkpoint 3. Only the pipeline phases, not the file upload, are
         # retryable this way (services/file_storage.py's store_raw_file()
         # docstring: a storage failure never leaves a row to PATCH at all).
+        # All the already_processed/already_processing/forward-only guards
+        # live in advance_statement_to() — the same function POST /statements
+        # calls for its own initial auto-chain, so both call sites enforce
+        # identical rules instead of duplicating them here.
         statement = self.get_object()
         serializer = StatementPatchSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        target_status = serializer.validated_data["status"]
-
-        if statement.status == StatementFile.STATUS_PROCESSED:
-            raise BusinessRuleError(
-                "This statement has already been processed and cannot be retried.",
-                code="already_processed",
-            )
-        if statement.is_processing:
-            # Guards against two overlapping PATCH retries firing on the
-            # same statement (e.g. a double-clicked retry button) — without
-            # this, both would re-run the same phase concurrently.
-            raise BusinessRuleError(
-                "This statement is currently being processed; try again shortly.",
-                code="already_processing",
-            )
-        if _STATUS_ORDER.index(target_status) <= _STATUS_ORDER.index(statement.status):
-            raise BusinessRuleError(
-                "Target status must be ahead of the statement's current status.",
-                code="invalid_status_transition",
-            )
-
-        advance_statement_to(statement, target_status)
+        advance_statement_to(statement, serializer.validated_data["status"])
         return Response(StatementDetailSerializer(statement).data)
 
     def perform_destroy(self, instance):

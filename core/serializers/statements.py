@@ -5,6 +5,15 @@ from rest_framework import serializers
 from core.models import StatementFile
 from core.serializers.aggregations import TransactionListSerializer
 
+# Valid "advance to" targets, shared by StatementUploadRequestSerializer's
+# optional `status` and StatementPatchSerializer's required one — both
+# ultimately drive core/views/statements.py::advance_statement_to(), whose
+# own guards enforce forward-only/already-processed/already-processing.
+# extraction has no runner to retry into (file storage isn't retryable —
+# create_statement_from_upload()'s docstring) and processed is reachable
+# only through the transaction-approval endpoint, never a status flag.
+_ADVANCE_TARGET_CHOICES = [StatementFile.STATUS_NORMALIZATION, StatementFile.STATUS_APPROVAL]
+
 
 @extend_schema_field(OpenApiTypes.BINARY)
 class _BinaryFileField(serializers.FileField):
@@ -132,14 +141,14 @@ class StatementDetailSerializer(StatementFileSerializer):
 
 
 class StatementUploadRequestSerializer(serializers.Serializer):
-    """POST /statements — input-only, documents the multipart request body
-    for drf-spectacular. Never actually used to validate: the view reads
-    request.FILES/request.data directly (create_statement_from_upload()),
-    same pattern as StatementOcrResultResponseSerializer's docstring below
-    for the output side. Without this, drf-spectacular falls back to
-    StatementFileSerializer (a fully read_only response shape with no
-    `file` field at all) as the request body, which renders as an empty,
-    unusable form in Swagger UI."""
+    """POST /statements — the multipart request body. Actually used to
+    validate (core/views/statements.py's post()), not just to document —
+    `file`/`account_id` used to be pulled straight from request.FILES/
+    request.data, but that stopped being enough once `status` needed real
+    choice validation too. Without a serializer here at all,
+    drf-spectacular falls back to StatementFileSerializer (a fully
+    read_only response shape with no `file` field) as the request body,
+    which renders as an empty, unusable form in Swagger UI."""
 
     # Without COMPONENT_SPLIT_REQUEST (a global setting affecting every
     # serializer's schema naming, not just this one), drf-spectacular can't
@@ -148,20 +157,27 @@ class StatementUploadRequestSerializer(serializers.Serializer):
     # override instead of flipping that project-wide setting for one field.
     file = _BinaryFileField()
     account_id = serializers.UUIDField(required=False)
+    # Optional: how far to auto-chain the pipeline in this same call. Omit
+    # to keep the original always-chain-to-the-end behavior (defaults to
+    # STATUS_APPROVAL); pass "normalization" to stop right after extraction
+    # instead. Same choices, same underlying advance_statement_to() a PATCH
+    # retry uses — see StatementPatchSerializer below.
+    status = serializers.ChoiceField(
+        choices=_ADVANCE_TARGET_CHOICES,
+        required=False,
+        default=StatementFile.STATUS_APPROVAL,
+    )
 
 
 class StatementPatchSerializer(serializers.Serializer):
     """PATCH /statements/{id} — validates the requested retry/advance target
-    is a real, patchable status. Forward-vs-backward and already-processed
-    checks happen in the view (core/views/statements.py), since they need
-    the instance's current status, not just the input shape."""
+    is a real, patchable status. Forward-vs-backward, already-processed,
+    and already-processing checks happen in advance_statement_to()
+    (core/views/statements.py), since they need the instance's current
+    status, not just the input shape — and so POST /statements' optional
+    `status` above enforces the identical rules, not a separate copy."""
 
-    status = serializers.ChoiceField(
-        choices=[
-            StatementFile.STATUS_NORMALIZATION,
-            StatementFile.STATUS_APPROVAL,
-        ]
-    )
+    status = serializers.ChoiceField(choices=_ADVANCE_TARGET_CHOICES)
 
 
 class StatementOcrResultResponseSerializer(serializers.Serializer):
