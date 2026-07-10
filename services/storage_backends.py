@@ -58,3 +58,14 @@ class ReferenceDataStorage(_SeaweedBucketStorage):
     """pfm-reference-data — budget/onboarding templates (File_System_Structure.md §4)."""
 
     bucket_name = "pfm-reference-data"
+
+
+# Canonical list of every bucket-backed storage — the one place both the
+# bucket-bootstrap command and services/file_storage.py's bucket-name lookup
+# read from, so a new bucket only needs to be added here once.
+STORAGE_CLASSES = [
+    RawStatementStorage,
+    OcrArtifactStorage,
+    NormalizedArtifactStorage,
+    ReferenceDataStorage,
+]

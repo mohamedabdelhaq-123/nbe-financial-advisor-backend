@@ -7,20 +7,7 @@ against buckets that already exist is a no-op, not an error.
 from botocore.exceptions import ClientError
 from django.core.management.base import BaseCommand
 
-from services.storage_backends import (
-    NormalizedArtifactStorage,
-    OcrArtifactStorage,
-    RawStatementStorage,
-    ReferenceDataStorage,
-)
-
-# One entry per bucket/file-type (PLAN.md's one-bucket-per-file-type decision).
-STORAGE_CLASSES = [
-    RawStatementStorage,
-    OcrArtifactStorage,
-    NormalizedArtifactStorage,
-    ReferenceDataStorage,
-]
+from services.storage_backends import STORAGE_CLASSES
 
 
 class Command(BaseCommand):
