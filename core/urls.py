@@ -43,6 +43,7 @@ from core.views import (
     StarterTemplatesView,
     StatementDetailView,
     StatementListCreateView,
+    StatementOcrArtifactDownloadView,
     StatementOcrResultView,
     StatementTransactionApprovalView,
     TransactionDetailView,
@@ -76,6 +77,11 @@ urlpatterns = [
     path("statements/", StatementListCreateView.as_view()),
     path("statements/<uuid:statement_id>/", StatementDetailView.as_view()),
     path("statements/<uuid:statement_id>/ocr-result/", StatementOcrResultView.as_view()),
+    path(
+        "statements/<uuid:statement_id>/ocr-result/download/",
+        StatementOcrArtifactDownloadView.as_view(),
+        name="statement-ocr-artifact-download",
+    ),
     path(
         "statements/<uuid:statement_id>/transactions/",
         StatementTransactionApprovalView.as_view(),

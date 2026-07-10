@@ -12,3 +12,10 @@ exclude = '''
     migrations
 )/
 '''
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+testpaths = ["tests"]
+markers = [
+    "integration: hits a real SeaweedFS instance, not run by default (see docs/Environment_Profiles.md) — run with `pytest -m integration` against a running docker-compose stack",
+]

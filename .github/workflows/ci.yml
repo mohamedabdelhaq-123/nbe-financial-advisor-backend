@@ -33,6 +33,9 @@ jobs:
           POSTGRES_USER: ci_user
           POSTGRES_PASSWORD: ci_pass
           AI_SERVICE_TOKEN: ci-placeholder-not-a-real-secret
+          SEAWEED_S3_ENDPOINT: http://ci-placeholder:8333
+          SEAWEED_ACCESS_KEY: ci-placeholder
+          SEAWEED_SECRET_KEY: ci-placeholder
 
       - name: OpenAPI schema generates
         run: python manage.py spectacular --file openapi.yaml
@@ -41,6 +44,9 @@ jobs:
           POSTGRES_USER: ci_user
           POSTGRES_PASSWORD: ci_pass
           AI_SERVICE_TOKEN: ci-placeholder-not-a-real-secret
+          SEAWEED_S3_ENDPOINT: http://ci-placeholder:8333
+          SEAWEED_ACCESS_KEY: ci-placeholder
+          SEAWEED_SECRET_KEY: ci-placeholder
 
       - name: Secret scan (TruffleHog)
         uses: trufflesecurity/trufflehog@main
