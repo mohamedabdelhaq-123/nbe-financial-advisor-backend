@@ -432,12 +432,15 @@ class Command(BaseCommand):
         matching_templates = [t for t in templates if t.bank_name == account.bank_name]
         for start, end in halves:
             template = random.choice(matching_templates or templates)
+            file_type = random.choice(["pdf", "jpg", "png"])
             statement_file = StatementFile.objects.create(
                 user=user,
                 account=account,
                 template=template,
                 seaweed_file_id=f"seed-placeholder-{uuid.uuid4()}",
                 checksum=uuid.uuid4().hex + uuid.uuid4().hex,
+                file_size=random.randint(80_000, 2_000_000),  # realistic statement size in bytes
+                file_type=file_type,
                 status="processed",
                 start_transaction_date=start,
                 last_transaction_date=end,
@@ -450,7 +453,13 @@ class Command(BaseCommand):
             )
             StatementNormalized.objects.create(
                 statement=statement_file,
+                # Mirrors the real normalization shape (bank_name/account_hint
+                # feed StatementFileSerializer's inline metadata fields) — these
+                # statements are already `processed`, so the ledger, not this
+                # payload, is the source of the transaction rows.
                 normalized_json={
+                    "bank_name": account.bank_name,
+                    "account_hint": account.masked_account_number,
                     "period_start": start.isoformat(),
                     "period_end": end.isoformat(),
                     "note": "Synthetic seed data — no backing file in SeaweedFS.",
