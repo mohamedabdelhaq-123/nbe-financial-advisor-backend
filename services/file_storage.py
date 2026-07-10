@@ -13,18 +13,22 @@ artifacts are written by the AI service (a separate repo/container —
 System_Architecture.md §2's ownership split: MinerU/AI service owns
 extraction and normalization, Django owns everything else); this repo only
 computes their keys ahead of time (so it can persist them on
-StatementOcrResult/StatementNormalized rows) and later reads/signs/deletes
-them.
+StatementOcrResult/StatementNormalized rows) and later reads/deletes them.
+
+No function here ever hands a client-facing URL directly into SeaweedFS —
+it's never exposed publicly (System_Architecture.md §2/§10), so any user-
+facing download goes through a Django view that calls get_object_stream()
+and proxies the bytes itself (see StatementOcrArtifactDownloadView).
 """
 
 import hashlib
 import json
 
+from botocore.exceptions import ClientError
+
 from services.storage_backends import STORAGE_CLASSES
 
 _STORAGE_BY_BUCKET = {cls().bucket_name: cls() for cls in STORAGE_CLASSES}
-
-_PRESIGNED_URL_EXPIRY_SECONDS = 900  # 15 minutes
 
 
 def _storage_for_key(object_key: str):
@@ -85,14 +89,25 @@ def store_raw_file(object_key: str, file_bytes: bytes) -> None:
     storage.connection.meta.client.put_object(Bucket=storage.bucket_name, Key=key, Body=file_bytes)
 
 
-def get_signed_url(object_key: str) -> str:
-    """Asks SeaweedFS's Filer gateway for a time-limited pre-signed URL."""
+def get_object_stream(object_key: str):
+    """
+    Opens a real byte stream for `object_key`, for Django views that proxy a
+    download rather than handing the client a signed URL directly — SeaweedFS
+    is never exposed publicly (System_Architecture.md §2/§10), so no URL
+    pointing at it is fetchable from outside the internal network anyway.
+
+    Returns `(botocore.response.StreamingBody, content_type)`, or `None` if
+    the object doesn't exist (e.g. the AI service hasn't written it yet).
+    """
     storage, key = _storage_for_key(object_key)
-    return storage.connection.meta.client.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": storage.bucket_name, "Key": key},
-        ExpiresIn=_PRESIGNED_URL_EXPIRY_SECONDS,
-    )
+    client = storage.connection.meta.client
+    try:
+        response = client.get_object(Bucket=storage.bucket_name, Key=key)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
+            return None
+        raise
+    return response["Body"], response.get("ContentType")
 
 
 def delete_prefix(prefix: str) -> None:

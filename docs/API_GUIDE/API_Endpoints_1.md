@@ -46,6 +46,7 @@ GET    /statements/{statement_id}         # includes the proposed transactions i
 PATCH  /statements/{statement_id}         # retry/resume a stuck extraction or normalization phase
 DELETE /statements/{statement_id}
 GET    /statements/{statement_id}/ocr-result
+GET    /statements/{statement_id}/ocr-result/download   # proxies document.md through Django, not a signed SeaweedFS URL
 POST   /statements/{statement_id}/transactions   # approve the full proposed batch, commit to the ledger
 ```
 

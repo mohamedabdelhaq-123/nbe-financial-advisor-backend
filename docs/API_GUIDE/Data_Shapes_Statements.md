@@ -171,11 +171,23 @@ Removes the `statement_files` row and its raw/artifact files (subject to `retain
   "ocr_engine": "string",
   "confidence_score": "number | null  // 0.000–1.000",
   "processed_at": "timestamp",
-  "artifact_url": "string  // signed URL into the ocr/ folder, File System Structure §3"
+  "artifact_url": "string  // GET /statements/{statement_id}/ocr-result/download — proxied by Django, not a signed SeaweedFS URL (SeaweedFS is never exposed publicly, System_Architecture.md §2/§10)"
 }
 ```
 
 **Response `404`** if OCR hasn't completed yet (`statement_files.status` still `uploaded`).
+
+---
+
+## GET /statements/{statement_id}/ocr-result/download
+
+**Auth:** Required · **Scoping:** implicit self, via parent statement ownership · **Query params:** none
+
+Streams the OCR artifact's `document.md` (the markdown representation, File_System_Structure.md §3) through Django — SeaweedFS is never reachable directly by a client, so this endpoint proxies the bytes rather than redirecting to a signed URL into it. The OCR bucket also holds `content.json`/`images/`/`tables/`, but those feed the normalization step, not something a user downloads directly.
+
+**Response `200`**: the raw `document.md` bytes, `Content-Type: text/markdown`, `Content-Disposition: attachment`.
+
+**Response `404`** if OCR hasn't completed yet, or the AI service hasn't written `document.md` for this statement.
 
 ---
 
