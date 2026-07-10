@@ -8,22 +8,25 @@ class StatementFile(models.Model):
     # A row only ever exists once its file is stored (see
     # core/views/statements.py::create_statement_from_upload) — there is no
     # "record_created"/"stored" status here, a storage failure never
-    # persists a row at all. Status names the phase the statement is
-    # currently at/working toward — no "pending_" prefix, since
-    # `is_processing` below already says whether that phase is actively
-    # running; baking "pending" into the name too would just be saying the
-    # same thing twice. `failure_reason`/`failed_phase` carry retry context
-    # for whichever phase hasn't advanced yet, instead of a separate
-    # `failed` status per phase.
-    STATUS_EXTRACTION = "extraction"
-    STATUS_NORMALIZATION = "normalization"
-    STATUS_APPROVAL = "approval"
-    STATUS_PROCESSED = "processed"
+    # persists a row at all. Each status names the phase that has already
+    # completed — "uploaded" means the upload step is done (extraction
+    # hasn't run yet), not "an upload is pending" — so there's no verb-vs-
+    # status ambiguity like the old "approval" status name had against the
+    # "approve" action on POST .../transactions. No "pending_" prefix either:
+    # `is_processing` below already says whether the *next* phase is
+    # actively running; baking "pending" into the status name too would
+    # just say the same thing twice. `failure_reason`/`failed_phase` carry
+    # retry context for whichever phase hasn't completed yet, instead of a
+    # separate `failed` status per phase.
+    STATUS_UPLOADED = "uploaded"
+    STATUS_EXTRACTED = "extracted"
+    STATUS_NORMALIZED = "normalized"
+    STATUS_APPROVED = "approved"
     STATUS_CHOICES = [
-        (STATUS_EXTRACTION, "Extraction"),
-        (STATUS_NORMALIZATION, "Normalization"),
-        (STATUS_APPROVAL, "Approval"),
-        (STATUS_PROCESSED, "Processed"),
+        (STATUS_UPLOADED, "Uploaded"),
+        (STATUS_EXTRACTED, "Extracted"),
+        (STATUS_NORMALIZED, "Normalized"),
+        (STATUS_APPROVED, "Approved"),
     ]
 
     PHASE_EXTRACTION = "extraction"
@@ -56,16 +59,16 @@ class StatementFile(models.Model):
     # backing file) don't need backfilling.
     file_size = models.PositiveBigIntegerField(blank=True, null=True)  # bytes
     file_type = models.CharField(max_length=20, blank=True, null=True)  # extension: pdf | jpg | png
-    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default=STATUS_EXTRACTION)
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default=STATUS_UPLOADED)
     failure_reason = models.TextField(blank=True, null=True)
     failed_phase = models.CharField(
         max_length=20, choices=FAILED_PHASE_CHOICES, blank=True, null=True
     )
     # True only while a phase runner is actively executing (set/cleared by
     # _run_extraction/_run_normalization in core/views/statements.py) —
-    # without this, "status=extraction, failure_reason=null" is ambiguous
-    # between "never attempted yet" and "a background worker is running
-    # this right now" once the pipeline stops being fully synchronous.
+    # without this, "status=uploaded, failure_reason=null" is ambiguous
+    # between "extraction never attempted yet" and "a background worker is
+    # running it right now" once the pipeline stops being fully synchronous.
     # Always false in any response today (nothing runs across requests
     # yet), but also doubles as a guard against two overlapping PATCH
     # retries firing on the same statement.
@@ -88,8 +91,8 @@ class StatementFile(models.Model):
 
     @property
     def is_fully_processed(self):
-        """Returns True if the document successfully crossed the extraction finish line."""
-        return self.status == self.STATUS_PROCESSED
+        """Returns True if the document's transactions were approved and committed to the ledger."""
+        return self.status == self.STATUS_APPROVED
 
     @property
     def latest_ocr_run(self):

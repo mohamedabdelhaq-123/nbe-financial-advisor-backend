@@ -8,11 +8,11 @@ from core.serializers.aggregations import TransactionListSerializer
 # Valid "advance to" targets, shared by StatementUploadRequestSerializer's
 # optional `status` and StatementPatchSerializer's required one — both
 # ultimately drive core/views/statements.py::advance_statement_to(), whose
-# own guards enforce forward-only/already-processed/already-processing.
-# extraction has no runner to retry into (file storage isn't retryable —
-# create_statement_from_upload()'s docstring) and processed is reachable
+# own guards enforce forward-only/already-approved/already-processing.
+# uploaded has no runner to retry into (file storage isn't retryable —
+# create_statement_from_upload()'s docstring) and approved is reachable
 # only through the transaction-approval endpoint, never a status flag.
-_ADVANCE_TARGET_CHOICES = [StatementFile.STATUS_NORMALIZATION, StatementFile.STATUS_APPROVAL]
+_ADVANCE_TARGET_CHOICES = [StatementFile.STATUS_EXTRACTED, StatementFile.STATUS_NORMALIZED]
 
 
 @extend_schema_field(OpenApiTypes.BINARY)
@@ -95,7 +95,7 @@ class StatementFileSerializer(serializers.ModelSerializer):
 
     def get_model_used(self, obj) -> str | None:
         # These describe the normalization run itself, not the mutable
-        # pending batch — so they stay populated after processed too, unlike
+        # pending batch — so they stay populated after approved too, unlike
         # the proposed-array flavor of `transactions` on the detail shape.
         record = obj.latest_normalized_record
         return record.model_used if record else None
@@ -125,16 +125,17 @@ class StatementDetailSerializer(StatementFileSerializer):
         # Two different sources depending on status, same field name — the
         # frontend always reads `transactions` without needing to know
         # which stage produced it:
-        #  - approval: the not-yet-committed proposed array from
-        #    normalized_json, for the user to review/correct.
-        #  - processed: the real ledger rows this statement produced
+        #  - normalized: the not-yet-committed proposed array from
+        #    normalized_json, for the user to review/correct before
+        #    approving via POST /statements/{id}/transactions.
+        #  - approved: the real ledger rows this statement produced
         #    (Transaction.statement, related_name="transactions"), once
         #    Statements' job is finished (Data_Governance_Specs.md §2) and
         #    the ledger is the source of truth — not the frozen proposal.
-        if obj.status == StatementFile.STATUS_APPROVAL:
+        if obj.status == StatementFile.STATUS_NORMALIZED:
             payload = obj.normalized_payload
             return payload.get("transactions", []) if payload else None
-        if obj.status == StatementFile.STATUS_PROCESSED:
+        if obj.status == StatementFile.STATUS_APPROVED:
             ledger_rows = obj.transactions.order_by("-transaction_date")
             return TransactionListSerializer(ledger_rows, many=True).data
         return None
@@ -159,19 +160,19 @@ class StatementUploadRequestSerializer(serializers.Serializer):
     account_id = serializers.UUIDField(required=False)
     # Optional: how far to auto-chain the pipeline in this same call. Omit
     # to keep the original always-chain-to-the-end behavior (defaults to
-    # STATUS_APPROVAL); pass "normalization" to stop right after extraction
+    # STATUS_NORMALIZED); pass "extracted" to stop right after extraction
     # instead. Same choices, same underlying advance_statement_to() a PATCH
     # retry uses — see StatementPatchSerializer below.
     status = serializers.ChoiceField(
         choices=_ADVANCE_TARGET_CHOICES,
         required=False,
-        default=StatementFile.STATUS_APPROVAL,
+        default=StatementFile.STATUS_NORMALIZED,
     )
 
 
 class StatementPatchSerializer(serializers.Serializer):
     """PATCH /statements/{id} — validates the requested retry/advance target
-    is a real, patchable status. Forward-vs-backward, already-processed,
+    is a real, patchable status. Forward-vs-backward, already-approved,
     and already-processing checks happen in advance_statement_to()
     (core/views/statements.py), since they need the instance's current
     status, not just the input shape — and so POST /statements' optional

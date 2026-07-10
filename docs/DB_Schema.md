@@ -99,14 +99,17 @@ CREATE TABLE statement_files (
     checksum                    VARCHAR(64) NOT NULL,     -- file-level duplicate-upload check
     file_size                    BIGINT,                   -- raw file size in bytes, captured at upload (null for seed rows)
     file_type                    VARCHAR(20),               -- file extension: pdf | jpg | png
-    status                      VARCHAR(30) NOT NULL DEFAULT 'extraction',
-                                 -- extraction|normalization|approval|processed
-                                 -- names the phase the statement is currently at/working toward; no
-                                 -- "pending_" prefix — is_processing already says whether that phase
-                                 -- is actively running, so baking "pending" into the name too would
-                                 -- just say the same thing twice. A row only ever exists once its
-                                 -- file is stored, so there is no record_created/stored/failed
-                                 -- status (docs/API_GUIDE/Data_Shapes_Statements.md)
+    status                      VARCHAR(30) NOT NULL DEFAULT 'uploaded',
+                                 -- uploaded|extracted|normalized|approved
+                                 -- names the phase that has already completed, not the one pending —
+                                 -- "uploaded" means the upload step is done (extraction hasn't run
+                                 -- yet), so there's no verb-vs-status ambiguity like a status literally
+                                 -- named "approval" would have against the "approve" action on
+                                 -- POST .../transactions. No "pending_" prefix either — is_processing
+                                 -- already says whether the next phase is actively running. A row
+                                 -- only ever exists once its file is stored, so there is no
+                                 -- record_created/stored/failed status
+                                 -- (docs/API_GUIDE/Data_Shapes_Statements.md)
     failure_reason               TEXT,                     -- why the current phase last failed, if it did
     failed_phase                 VARCHAR(20),               -- extraction|normalization|null
     is_processing                BOOLEAN NOT NULL DEFAULT false, -- true only while a phase runner is actively executing

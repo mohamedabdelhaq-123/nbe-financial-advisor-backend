@@ -441,7 +441,7 @@ class Command(BaseCommand):
                 checksum=uuid.uuid4().hex + uuid.uuid4().hex,
                 file_size=random.randint(80_000, 2_000_000),  # realistic statement size in bytes
                 file_type=file_type,
-                status="processed",
+                status="approved",
                 start_transaction_date=start,
                 last_transaction_date=end,
             )

@@ -69,6 +69,19 @@ That unification made an actual feature easy to add cheaply: `POST /statements` 
 
 `StatementDetailView.patch()` had the identical gap the first Swagger-UI fix addressed on `POST /statements`: no `@extend_schema`, so drf-spectacular fell back to `StatementDetailSerializer` (fully read-only) as PATCH's request body too — `status` never appeared as an editable field in Swagger UI. Same fix: `@extend_schema(request=StatementPatchSerializer, responses={200: StatementDetailSerializer})`. Worth noting for next time: any hand-written `def post`/`patch`/`put` on a generic view needs this checked explicitly — drf-spectacular does not warn when it silently substitutes the wrong serializer, it just produces a technically-valid but useless schema.
 
+### Addendum — status values renamed to "already completed" naming
+
+The `extraction | normalization | approval | processed` set (from the `pending_` removal addendum above) still had a naming problem: `approval` named a *pending* state (awaiting the user's decision) while everything else in this document had settled on "what's already done" as the convention — and `approval` specifically collided with the `approve` action on `POST .../transactions`, making "status is approval" and "the user approved it" read as if they might mean the same thing when they didn't. Renamed to `uploaded | extracted | normalized | approved` — **not a positional swap**:
+
+```
+extraction    -> uploaded     (upload step done, extraction not yet run)
+normalization -> extracted    (extraction done, normalization not yet run)
+approval      -> normalized   (normalization done, awaiting the user's approval decision)
+processed     -> approved     (terminal — transactions approved AND committed)
+```
+
+`approved` now reads unambiguously as "the approve action has happened," and it's the only place in the status vocabulary that shares a root with an action name — deliberately, since it's the one status an action (`POST .../transactions`) actually produces. `failed_phase`'s `extraction`/`normalization` values are unchanged on purpose — they name the *activity* that failed (the OCR run, the LLM run), a different axis from `status`'s "phase already completed," so they were never part of the ambiguity this rename fixes. Same migration pattern as before: `0007_alter_statementfile_status` renames both the column's choices/default and any existing rows via `RunPython`.
+
 ---
 
 ## 3. What changed elsewhere
