@@ -20,6 +20,8 @@ services:
         BUILD_ENV: production
     command: >
       sh -c "python manage.py migrate &&
+            python manage.py ensure_storage_buckets &&
+            python manage.py seed_onboarding_templates &&
             gunicorn config.wsgi:application --bind 0.0.0.0:8000"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-appdb}
@@ -29,9 +31,14 @@ services:
       POSTGRES_PORT: 5432
       AI_SERVICE_URL: http://ai-service:8001
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+      SEAWEED_S3_ENDPOINT: http://seaweedfs:8333
+      SEAWEED_ACCESS_KEY: ${SEAWEED_ACCESS_KEY}
+      SEAWEED_SECRET_KEY: ${SEAWEED_SECRET_KEY}
     expose: ["8000"]                  # internal only — reached via nginx /api/
     depends_on:
       postgres:
+        condition: service_healthy
+      seaweedfs:
         condition: service_healthy
 
   ai-service:
