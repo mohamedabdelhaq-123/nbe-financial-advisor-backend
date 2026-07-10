@@ -91,8 +91,12 @@ services:
       retries: 5
 
   seaweedfs:
-    image: chrislusf/seaweedfs:latest    # verified: sha256:e1ee85a3...
-    command: "server -dir=/data -master.volumeSizeLimitMB=1024"
+    image: chrislusf/seaweedfs:latest
+    # -s3/-filer are required for the S3 gateway to actually come up — without
+    # them nothing listens on 8333 despite it being exposed below (PLAN.md
+    # Checkpoint 1: this was silently broken before, verified by hand against
+    # the real image).
+    command: "server -dir=/data -master.volumeSizeLimitMB=1024 -filer -s3 -s3.port=8333"
     volumes:
       - seaweed_data:/data              # named volume — files persist across restarts
     expose:
@@ -100,7 +104,11 @@ services:
       - "9333"                          # master
       - "8080"                          # volume server
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:9333/cluster/status || exit 1"]
+      # 127.0.0.1, not localhost: this image's busybox wget resolves
+      # "localhost" to ::1 first and doesn't fall back to IPv4, so the
+      # healthcheck never passes if written the more obvious way (verified
+      # by hand — PLAN.md Checkpoint 1).
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:9333/cluster/status || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5

@@ -18,7 +18,7 @@ services:
       context: .
       args:
         BUILD_ENV: ${BUILD_ENV:-development}
-    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+    command: sh -c "python manage.py migrate && python manage.py ensure_storage_buckets && python manage.py runserver 0.0.0.0:8000"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-appdb}
       POSTGRES_USER: ${POSTGRES_USER:-appuser}
@@ -38,6 +38,36 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    # -s3/-filer are required for the S3 gateway to actually come up (see the
+    # same fix in deploy/docker-compose.yml — this was silently broken there
+    # before PLAN.md Checkpoint 1). Per docs/Environment_Profiles.md, storage
+    # topology is NOT on the "dev may differ" exception list (only model
+    # serving is), so dev runs the same real SeaweedFS as staging/prod.
+    command: "server -dir=/data -master.volumeSizeLimitMB=1024 -filer -s3 -s3.port=8333"
+    volumes:
+      - seaweed_data:/data
+    ports:
+      # Published (not just exposed) in dev only, for developer speed —
+      # lets you point aws-cli/boto3 or a browser at the Filer directly to
+      # debug, without needing to exec into the backend container.
+      - "8333:8333"   # S3 API
+      - "9333:9333"   # master
+      - "8888:8888"   # filer HTTP (browsable tree, docs/File_System_Structure.md §1)
+    healthcheck:
+      # 127.0.0.1, not localhost: this image's busybox wget resolves
+      # "localhost" to ::1 first and doesn't fall back to IPv4, so the
+      # healthcheck never passes if written the more obvious way (verified
+      # by hand — PLAN.md Checkpoint 1).
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:9333/cluster/status || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
 volumes:
   pgdata:
+  seaweed_data:

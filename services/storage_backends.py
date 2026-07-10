@@ -30,6 +30,9 @@ class _SeaweedBucketStorage(S3Boto3Storage):
     # addressing (https://bucket.host/key) — only path-style (https://host/bucket/key).
     addressing_style = "path"
     signature_version = "s3v4"
+    # SeaweedFS doesn't have real AWS regions; pinned so boto3 doesn't fall
+    # back to whatever region config happens to be on the host/CI runner.
+    region_name = "us-east-1"
     file_overwrite = False
 
 
@@ -52,6 +55,6 @@ class NormalizedArtifactStorage(_SeaweedBucketStorage):
 
 
 class ReferenceDataStorage(_SeaweedBucketStorage):
-    """pfm-reference-data — budget/onboarding templates, long-lived (File_System_Structure.md §4)."""
+    """pfm-reference-data — budget/onboarding templates (File_System_Structure.md §4)."""
 
     bucket_name = "pfm-reference-data"
