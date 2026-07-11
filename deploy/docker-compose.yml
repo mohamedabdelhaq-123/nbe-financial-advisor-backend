@@ -18,11 +18,16 @@ services:
       context: ..
       args:
         BUILD_ENV: production
+    # --worker-class gthread --timeout 0: the single multiplexed SSE
+    # connection (core/views/events.py's GET /events/stream) is long-lived
+    # and would otherwise occupy an entire sync worker for its lifetime and
+    # get SIGKILL'd by gunicorn's default 30s request timeout.
     command: >
       sh -c "python manage.py migrate &&
             python manage.py ensure_storage_buckets &&
             python manage.py seed_onboarding_templates &&
-            gunicorn config.wsgi:application --bind 0.0.0.0:8000"
+            gunicorn config.wsgi:application --bind 0.0.0.0:8000
+            --worker-class gthread --workers 2 --threads 4 --timeout 0"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-appdb}
       POSTGRES_USER: ${POSTGRES_USER:-appuser}
@@ -34,12 +39,62 @@ services:
       SEAWEED_S3_ENDPOINT: http://seaweedfs:8333
       SEAWEED_ACCESS_KEY: ${SEAWEED_ACCESS_KEY}
       SEAWEED_SECRET_KEY: ${SEAWEED_SECRET_KEY}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
     expose: ["8000"]                  # internal only — reached via nginx /api/
     depends_on:
       postgres:
         condition: service_healthy
       seaweedfs:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-worker:
+    build:
+      context: ..
+      args:
+        BUILD_ENV: production
+    command: sh -c "celery -A config worker --loglevel=info --concurrency=2"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+      POSTGRES_USER: ${POSTGRES_USER:-appuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apppass}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      AI_SERVICE_URL: http://ai-service:8001
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+      SEAWEED_S3_ENDPOINT: http://seaweedfs:8333
+      SEAWEED_ACCESS_KEY: ${SEAWEED_ACCESS_KEY}
+      SEAWEED_SECRET_KEY: ${SEAWEED_SECRET_KEY}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+    # Overrides the image's baked-in HEALTHCHECK (Dockerfile hits
+    # localhost:8000/health/, which nothing serves here) with a
+    # Celery-native worker ping — same fix as docker-compose.yml's
+    # celery-worker service.
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A config inspect ping -d celery@$$HOSTNAME || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    expose: ["6379"]                  # internal only — Pattern A
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   ai-service:
     build: ../../nbe-financial-advisor-ai-service

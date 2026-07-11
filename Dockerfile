@@ -23,4 +23,10 @@ EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --retries=5 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/')" || exit 1
 
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000"]
+# --worker-class gthread --timeout 0: the single multiplexed SSE connection
+# (core/views/events.py's GET /events/stream) is long-lived and would
+# otherwise occupy an entire sync worker for its lifetime and get SIGKILL'd
+# by gunicorn's default 30s request timeout. gthread lets one worker serve
+# many connections that spend their time blocked on the Redis socket read,
+# not CPU.
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--worker-class", "gthread", "--workers", "2", "--threads", "4", "--timeout", "0"]
