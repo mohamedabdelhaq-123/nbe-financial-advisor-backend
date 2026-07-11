@@ -201,15 +201,19 @@ class TransactionDetailView(mixins.RetrieveModelMixin, mixins.DestroyModelMixin,
 
 class MonthlySummariesView(APIView):
     """
-    GET /analytics/monthly-summaries
+    One summary row per calendar month that has at least one matching
+    transaction: total spend, total inflow, a per-category breakdown, and
+    the top 5 merchants by amount that month. Months are returned newest
+    first, with no pagination — bounded naturally by how many distinct
+    months of transaction history the user has.
 
-    account_id/from/to genuinely filter the underlying Transaction queryset
-    before the custom month-bucketing/aggregation below runs — but the
-    response itself is a custom-shaped list, not a serialized queryset, so
-    this can't become a ListAPIView + FilterSet the way the Category 1/2
-    views in this file did (PLAN.md Checkpoint F): drf-spectacular's
-    automatic filter-parameter introspection only fires for GenericAPIView.
-    Documented manually here instead.
+    `account_id`/`from`/`to` genuinely filter the underlying transactions
+    before the month-bucketing/aggregation runs, but since the response is
+    a custom-computed list rather than a serialized queryset, this stays a
+    plain view with manually-declared query parameters rather than a
+    FilterSet-backed list endpoint (automatic FilterSet introspection only
+    applies to generic list views with a real queryset-to-serializer
+    mapping, which doesn't fit this endpoint's shape).
     """
 
     @extend_schema(
@@ -288,12 +292,16 @@ class MonthlySummariesView(APIView):
 
 
 class CategoryBreakdownView(APIView):
-    """GET /analytics/category-breakdown
+    """
+    Total amount spent per category for one specific calendar month
+    (`period`, required), each also expressed as a percentage of that
+    month's total. `account_id` optionally narrows to a single account
+    instead of all of the user's accounts combined.
 
-    `period`/`account_id` genuinely filter the underlying Transaction
-    queryset, but the response is a custom aggregated shape, not a
-    serialized queryset — same reasoning as MonthlySummariesView above for
-    why this stays a manually-documented APIView (PLAN.md Checkpoint F).
+    `period`/`account_id` genuinely filter the underlying transactions,
+    but the response is a custom aggregated shape rather than a serialized
+    queryset, so — same reasoning as `MonthlySummariesView` above — this
+    stays a manually-documented view rather than a FilterSet-backed one.
     """
 
     @extend_schema(
@@ -306,7 +314,7 @@ class CategoryBreakdownView(APIView):
             ),
             OpenApiParameter("account_id", OpenApiTypes.UUID, required=False),
         ],
-        responses={200: CategoryBreakdownResponseSerializer},
+        responses={200: CategoryBreakdownResponseSerializer, **error_responses(422)},
     )
     def get(self, request):
         period = request.query_params.get("period")
@@ -347,18 +355,17 @@ class CategoryBreakdownView(APIView):
 
 class RecurringChargesView(ListAPIView):
     """
-    GET /analytics/recurring-charges
+    List detected recurring charges (subscriptions, regular bills, etc.)
+    for the current user — merchant, frequency, average amount, and the
+    last/next expected occurrence dates.
 
-    Reads whatever rows already exist in `recurring_charges`. Populating
-    this table is a background, AI-service-driven detection job
-    (System_Architecture.md §5) that doesn't exist yet — see this file's
-    module docstring for why real detection logic isn't built here.
-
-    Converted from a plain APIView to ListAPIView (PLAN.md Checkpoint F) to
-    get automatic FilterSet-based Swagger docs — pagination_class stays
-    None to preserve the pre-existing plain-array response (this domain's
-    small, bounded per-user lists are intentionally unpaginated, matching
-    BankAccountListCreateView's precedent).
+    This is read-only over whatever rows already exist in the underlying
+    table; detecting recurring charges from raw transactions is a
+    statistical/AI-driven background job that doesn't run yet, so this
+    endpoint honestly serves only what's already been detected rather than
+    computing anything live. Returns a plain array, not the offset-paginated
+    envelope — a small, bounded, per-user collection (same reasoning as
+    `GET /accounts`).
     """
 
     serializer_class = RecurringChargeSerializer
@@ -374,8 +381,16 @@ class RecurringChargesView(ListAPIView):
 
 
 class AnomaliesView(ListAPIView):
-    """GET /analytics/anomalies — same scope boundary as RecurringChargesView,
-    same ListAPIView conversion rationale."""
+    """
+    List flagged anomalous transactions for the current user (unusually
+    large charges, duplicate-looking entries, etc.), scoped via the
+    underlying transaction's ownership rather than a direct user field on
+    the anomaly row itself.
+
+    Read-only over whatever's already been flagged — the same detection-job
+    gap as `RecurringChargesView` above applies here too. Returns a plain
+    array, unpaginated, for the same small-bounded-collection reasoning.
+    """
 
     serializer_class = AnomalyFlagSerializer
     pagination_class = None
@@ -390,13 +405,18 @@ class AnomaliesView(ListAPIView):
 
 
 class AnomalyResolveView(APIView):
-    """PATCH /analytics/anomalies/{anomaly_id}"""
+    """Mark a flagged anomaly as resolved (or un-resolved) — the only field
+    this endpoint accepts is `resolved`; everything else about an anomaly
+    (its reason, severity, when it was detected) is backend-computed and
+    not editable. Scoped via the underlying transaction's ownership, not a
+    direct field on the anomaly row itself, so an anomaly on another
+    user's transaction 404s rather than being reachable at all."""
 
-    @extend_schema(request=AnomalyResolveSerializer, responses={200: AnomalyFlagSerializer})
+    @extend_schema(
+        request=AnomalyResolveSerializer,
+        responses={200: AnomalyFlagSerializer, **error_responses(404, 422)},
+    )
     def patch(self, request, anomaly_id):
-        # Scoped via the underlying transaction's ownership, not a direct
-        # user FK on AnomalyFlag itself — matches Data_Shapes_Aggregations.md
-        # ("Scoping: implicit self via the underlying transaction's ownership").
         anomaly = get_object_or_404(AnomalyFlag, id=anomaly_id, transaction__user=request.user)
         serializer = AnomalyResolveSerializer(anomaly, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
@@ -405,8 +425,17 @@ class AnomalyResolveView(APIView):
 
 
 class SpendingInsightsView(ListAPIView):
-    """GET /analytics/spending-insights — same scope boundary and ListAPIView
-    conversion rationale as RecurringChargesView."""
+    """
+    List generated spending-pattern insights for the current user (e.g.
+    "spending in category X is trending up") — each row has an
+    `insight_type`, the `period` it covers, and a free-form `value` payload
+    specific to that insight type.
+
+    Read-only over whatever's already been generated — the same
+    detection-job gap as `RecurringChargesView` above applies here too.
+    Returns a plain array, unpaginated, for the same small-bounded-collection
+    reasoning.
+    """
 
     serializer_class = SpendingPatternInsightSerializer
     pagination_class = None
@@ -422,19 +451,17 @@ class SpendingInsightsView(ListAPIView):
 
 class NetWorthView(APIView):
     """
-    GET /analytics/net-worth
+    Total net worth across all of the user's active bank accounts, plus a
+    per-account breakdown.
 
-    Always reflects live current balances (BankAccount.current_balance,
-    derived from the latest transaction per account) regardless of the
-    `as_of` query param's value — true point-in-time historical snapshots
-    would read from `net_worth_snapshots`, but nothing populates that table
-    yet (same background-job gap as recurring-charges/anomalies above).
-    `as_of_date` in the response echoes the requested date (or today) for
-    shape-compatibility, without claiming to reconstruct a past balance.
-
-    `as_of` is NOT a filter (PLAN.md Checkpoint F) — it never touches the
-    account query above, purely echoed back — so no FilterSet applies here
-    by definition; documented manually instead.
+    Always reflects **live current balances** (derived from each account's
+    latest transaction) regardless of what `as_of` is set to — true
+    point-in-time historical snapshots aren't available yet (the same
+    background-job gap `RecurringChargesView` describes applies here too).
+    `as_of` is echoed back as-is into the response's `as_of_date` for
+    shape-compatibility with a future real snapshot lookup; it does **not**
+    filter or change which balance is returned, so passing a past date
+    today won't reconstruct what net worth was on that date.
     """
 
     @extend_schema(
@@ -511,12 +538,17 @@ def compute_stability_score(user):
 
 
 class StabilityScoreView(APIView):
-    """GET /analytics/stability-score
+    """
+    A 0-100 income-stability score (`stable` / `variable` / `unstable`,
+    or `null` with label `insufficient_data` if the user has fewer than 2
+    months of credit-inflow history) computed from the coefficient of
+    variation of the last 6 months' total inflow.
 
-    `period` is NOT a filter (PLAN.md Checkpoint F) — confirmed by reading
-    compute_stability_score() below, which takes no period argument at all;
-    it's purely echoed back in computed_for_period. No FilterSet applies
-    here by definition; documented manually instead.
+    `period` is **not** a filter — the score is always computed over the
+    last 6 months of data regardless of what's passed; the value is only
+    echoed back into the response's `computed_for_period` for
+    shape-compatibility with a future period-scoped version of this
+    calculation. Passing a different `period` today won't change the score.
     """
 
     @extend_schema(
