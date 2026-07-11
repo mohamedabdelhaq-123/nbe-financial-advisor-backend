@@ -63,11 +63,10 @@ class WidgetSerializer(serializers.Serializer):
 
 class MessageDoneEventSerializer(serializers.Serializer):
     """
-    Documents the `data` payload of the terminal "done" SSE event from POST
-    .../messages (core/views/conversations.py's _sse_stream()) — the actual
-    HTTP response is text/event-stream, not JSON, so this is a documentation
-    aid for drf-spectacular (API Design Guidelines §11) rather than something
-    a client would ever deserialize the whole response body as.
+    The `data` payload of the terminal "done" SSE event from
+    POST .../messages. The actual HTTP response is `text/event-stream`, not
+    a JSON body — this documents the shape of that one terminal event only,
+    not something a client would ever deserialize the whole response as.
     """
 
     id = serializers.UUIDField()

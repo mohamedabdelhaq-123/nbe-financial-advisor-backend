@@ -3,7 +3,7 @@ import json
 from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import OpenApiResponse, extend_schema
+from drf_spectacular.utils import OpenApiResponse, extend_schema, extend_schema_view
 from rest_framework import generics, mixins
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import GenericAPIView
@@ -13,6 +13,7 @@ from rest_framework.views import APIView
 
 from core.filters.conversations import ConversationFilterSet, MessageFilterSet
 from core.models import Budget, Conversation, Message
+from core.openapi import error_responses
 from core.serializers.conversations import (
     ConversationAttachmentRequestSerializer,
     ConversationAttachmentResponseSerializer,
@@ -27,7 +28,13 @@ from services import ai_service
 
 
 class ConversationListCreateView(generics.ListCreateAPIView):
-    """POST/GET /chat/conversations — filtering via ConversationFilterSet (PLAN.md Checkpoint F)."""
+    """
+    List the current user's chat sessions (newest-active-first), or start a
+    new one. `GET` supports filtering/sorting via the query parameters
+    below; `preview` on each list row is the most recent message's first
+    ~80 characters, for a session-list UI that doesn't want to fetch every
+    message just to show a snippet.
+    """
 
     pagination_class = LimitOffsetPagination
     filter_backends = [DjangoFilterBackend]
@@ -46,15 +53,21 @@ class ConversationListCreateView(generics.ListCreateAPIView):
             return Conversation.objects.none()
         return Conversation.objects.filter(user=self.request.user).order_by("-last_message_at")
 
+    @extend_schema(request=None, responses={201: ConversationSerializer})
     def post(self, request, *args, **kwargs):
-        # Empty body — a session needs no initial data, freely created
-        # (Data_Governance_Specs.md §3).
+        # Takes no request body at all — a session needs no initial data to
+        # start, so there's nothing for a client to send here. Explicitly
+        # declared above (request=None) rather than left undecorated, so
+        # Swagger states "no body needed" outright instead of a caller
+        # having to guess whether that's intentional.
         conversation = Conversation.objects.create(user=request.user)
         return Response(ConversationSerializer(conversation).data, status=201)
 
 
+@extend_schema_view(delete=extend_schema(responses={204: None, **error_responses(404)}))
 class ConversationDetailView(generics.DestroyAPIView):
-    """DELETE /chat/conversations/{conversation_id}"""
+    """Delete a chat session and every message in it. 404 if the
+    conversation doesn't exist or doesn't belong to the current user."""
 
     # DestroyAPIView wants a serializer_class even though DELETE returns no
     # body — reusing ConversationSerializer rather than duplicating it just
@@ -75,13 +88,15 @@ class MessageCursorPagination(CursorPagination):
 
 class ConversationMessagesView(mixins.ListModelMixin, GenericAPIView):
     """
-    GET/POST /chat/conversations/{conversation_id}/messages
+    List a conversation's messages (oldest first, cursor-paginated since
+    new messages keep arriving at one end — there's no meaningful "jump to
+    an arbitrary offset" here), or send a new one and get the assistant's
+    reply streamed back.
 
-    GET converted to ListModelMixin (PLAN.md Checkpoint F) for automatic
-    FilterSet-based Swagger docs — POST stays a fully custom method (SSE
-    streaming), which ListCreateAPIView can't express, so this combines
-    ListModelMixin directly with GenericAPIView instead (same pattern as
-    TransactionDetailView in core/views/aggregations.py).
+    Combines ListModelMixin directly with GenericAPIView rather than using
+    ListCreateAPIView, since POST's SSE-streaming response is a fully
+    custom method that ListCreateAPIView's generic create() flow can't
+    express.
     """
 
     serializer_class = MessageSerializer
@@ -101,12 +116,12 @@ class ConversationMessagesView(mixins.ListModelMixin, GenericAPIView):
         conversation = self._get_conversation(self.request, self.kwargs["conversation_id"])
         return conversation.messages.order_by("created_at")
 
-    @extend_schema(responses={200: MessageSerializer(many=True)})
+    @extend_schema(responses={200: MessageSerializer(many=True), **error_responses(404)})
     def get(self, request, conversation_id):
         # Reopening a conversation to read it does NOT bump last_message_at
-        # (Data_Shapes_Conversations.md's stale-session note) — only POSTing
-        # a new message does, so the "may be stale" warning can be computed
-        # from last_message_at's age at read time without racing this read.
+        # — only posting a new message does, so a "this session may be
+        # stale" warning elsewhere can be computed from last_message_at's
+        # age at read time without racing this read.
         return self.list(request, conversation_id=conversation_id)
 
     @extend_schema(
@@ -119,7 +134,8 @@ class ConversationMessagesView(mixins.ListModelMixin, GenericAPIView):
                     'followed by one terminal {"event": "done", "data": <this shape>} event. '
                     "Not a single JSON body; documented here as the terminal event's payload only."
                 ),
-            )
+            ),
+            **error_responses(404, 422),
         },
     )
     def post(self, request, conversation_id):
@@ -200,17 +216,18 @@ def _sse_stream(message: Message):
 
 class ConversationAttachmentsView(APIView):
     """
-    POST /chat/conversations/{conversation_id}/attachments
-
-    Shortcut into the Statements pipeline — same underlying processing as
-    POST /statements (create_statement_from_upload(), shared with
-    core/views/statements.py), tagged with the originating conversation via
-    a system message + reference rather than any new field on StatementFile.
+    Upload a bank statement from within a chat session — a shortcut into
+    the same statement-ingestion pipeline `POST /statements` uses (same
+    202-Accepted-and-poll contract, same `status` progression), just tagged
+    to this conversation: an assistant message is posted announcing the
+    upload, referencing the new statement, rather than the statement
+    gaining any new field of its own to track which conversation it came
+    from.
     """
 
     @extend_schema(
         request=ConversationAttachmentRequestSerializer,
-        responses={202: ConversationAttachmentResponseSerializer},
+        responses={202: ConversationAttachmentResponseSerializer, **error_responses(404, 422)},
     )
     def post(self, request, conversation_id):
         conversation = get_object_or_404(Conversation, id=conversation_id, user=request.user)
