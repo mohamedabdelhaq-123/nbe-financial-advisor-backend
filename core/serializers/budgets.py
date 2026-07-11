@@ -177,6 +177,11 @@ class DashboardMetricsSerializer(serializers.Serializer):
     income_stability_score = serializers.FloatField(allow_null=True)
     current_month_spend = serializers.DecimalField(max_digits=14, decimal_places=2)
     current_month_inflow = serializers.DecimalField(max_digits=14, decimal_places=2)
+    # Month-over-month differential metrics (PLAN.md Checkpoint D).
+    previous_month_spend = serializers.DecimalField(max_digits=14, decimal_places=2)
+    previous_month_inflow = serializers.DecimalField(max_digits=14, decimal_places=2)
+    spend_change_percentage = serializers.FloatField(allow_null=True)
+    inflow_change_percentage = serializers.FloatField(allow_null=True)
 
 
 class DashboardNetWorthSerializer(serializers.Serializer):

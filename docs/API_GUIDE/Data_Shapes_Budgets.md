@@ -211,7 +211,11 @@ Aggregate endpoint (API Design Guidelines §7) — plan, goal, metrics, and net 
   "metrics": {
     "income_stability_score": "number | null",
     "current_month_spend": "number",
-    "current_month_inflow": "number"
+    "current_month_inflow": "number",
+    "previous_month_spend": "number",
+    "previous_month_inflow": "number",
+    "spend_change_percentage": "number | null  // (current - previous) / abs(previous) * 100; null if the previous month has no transactions to compare against",
+    "inflow_change_percentage": "number | null  // same formula as spend_change_percentage"
   },
   "net_worth": { "total_across_accounts": "number", "as_of_date": "date" },
   "has_plan": "boolean  // false triggers the empty-state design, Design §3"

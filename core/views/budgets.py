@@ -420,6 +420,31 @@ class GoalView(APIView):
         return Response(status=204)
 
 
+def _month_totals(user, year, month):
+    """(spend, inflow) for a user's transactions in a given calendar month —
+    shared by DashboardView's current- and previous-month metrics (PLAN.md
+    Checkpoint D). Computed live from Transaction, same as the pre-existing
+    current-month figures — not MonthlySummary, which DashboardView doesn't
+    read from today."""
+    txns = Transaction.objects.filter(
+        user=user, transaction_date__year=year, transaction_date__month=month
+    )
+    spend = txns.filter(transaction_type__in=["debit", "fee"]).aggregate(t=Sum("amount"))[
+        "t"
+    ] or Decimal("0")
+    inflow = txns.filter(transaction_type="credit").aggregate(t=Sum("amount"))["t"] or Decimal("0")
+    return spend, inflow
+
+
+def _percentage_change(current, previous):
+    """(current - previous) / abs(previous) * 100 — explicit None (not a
+    crash or a misleading infinity) when there's no previous-month figure to
+    compare against."""
+    if not previous:
+        return None
+    return round(float((current - previous) / abs(previous) * 100), 2)
+
+
 class DashboardView(APIView):
     """GET /dashboard — aggregate endpoint (API Design Guidelines §7)."""
 
@@ -442,6 +467,10 @@ class DashboardView(APIView):
                         "income_stability_score": compute_stability_score(request.user),
                         "current_month_spend": Decimal("0"),
                         "current_month_inflow": Decimal("0"),
+                        "previous_month_spend": Decimal("0"),
+                        "previous_month_inflow": Decimal("0"),
+                        "spend_change_percentage": None,
+                        "inflow_change_percentage": None,
                     },
                     "net_worth": {
                         "total_across_accounts": Decimal("0"),
@@ -463,6 +492,15 @@ class DashboardView(APIView):
         current_month_inflow = month_txns.filter(transaction_type="credit").aggregate(
             t=Sum("amount")
         )["t"] or Decimal("0")
+
+        # Month-over-month differential metrics (PLAN.md Checkpoint D).
+        if today.month == 1:
+            prev_year, prev_month = today.year - 1, 12
+        else:
+            prev_year, prev_month = today.year, today.month - 1
+        previous_month_spend, previous_month_inflow = _month_totals(
+            request.user, prev_year, prev_month
+        )
 
         allocations_summary = []
         for alloc in budget.allocations.all():
@@ -492,6 +530,14 @@ class DashboardView(APIView):
                     "income_stability_score": compute_stability_score(request.user),
                     "current_month_spend": current_month_spend,
                     "current_month_inflow": current_month_inflow,
+                    "previous_month_spend": previous_month_spend,
+                    "previous_month_inflow": previous_month_inflow,
+                    "spend_change_percentage": _percentage_change(
+                        current_month_spend, previous_month_spend
+                    ),
+                    "inflow_change_percentage": _percentage_change(
+                        current_month_inflow, previous_month_inflow
+                    ),
                 },
                 "net_worth": {"total_across_accounts": total_net_worth, "as_of_date": today},
                 "has_plan": True,
