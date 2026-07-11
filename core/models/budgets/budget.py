@@ -10,9 +10,9 @@ class Budget(models.Model):
     period_type = models.CharField(max_length=20, default="monthly")
     status = models.CharField(max_length=20, default="active")
     selected_template_key = models.CharField(max_length=50, blank=True, null=True)
-    savings_goal_name = models.CharField(max_length=255, blank=True, null=True)
-    goal_target_amount = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
-    goal_timeline_months = models.IntegerField(blank=True, null=True)
+    # No goal fields here anymore — Goal is its own entity, one-to-one with
+    # User (core/models/budgets/goal.py, PLAN.md Checkpoint C), independent
+    # of whether a budget plan exists.
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

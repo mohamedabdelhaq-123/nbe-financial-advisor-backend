@@ -23,6 +23,7 @@ from core.views import (
     DashboardGoalView,
     DashboardView,
     FeedbackCreateView,
+    GoalView,
     IssueListCreateView,
     LoginView,
     LogoutView,
@@ -95,6 +96,9 @@ urlpatterns = [
     path("budget/progress/", BudgetProgressView.as_view()),
     path("budget/savings-progress/", SavingsProgressView.as_view()),
     path("budget/starter-templates/", StarterTemplatesView.as_view()),
+    # Goal — its own entity, one-to-one with User (PLAN.md Checkpoint C),
+    # not nested under Budget.
+    path("goal/", GoalView.as_view()),
     # 7. Dashboard (API_Endpoints_1.md §7)
     path("dashboard/", DashboardView.as_view()),
     path("dashboard/goal/", DashboardGoalView.as_view()),

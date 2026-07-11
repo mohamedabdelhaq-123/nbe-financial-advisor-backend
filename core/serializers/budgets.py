@@ -11,12 +11,22 @@ class GoalInputSerializer(serializers.Serializer):
     target_months. Read-side responses replace target_months with
     months_remaining instead — built separately in core/views/budgets.py
     since it's a computed value, not something a serializer maps 1:1 from a
-    model field.
+    model field. Used for POST /goal (full create) and PATCH /dashboard/goal
+    (upsert) — both require every field, unlike PATCH /goal's partial update.
     """
 
     name = serializers.CharField(max_length=255)
     target_amount = serializers.DecimalField(max_digits=14, decimal_places=2)
     target_months = serializers.IntegerField(min_value=1)
+
+
+class GoalUpdateSerializer(serializers.Serializer):
+    """PATCH /goal body — every field optional (a subset update), unlike
+    GoalInputSerializer's all-required create/upsert shape."""
+
+    name = serializers.CharField(max_length=255, required=False)
+    target_amount = serializers.DecimalField(max_digits=14, decimal_places=2, required=False)
+    target_months = serializers.IntegerField(min_value=1, required=False)
 
 
 class DashboardGoalRequestSerializer(serializers.Serializer):
@@ -38,11 +48,12 @@ def _validate_allocations_sum_100(allocations):
 
 
 class BudgetCreateSerializer(serializers.Serializer):
-    """POST /budget body."""
+    """POST /budget body. No `goal` here — Goal is its own entity with its
+    own CRUD (POST/PATCH /goal, PLAN.md Checkpoint C), created independently
+    of a budget plan."""
 
     name = serializers.CharField(max_length=255, required=False, default="My Plan")
     selected_template_key = serializers.CharField(max_length=50, required=False, allow_null=True)
-    goal = GoalInputSerializer()
     allocations = AllocationInputSerializer(many=True)
 
     def validate_allocations(self, allocations):
@@ -54,10 +65,10 @@ class BudgetUpdateSerializer(serializers.Serializer):
     PATCH /budget body — every field optional (a subset update), but
     `allocations`, if present, replaces the full set rather than merging
     (Data_Shapes_Budgets.md: "it replaces the full set... and must sum to 100").
+    No `goal` here — see BudgetCreateSerializer's docstring.
     """
 
     name = serializers.CharField(max_length=255, required=False)
-    goal = GoalInputSerializer(required=False)
     allocations = AllocationInputSerializer(many=True, required=False)
     changed_via = serializers.ChoiceField(
         choices=["dashboard", "chat_hitl", "onboarding"], required=False, default="dashboard"
@@ -103,12 +114,14 @@ class AllocationOutputSerializer(serializers.Serializer):
 
 
 class BudgetResponseSerializer(serializers.Serializer):
+    """No `goal` here — Goal is its own entity (PLAN.md Checkpoint C),
+    reached via GET /goal or GET /dashboard, not nested under Budget."""
+
     id = serializers.UUIDField()
     name = serializers.CharField()
     period_type = serializers.CharField()
     status = serializers.CharField()
     selected_template_key = serializers.CharField(allow_null=True)
-    goal = GoalProgressSerializer()
     allocations = AllocationOutputSerializer(many=True)
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()

@@ -17,7 +17,6 @@ Per-endpoint spec for the Budgets domain: the single active plan (`budgets`, 1:1
   "period_type": "string  // monthly",
   "status": "string  // active",
   "selected_template_key": "string | null",
-  "goal": { "name": "string", "target_amount": "number", "months_remaining": "integer" },
   "allocations": [
     {
       "category": "string",
@@ -30,6 +29,8 @@ Per-endpoint spec for the Budgets domain: the single active plan (`budgets`, 1:1
   "updated_at": "timestamp"
 }
 ```
+No `goal` key here — Goal is its own entity (see `GET/POST/PATCH/DELETE /goal` below), independent of whether a budget plan exists. Reach it via `GET /goal` or `GET /dashboard`.
+
 **Response `404`** if the user hasn't created a plan yet (Design §3 — a real, designed empty state, not an error state, in the frontend's handling of it).
 
 ---
@@ -45,12 +46,13 @@ Creates the initial plan (onboarding step 5, or if no plan currently exists). Re
 {
   "name": "string, optional, defaults to \"My Plan\"",
   "selected_template_key": "string, optional",
-  "goal": { "name": "string, required", "target_amount": "number, required", "target_months": "integer, required" },
   "allocations": [
     { "category": "string, required", "allocated_percentage": "number, required" }
   ]
 }
 ```
+No `goal` here — set/update a goal separately via `POST`/`PATCH /goal` (or the `PATCH /dashboard/goal` convenience alias), independent of budget creation.
+
 Percentages across `allocations` must sum to 100 (`422` otherwise, API Design Guidelines §3). `allocated_amount` is never sent by the client — computed server-side from `users.monthly_income`.
 
 **Response `201`** — same shape as `GET /budget`.
@@ -67,14 +69,13 @@ Updates allocations and/or the goal on the existing plan — the single write pa
 ```json
 {
   "name": "string",
-  "goal": { "name": "string", "target_amount": "number", "target_months": "integer" },
   "allocations": [
     { "category": "string, required", "allocated_percentage": "number, required" }
   ],
   "changed_via": "string, optional  // dashboard | chat_hitl — informational, defaults to dashboard"
 }
 ```
-If `allocations` is included, it replaces the full set (not a partial merge) and must sum to 100.
+No `goal` here — see `POST /budget`'s note above. If `allocations` is included, it replaces the full set (not a partial merge) and must sum to 100.
 
 **Response `200`** — same shape as `GET /budget`.
 
@@ -94,7 +95,6 @@ If `allocations` is included, it replaces the full set (not a partial merge) and
     {
       "id": "uuid",
       "previous_values": {
-        "goal": { "name": "string", "target_amount": "number", "target_months": "integer" },
         "allocations": [{ "category": "string", "allocated_percentage": "number", "allocated_amount": "number" }]
       },
       "changed_via": "string  // dashboard | chat_hitl | onboarding",
@@ -103,6 +103,7 @@ If `allocations` is included, it replaces the full set (not a partial merge) and
   ]
 }
 ```
+No `goal` in `previous_values` anymore — Goal is its own entity with no history/versioning of its own (this only tracks Budget's own fields).
 
 ---
 
@@ -132,6 +133,8 @@ If `allocations` is included, it replaces the full set (not a partial merge) and
 
 **Auth:** Required · **Scoping:** implicit self · **Query params:** none
 
+No longer requires a budget plan to exist — only a `Goal` (its own entity, independent of `Budget`; see `GET /goal` below). `404` if the user has no goal set.
+
 **Response `200`**
 ```json
 {
@@ -142,6 +145,35 @@ If `allocations` is included, it replaces the full set (not a partial merge) and
   "on_track": "boolean"
 }
 ```
+Progress is tracked from the goal's own creation date (`Goal.created_at`), not the budget plan's — fixes a prior bug where progress was always computed as of "whenever the plan was first created," which could badly undercount saved amounts for a goal added well after the plan.
+
+---
+
+## GET/POST/PATCH/DELETE /goal
+
+**Auth:** Required · **Scoping:** implicit self (one row per user, `OneToOneField` — no listing needed) · **Query params:** none
+
+The user's single savings goal — its own entity, independent of `Budget` (whether or not a budget plan exists). "Optional" means no row exists at all when unset, not a budget with null-ish goal fields.
+
+**GET — Response `200`**
+```json
+{ "name": "string", "target_amount": "number", "months_remaining": "integer", "percentage_complete": "number" }
+```
+**Response `404`** if no goal is set yet.
+
+**POST — Request** (all fields required)
+```json
+{ "name": "string, required", "target_amount": "number, required", "target_months": "integer, required" }
+```
+**Response `201`** — same shape as `GET /goal`. **Response `409`** if a goal already exists (`PATCH /goal` to update it instead).
+
+**PATCH — Request** (any subset)
+```json
+{ "name": "string", "target_amount": "number", "target_months": "integer" }
+```
+**Response `200`** — same shape as `GET /goal`. **Response `404`** if no goal exists yet (`POST /goal` to create one).
+
+**DELETE — Response `204`.** Goes back to "no goal" — `GET /goal`/`GET /dashboard`'s `goal` key return `404`/`null` respectively afterward.
 
 ---
 
@@ -192,7 +224,7 @@ Aggregate endpoint (API Design Guidelines §7) — plan, goal, metrics, and net 
 
 **Auth:** Required · **Scoping:** implicit self · **Query params:** none
 
-Convenience alias — internally calls the same write path as `PATCH /budget` with only the `goal` key.
+Convenience **upsert** alias for the user's `Goal` (creates it if it doesn't exist yet, updates it if it does) — operates on the standalone `Goal` entity, same as `POST`/`PATCH /goal` above, not nested `Budget` fields.
 
 **Request**
 ```json
