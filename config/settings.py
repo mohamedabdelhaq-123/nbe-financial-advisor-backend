@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "django_extensions",  # show_urls, shell_plus, etc.
     "storages",  # django-storages (S3/SeaweedFS backend)
+    "django_filters",  # FilterSets for query-param filtering (PLAN.md Checkpoint F)
     # Project apps
     "core",
 ]
@@ -134,6 +135,20 @@ SIMPLE_JWT = {
     "USER_ID_FIELD": "id",
     "USER_ID_CLAIM": "user_id",
 }
+
+# ── Refresh-token cookie (hybrid httpOnly approach, PLAN.md Checkpoint E) ──
+# Only the refresh token moves to an httpOnly cookie — the access token
+# stays in the response body/Authorization header (explicit decision: ease
+# of dev/Swagger testing). SameSite=Lax works in both dev (frontend :5173,
+# backend :8000 — cross-origin but same-SITE, since SameSite matching is by
+# scheme+registrable-domain, not port) and prod (frontend/backend share one
+# origin behind nginx, deploy/nginx.conf) without needing SameSite=None.
+# Secure is tied to DEBUG since dev has no TLS — a Secure cookie would just
+# be silently dropped over plain http://localhost.
+REFRESH_TOKEN_COOKIE_NAME = "refresh_token"
+REFRESH_TOKEN_COOKIE_SECURE = not DEBUG
+REFRESH_TOKEN_COOKIE_SAMESITE = "Lax"
+REFRESH_TOKEN_COOKIE_MAX_AGE = int(SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"].total_seconds())
 
 MIDDLEWARE = [
     # CorsMiddleware must be first — before any middleware that can generate

@@ -9,7 +9,7 @@ reproducible rather than accumulating duplicates.
 import argparse
 import random
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.conf import settings
@@ -28,6 +28,7 @@ from core.models import (
     BudgetHistory,
     ConsentRecord,
     Conversation,
+    Goal,
     Message,
     MessageReference,
     MonthlySummary,
@@ -361,7 +362,7 @@ class Command(BaseCommand):
         self._seed_monthly_summaries(user, transactions_by_account)
         self._seed_net_worth_snapshot(user, accounts, today)
 
-        budget = self._seed_budget(user)
+        budget = self._seed_budget(user, goal_since=period_start)
         self._seed_conversations(user, all_transactions, statements_by_account)
         self._seed_feedback(user, all_transactions)
 
@@ -761,16 +762,32 @@ class Command(BaseCommand):
     # Budgets
     # ------------------------------------------------------------------
 
-    def _seed_budget(self, user):
+    def _seed_budget(self, user, goal_since=None):
         budget = Budget.objects.create(
             user=user,
             name="My Plan",
             period_type="monthly",
             status="active",
-            savings_goal_name="Emergency Fund",
-            goal_target_amount=_money(0, 20000, 100000),
-            goal_timeline_months=random.choice([6, 12, 18, 24]),
         )
+        # Goal is its own entity now, one-to-one with User (PLAN.md
+        # Checkpoint C) — created independently of the budget, not as
+        # embedded fields on it.
+        goal = Goal.objects.create(
+            user=user,
+            name="Emergency Fund",
+            target_amount=_money(0, 20000, 100000),
+            timeline_months=random.choice([6, 12, 18, 24]),
+        )
+        if goal_since is not None:
+            # Backdated to the same period_start the transaction history
+            # uses, via a queryset update (auto_now_add ignores any value
+            # passed to .create()/.save()) — so a fresh seed_db run
+            # immediately shows real, non-zero savings progress instead of
+            # 0% until new transactions post after "right now." This is also
+            # the concrete regression check for the savings-progress-
+            # always-zero bug _goal_progress()'s docstring explains.
+            goal_created_at = timezone.make_aware(datetime.combine(goal_since, datetime.min.time()))
+            Goal.objects.filter(pk=goal.pk).update(created_at=goal_created_at)
         allocation_plan = [
             ("Rent", Decimal("30.00")),
             ("Groceries", Decimal("20.00")),

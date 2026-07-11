@@ -7,7 +7,7 @@ Per-endpoint spec for the Aggregations domain: Transactions (the single source o
 
 ## GET /transactions
 
-**Auth:** Required · **Scoping:** implicit self · **Query params:** `account_id`, `category`, `from` (date), `to` (date), `source` (statement/manual/chat), `is_recurring` (bool), `limit` (integer, optional, page size — frontend-controlled), `offset` (integer, optional, default 0) · **Pagination:** **Offset** — DRF `LimitOffsetPagination` — bounded, filterable, randomly-accessed (API Design Guidelines §5, reference case) · **Default sort:** `-transaction_date` (most recent first); overridable via `?sort=` with `amount`, `-amount`, `transaction_date`, `-transaction_date`, `category`
+**Auth:** Required · **Scoping:** implicit self · **Query params:** `account_id`, `category`, `from` (date), `to` (date), `source` (statement/manual/chat), `is_recurring` (bool), `search` (matches `merchant_raw`/`merchant_normalized`, case-insensitive substring), `min_amount`, `max_amount`, `transaction_type` (debit/credit/fee/transfer), `limit` (integer, optional, page size — frontend-controlled), `offset` (integer, optional, default 0) · **Pagination:** **Offset** — DRF `LimitOffsetPagination` — bounded, filterable, randomly-accessed (API Design Guidelines §5, reference case) · **Default sort:** `-transaction_date` (most recent first); overridable via `?sort=` with `amount`, `-amount`, `transaction_date`, `-transaction_date`, `category`, `-category`, `merchant_normalized`, `-merchant_normalized`, `created_at`, `-created_at`
 
 **Response `200`**
 ```json

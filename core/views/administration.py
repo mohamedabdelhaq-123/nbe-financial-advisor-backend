@@ -1,6 +1,7 @@
 from django.contrib.auth.hashers import check_password
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics
 from rest_framework.exceptions import ValidationError
@@ -11,6 +12,11 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.settings import api_settings as simplejwt_settings
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from core.filters.administration import (
+    AdminIssueFilterSet,
+    AdminProductFilterSet,
+    AdminReactionFilterSet,
+)
 from core.models import AdminUser, ProblemStatement, Product, Reaction, ReportedIssue
 from core.permissions import AdminAuthMixin, IsSuperAdmin
 from core.serializers.administration import (
@@ -81,37 +87,29 @@ class AdminLoginView(APIView):
 
 
 class AdminFeedbackListView(AdminAuthMixin, generics.ListAPIView):
-    """GET /admin/feedback — cross-user by design, reviewer or super_admin."""
+    """GET /admin/feedback — cross-user by design, reviewer or super_admin.
+    Filtering via AdminReactionFilterSet (PLAN.md Checkpoint F)."""
 
     serializer_class = AdminReactionSerializer
     pagination_class = LimitOffsetPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = AdminReactionFilterSet
 
     def get_queryset(self):
-        qs = Reaction.objects.all()
-        params = self.request.query_params
-        if params.get("target_type"):
-            qs = qs.filter(target_type=params["target_type"])
-        if params.get("rating"):
-            qs = qs.filter(rating=params["rating"])
-        if params.get("from"):
-            qs = qs.filter(created_at__date__gte=params["from"])
-        if params.get("to"):
-            qs = qs.filter(created_at__date__lte=params["to"])
-        return qs.order_by("-created_at")
+        return Reaction.objects.all().order_by("-created_at")
 
 
 class AdminIssueListView(AdminAuthMixin, generics.ListAPIView):
-    """GET /admin/issues — cross-user by design, reviewer or super_admin."""
+    """GET /admin/issues — cross-user by design, reviewer or super_admin.
+    Filtering via AdminIssueFilterSet (PLAN.md Checkpoint F)."""
 
     serializer_class = AdminIssueSerializer
     pagination_class = LimitOffsetPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = AdminIssueFilterSet
 
     def get_queryset(self):
-        qs = ReportedIssue.objects.all()
-        status_param = self.request.query_params.get("status")
-        if status_param:
-            qs = qs.filter(status=status_param)
-        return qs.order_by("-created_at")
+        return ReportedIssue.objects.all().order_by("-created_at")
 
 
 class AdminIssueUpdateView(AdminAuthMixin, APIView):
@@ -137,9 +135,13 @@ class AdminProductListCreateView(AdminAuthMixin, generics.ListCreateAPIView):
     """
     GET /admin/products — any admin role.
     POST /admin/products — super_admin only.
+
+    Filtering via AdminProductFilterSet (PLAN.md Checkpoint F).
     """
 
     pagination_class = LimitOffsetPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = AdminProductFilterSet
 
     def get_permissions(self):
         if self.request.method == "POST":
@@ -157,13 +159,7 @@ class AdminProductListCreateView(AdminAuthMixin, generics.ListCreateAPIView):
         # Includes inactive products — unlike the user-facing GET
         # /recommendations, which only ever surfaces active, matched ones
         # (Data_Shapes_Administration.md).
-        qs = Product.objects.all()
-        params = self.request.query_params
-        if params.get("is_active") is not None:
-            qs = qs.filter(is_active=params["is_active"].lower() == "true")
-        if params.get("category"):
-            qs = qs.filter(categories__contains=[params["category"]])
-        return qs.order_by("created_at")
+        return Product.objects.all().order_by("created_at")
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)

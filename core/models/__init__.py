@@ -13,6 +13,7 @@ from .budgets.allocation import BudgetAllocation
 
 # Import Budgets Domain
 from .budgets.budget import Budget
+from .budgets.goal import Goal
 from .budgets.history import BudgetHistory
 
 # Import Conversations Domain
@@ -62,6 +63,7 @@ __all__ = [
     "Budget",
     "BudgetAllocation",
     "BudgetHistory",
+    "Goal",
     # Feedback
     "Reaction",
     "ReportedIssue",

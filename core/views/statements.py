@@ -6,6 +6,7 @@ from django.db import transaction as db_transaction
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
+from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
@@ -15,6 +16,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.exceptions import BusinessRuleError
+from core.filters.statements import StatementFileFilterSet
 from core.models import (
     BankAccount,
     StatementFile,
@@ -29,7 +31,7 @@ from core.serializers.statements import (
     StatementOcrResultResponseSerializer,
     StatementPatchSerializer,
     StatementUploadRequestSerializer,
-    TransactionApprovalItemSerializer,
+    TransactionApprovalRequestSerializer,
     TransactionApprovalResponseSerializer,
 )
 from services import ai_service, file_storage
@@ -223,9 +225,7 @@ def advance_statement_to(statement: StatementFile, target_status: str) -> None:
             break
 
 
-def create_statement_from_upload(
-    user, file_obj, account_id=None, target_status=None
-) -> StatementFile:
+def create_statement_from_upload(user, file_obj, target_status=None) -> StatementFile:
     """
     The full upload -> checksum-dedupe -> store -> auto-chained-pipeline
     flow, factored out of StatementListCreateView.post() so the
@@ -267,10 +267,10 @@ def create_statement_from_upload(
             code="duplicate_statement",
         )
 
-    account = None
-    if account_id:
-        account = get_object_or_404(BankAccount, id=account_id, user=user)
-
+    # No account resolution here — the client never supplies one at upload
+    # time (PLAN.md Checkpoint A). _run_normalization() infers/creates the
+    # account from OCR output once extraction runs; the user confirms or
+    # corrects it at approval time (StatementTransactionApprovalView).
     extension = file_obj.name.rsplit(".", 1)[-1].lower() if "." in file_obj.name else "bin"
     statement_id = uuid.uuid4()
     seaweed_file_id = file_storage.raw_statement_key(user.id, statement_id, extension)
@@ -283,7 +283,6 @@ def create_statement_from_upload(
     statement = StatementFile.objects.create(
         id=statement_id,
         user=user,
-        account=account,
         seaweed_file_id=seaweed_file_id,
         checksum=checksum,
         file_size=len(file_bytes),
@@ -296,28 +295,31 @@ def create_statement_from_upload(
 
 
 class StatementListCreateView(generics.ListAPIView):
-    """GET /statements, POST /statements (multipart upload)"""
+    """GET /statements, POST /statements (multipart upload)
+
+    Filtering via StatementFileFilterSet (PLAN.md Checkpoint F).
+    """
 
     serializer_class = StatementFileSerializer
     pagination_class = LimitOffsetPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = StatementFileFilterSet
 
     def get_queryset(self):
+        # swagger_fake_view: see core/views/aggregations.py's
+        # TransactionListCreateView.get_queryset().
+        if getattr(self, "swagger_fake_view", False):
+            return StatementFile.objects.none()
         # select_related(account) + prefetch(normalized_records) keep the
         # newly-inlined metadata fields (bank_name/account_hint/model_used/
         # adjusted_at, all funnelling through latest_normalized_record) from
         # turning the list into an N+1 — see StatementFile.latest_normalized_record.
-        qs = (
+        return (
             StatementFile.objects.filter(user=self.request.user)
             .select_related("account")
             .prefetch_related("normalized_records")
+            .order_by("-upload_date")
         )
-        status_param = self.request.query_params.get("status")
-        if status_param:
-            qs = qs.filter(status=status_param)
-        account_id = self.request.query_params.get("account_id")
-        if account_id:
-            qs = qs.filter(account_id=account_id)
-        return qs.order_by("-upload_date")
 
     @extend_schema(
         request=StatementUploadRequestSerializer,
@@ -329,7 +331,6 @@ class StatementListCreateView(generics.ListAPIView):
         statement = create_statement_from_upload(
             request.user,
             upload.validated_data["file"],
-            account_id=upload.validated_data.get("account_id"),
             # Defaults to STATUS_NORMALIZED inside create_statement_from_upload
             # when omitted — the serializer's own `default` already resolves
             # that, but .get() here keeps this call site symmetrical with
@@ -462,10 +463,15 @@ class StatementTransactionApprovalView(APIView):
     treated as an error. Advances the statement straight to approved once
     every row is resolved — this is the endpoint that action names itself
     after, unlike the status names elsewhere in this pipeline.
+
+    Also the one and only account-confirmation moment (PLAN.md Checkpoint
+    A): the request body's optional `account_id` confirms or overrides the
+    account `_run_normalization()` already inferred from OCR — the client
+    never supplies one at upload time.
     """
 
     @extend_schema(
-        request=TransactionApprovalItemSerializer(many=True),
+        request=TransactionApprovalRequestSerializer,
         responses={200: TransactionApprovalResponseSerializer},
     )
     def post(self, request, statement_id):
@@ -477,10 +483,15 @@ class StatementTransactionApprovalView(APIView):
                 code="invalid_status_transition",
             )
 
+        request_serializer = TransactionApprovalRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        submitted = request_serializer.validated_data["transactions"]
+        account_id = request_serializer.validated_data.get("account_id")
+        if account_id:
+            statement.account = get_object_or_404(BankAccount, id=account_id, user=request.user)
+            statement.save(update_fields=["account"])
+
         proposed = (statement.normalized_payload or {}).get("transactions", [])
-        item_serializer = TransactionApprovalItemSerializer(data=request.data, many=True)
-        item_serializer.is_valid(raise_exception=True)
-        submitted = item_serializer.validated_data
 
         if len(submitted) != len(proposed):
             raise BusinessRuleError(

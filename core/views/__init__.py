@@ -25,6 +25,7 @@ from core.views.budgets import (
     BudgetView,
     DashboardGoalView,
     DashboardView,
+    GoalView,
     SavingsProgressView,
     StarterTemplatesView,
 )
@@ -87,6 +88,7 @@ __all__ = [
     "BudgetProgressView",
     "SavingsProgressView",
     "StarterTemplatesView",
+    "GoalView",
     "DashboardView",
     "DashboardGoalView",
     "ConversationListCreateView",

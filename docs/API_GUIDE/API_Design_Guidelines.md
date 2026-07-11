@@ -81,8 +81,8 @@ Where a single screen would otherwise require several sequential calls to assemb
 
 ## 8. Authentication & Authorization
 
-- **JWT bearer tokens** (access + refresh pair), issued at login/signup, sent as `Authorization: Bearer <token>` on every authenticated request.
-- **Refresh flow** is a dedicated endpoint (`POST /auth/refresh`), never silently handled by re-sending credentials.
+- **JWT bearer tokens** (access + refresh pair), issued at login/signup. The **access token** is returned in the response body and sent as `Authorization: Bearer <token>` on every authenticated request (kept in JS memory client-side, not persisted — an explicit ease-of-dev/Swagger-testing trade-off). The **refresh token** is a separate story: it's set as an `httpOnly` cookie (`Secure`+`SameSite=Lax` in production; `Secure` off in local dev, which has no TLS) and never appears in any response body — this is a deliberate XSS hardening measure, since the longer-lived, higher-value refresh token is never readable by JS at all, even via a successful script-injection attack. End-user auth only (`/auth/*`) — Admin auth (`/admin/auth/*`) is unaffected, still body-based, per the structural credential-space separation below.
+- **Refresh flow** is a dedicated endpoint (`POST /auth/refresh`), never silently handled by re-sending credentials. Takes no request body — the refresh token comes from the cookie automatically.
 - **Role separation is structural, not a flag.** Admin/internal-staff auth (Administration domain) is a completely separate credential space from end-user auth — an admin token and a user token are never interchangeable, and no endpoint accepts either kind of token depending on convenience.
 - **The assistant never gets elevated permissions.** Any write the AI service triggers on a user's behalf still passes through the same user-scoped, user-authenticated write path as a dashboard action — the AI service does not hold a standing credential that can write directly to a user's data outside of what the user has actively confirmed.
 

@@ -4,7 +4,9 @@ from decimal import Decimal
 from django.db.models import Sum
 from django.db.models.functions import TruncMonth
 from django.shortcuts import get_object_or_404
-from drf_spectacular.utils import extend_schema
+from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import mixins, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import GenericAPIView, ListAPIView
@@ -13,6 +15,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.exceptions import BusinessRuleError
+from core.filters.aggregations import (
+    AnomalyFilterSet,
+    RecurringChargeFilterSet,
+    SpendingInsightFilterSet,
+    TransactionFilterSet,
+)
 from core.models import (
     AnomalyFlag,
     BankAccount,
@@ -41,31 +49,34 @@ from core.serializers.aggregations import (
 
 
 class TransactionListCreateView(ListAPIView):
-    """GET/POST /transactions"""
+    """GET/POST /transactions
+
+    Filtering/sorting via TransactionFilterSet (PLAN.md Checkpoint F) —
+    django-filter is the single source of truth for both the filtering
+    behavior and its Swagger docs (drf-spectacular's built-in
+    DjangoFilterBackend introspection), so they can't drift apart the way a
+    separately-maintained doc decorator could.
+    """
 
     serializer_class = TransactionListSerializer
     pagination_class = LimitOffsetPagination
-    ALLOWED_SORT_FIELDS = {"amount", "-amount", "transaction_date", "-transaction_date", "category"}
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = TransactionFilterSet
 
     def get_queryset(self):
-        qs = Transaction.objects.filter(user=self.request.user)
-        params = self.request.query_params
-        if params.get("account_id"):
-            qs = qs.filter(account_id=params["account_id"])
-        if params.get("category"):
-            qs = qs.filter(category=params["category"])
-        if params.get("from"):
-            qs = qs.filter(transaction_date__gte=params["from"])
-        if params.get("to"):
-            qs = qs.filter(transaction_date__lte=params["to"])
-        if params.get("source"):
-            qs = qs.filter(source=params["source"])
-        if "is_recurring" in params:
-            qs = qs.filter(is_recurring=params["is_recurring"].lower() == "true")
-        sort = params.get("sort", "-transaction_date")
-        if sort not in self.ALLOWED_SORT_FIELDS:
-            sort = "-transaction_date"
-        return qs.order_by(sort)
+        # swagger_fake_view: drf-spectacular's DjangoFilterBackend
+        # introspection calls get_queryset() against an AnonymousUser to
+        # resolve the FilterSet's model — filtering by self.request.user
+        # unconditionally raises ("AnonymousUser is not a valid UUID") and
+        # silently drops every FilterSet param from the generated schema
+        # (confirmed by hand — PLAN.md Checkpoint F). This guard is required
+        # for the schema to actually include search/min_amount/etc., not
+        # just cosmetic.
+        if getattr(self, "swagger_fake_view", False):
+            return Transaction.objects.none()
+        # Default order when no `sort` param is given — OrderingFilter
+        # leaves the queryset's existing order alone otherwise.
+        return Transaction.objects.filter(user=self.request.user).order_by("-transaction_date")
 
     def post(self, request, *args, **kwargs):
         account_id = request.data.get("account_id")
@@ -167,9 +178,30 @@ class TransactionDetailView(mixins.RetrieveModelMixin, mixins.DestroyModelMixin,
 
 
 class MonthlySummariesView(APIView):
-    """GET /analytics/monthly-summaries"""
+    """
+    GET /analytics/monthly-summaries
 
-    @extend_schema(responses={200: MonthlySummaryItemSerializer(many=True)})
+    account_id/from/to genuinely filter the underlying Transaction queryset
+    before the custom month-bucketing/aggregation below runs — but the
+    response itself is a custom-shaped list, not a serialized queryset, so
+    this can't become a ListAPIView + FilterSet the way the Category 1/2
+    views in this file did (PLAN.md Checkpoint F): drf-spectacular's
+    automatic filter-parameter introspection only fires for GenericAPIView.
+    Documented manually here instead.
+    """
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("account_id", OpenApiTypes.UUID, required=False),
+            OpenApiParameter(
+                "from", OpenApiTypes.STR, required=False, description="YYYY-MM, inclusive"
+            ),
+            OpenApiParameter(
+                "to", OpenApiTypes.STR, required=False, description="YYYY-MM, inclusive"
+            ),
+        ],
+        responses={200: MonthlySummaryItemSerializer(many=True)},
+    )
     def get(self, request):
         qs = Transaction.objects.filter(user=request.user)
         account_id = request.query_params.get("account_id")
@@ -234,9 +266,26 @@ class MonthlySummariesView(APIView):
 
 
 class CategoryBreakdownView(APIView):
-    """GET /analytics/category-breakdown"""
+    """GET /analytics/category-breakdown
 
-    @extend_schema(responses={200: CategoryBreakdownResponseSerializer})
+    `period`/`account_id` genuinely filter the underlying Transaction
+    queryset, but the response is a custom aggregated shape, not a
+    serialized queryset — same reasoning as MonthlySummariesView above for
+    why this stays a manually-documented APIView (PLAN.md Checkpoint F).
+    """
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "period",
+                OpenApiTypes.STR,
+                required=True,
+                description="YYYY-MM, e.g. 2026-07",
+            ),
+            OpenApiParameter("account_id", OpenApiTypes.UUID, required=False),
+        ],
+        responses={200: CategoryBreakdownResponseSerializer},
+    )
     def get(self, request):
         period = request.query_params.get("period")
         if not period:
@@ -274,7 +323,7 @@ class CategoryBreakdownView(APIView):
         return Response({"period": period, "breakdown": breakdown})
 
 
-class RecurringChargesView(APIView):
+class RecurringChargesView(ListAPIView):
     """
     GET /analytics/recurring-charges
 
@@ -282,29 +331,40 @@ class RecurringChargesView(APIView):
     this table is a background, AI-service-driven detection job
     (System_Architecture.md §5) that doesn't exist yet — see this file's
     module docstring for why real detection logic isn't built here.
+
+    Converted from a plain APIView to ListAPIView (PLAN.md Checkpoint F) to
+    get automatic FilterSet-based Swagger docs — pagination_class stays
+    None to preserve the pre-existing plain-array response (this domain's
+    small, bounded per-user lists are intentionally unpaginated, matching
+    BankAccountListCreateView's precedent).
     """
 
-    @extend_schema(responses={200: RecurringChargeSerializer(many=True)})
-    def get(self, request):
-        qs = RecurringCharge.objects.filter(user=request.user)
-        account_id = request.query_params.get("account_id")
-        if account_id:
-            qs = qs.filter(account_id=account_id)
-        return Response(RecurringChargeSerializer(qs, many=True).data)
+    serializer_class = RecurringChargeSerializer
+    pagination_class = None
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = RecurringChargeFilterSet
+
+    def get_queryset(self):
+        # swagger_fake_view: see TransactionListCreateView's get_queryset().
+        if getattr(self, "swagger_fake_view", False):
+            return RecurringCharge.objects.none()
+        return RecurringCharge.objects.filter(user=self.request.user)
 
 
-class AnomaliesView(APIView):
-    """GET /analytics/anomalies — same scope boundary as RecurringChargesView."""
+class AnomaliesView(ListAPIView):
+    """GET /analytics/anomalies — same scope boundary as RecurringChargesView,
+    same ListAPIView conversion rationale."""
 
-    @extend_schema(responses={200: AnomalyFlagSerializer(many=True)})
-    def get(self, request):
-        qs = AnomalyFlag.objects.filter(transaction__user=request.user)
-        severity = request.query_params.get("severity")
-        if severity:
-            qs = qs.filter(severity=severity)
-        if "resolved" in request.query_params:
-            qs = qs.filter(resolved=request.query_params["resolved"].lower() == "true")
-        return Response(AnomalyFlagSerializer(qs, many=True).data)
+    serializer_class = AnomalyFlagSerializer
+    pagination_class = None
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = AnomalyFilterSet
+
+    def get_queryset(self):
+        # swagger_fake_view: see TransactionListCreateView's get_queryset().
+        if getattr(self, "swagger_fake_view", False):
+            return AnomalyFlag.objects.none()
+        return AnomalyFlag.objects.filter(transaction__user=self.request.user)
 
 
 class AnomalyResolveView(APIView):
@@ -322,19 +382,20 @@ class AnomalyResolveView(APIView):
         return Response(AnomalyFlagSerializer(anomaly).data)
 
 
-class SpendingInsightsView(APIView):
-    """GET /analytics/spending-insights — same scope boundary as RecurringChargesView."""
+class SpendingInsightsView(ListAPIView):
+    """GET /analytics/spending-insights — same scope boundary and ListAPIView
+    conversion rationale as RecurringChargesView."""
 
-    @extend_schema(responses={200: SpendingPatternInsightSerializer(many=True)})
-    def get(self, request):
-        qs = SpendingPatternInsight.objects.filter(user=request.user)
-        insight_type = request.query_params.get("insight_type")
-        if insight_type:
-            qs = qs.filter(insight_type=insight_type)
-        period = request.query_params.get("period")
-        if period:
-            qs = qs.filter(period=period)
-        return Response(SpendingPatternInsightSerializer(qs, many=True).data)
+    serializer_class = SpendingPatternInsightSerializer
+    pagination_class = None
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = SpendingInsightFilterSet
+
+    def get_queryset(self):
+        # swagger_fake_view: see TransactionListCreateView's get_queryset().
+        if getattr(self, "swagger_fake_view", False):
+            return SpendingPatternInsight.objects.none()
+        return SpendingPatternInsight.objects.filter(user=self.request.user)
 
 
 class NetWorthView(APIView):
@@ -348,9 +409,23 @@ class NetWorthView(APIView):
     yet (same background-job gap as recurring-charges/anomalies above).
     `as_of_date` in the response echoes the requested date (or today) for
     shape-compatibility, without claiming to reconstruct a past balance.
+
+    `as_of` is NOT a filter (PLAN.md Checkpoint F) — it never touches the
+    account query above, purely echoed back — so no FilterSet applies here
+    by definition; documented manually instead.
     """
 
-    @extend_schema(responses={200: NetWorthResponseSerializer})
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "as_of",
+                OpenApiTypes.DATE,
+                required=False,
+                description="Echoed back in as_of_date only — see docstring",
+            )
+        ],
+        responses={200: NetWorthResponseSerializer},
+    )
     def get(self, request):
         as_of = request.query_params.get("as_of") or date.today().isoformat()
         accounts = BankAccount.objects.filter(user=request.user, is_active=True)
@@ -414,9 +489,25 @@ def compute_stability_score(user):
 
 
 class StabilityScoreView(APIView):
-    """GET /analytics/stability-score"""
+    """GET /analytics/stability-score
 
-    @extend_schema(responses={200: StabilityScoreResponseSerializer})
+    `period` is NOT a filter (PLAN.md Checkpoint F) — confirmed by reading
+    compute_stability_score() below, which takes no period argument at all;
+    it's purely echoed back in computed_for_period. No FilterSet applies
+    here by definition; documented manually instead.
+    """
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "period",
+                OpenApiTypes.STR,
+                required=False,
+                description="Echoed back in computed_for_period only — see docstring",
+            )
+        ],
+        responses={200: StabilityScoreResponseSerializer},
+    )
     def get(self, request):
         period = request.query_params.get("period")
         score = compute_stability_score(request.user)

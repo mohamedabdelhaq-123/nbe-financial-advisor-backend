@@ -60,23 +60,27 @@ PATCH  /transactions/{transaction_id}
 DELETE /transactions/{transaction_id}
 ```
 
-## 6. Budget (the single active plan — `budgets`)
+## 6. Budget (the single active plan — `budgets`) and Goal (its own entity)
 
 ```
-GET    /budget                            # current active plan + allocations + goal
+GET    /budget                            # current active plan + allocations (no goal — see /goal below)
 POST   /budget                            # create the initial plan (onboarding step 5)
-PATCH  /budget                            # update allocations and/or goal (dashboard edit or chat HITL confirm)
+PATCH  /budget                            # update allocations (dashboard edit or chat HITL confirm)
 GET    /budget/history                    # budget_history — versioned prior states
 GET    /budget/progress                   # actual vs. allocated, current period, per category
-GET    /budget/savings-progress           # progress toward goal + projected completion date
+GET    /budget/savings-progress           # progress toward goal + projected completion date (requires a Goal, not a Budget)
 GET    /budget/starter-templates          # 3–5 onboarding-step starter templates (one flagged suggested)
+GET    /goal                              # the user's savings goal — its own entity, one-to-one with User
+POST   /goal                              # create it (409 if one already exists)
+PATCH  /goal                              # update it (any subset)
+DELETE /goal                              # remove it — back to "no goal"
 ```
 
 ## 7. Dashboard
 
 ```
 GET    /dashboard                         # aggregate: plan, goal, metrics, net worth (see API Design Guidelines §7)
-PATCH  /dashboard/goal                    # convenience alias for the goal fields on PATCH /budget
+PATCH  /dashboard/goal                    # convenience upsert alias for the standalone Goal entity
 ```
 
 ## 8. Analytics (read-only, backend-computed)

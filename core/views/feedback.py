@@ -1,3 +1,4 @@
+from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics
 from rest_framework.exceptions import NotFound
@@ -5,6 +6,7 @@ from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.filters.feedback import IssueFilterSet
 from core.models import Budget, Message, Reaction, ReportedIssue, Transaction
 from core.serializers.feedback import (
     FeedbackCreateSerializer,
@@ -55,19 +57,20 @@ class FeedbackCreateView(APIView):
 
 
 class IssueListCreateView(generics.ListCreateAPIView):
-    """POST/GET /issues"""
+    """POST/GET /issues — filtering via IssueFilterSet (PLAN.md Checkpoint F)."""
 
     pagination_class = LimitOffsetPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = IssueFilterSet
 
     def get_serializer_class(self):
         return IssueCreateSerializer if self.request.method == "POST" else IssueSerializer
 
     def get_queryset(self):
-        qs = ReportedIssue.objects.filter(user=self.request.user)
-        status_param = self.request.query_params.get("status")
-        if status_param:
-            qs = qs.filter(status=status_param)
-        return qs.order_by("-created_at")
+        # swagger_fake_view: see aggregations.py's TransactionListCreateView.get_queryset().
+        if getattr(self, "swagger_fake_view", False):
+            return ReportedIssue.objects.none()
+        return ReportedIssue.objects.filter(user=self.request.user).order_by("-created_at")
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)

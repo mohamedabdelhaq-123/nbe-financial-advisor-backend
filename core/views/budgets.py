@@ -3,7 +3,9 @@ from decimal import Decimal
 
 from django.db.models import Sum
 from django.shortcuts import get_object_or_404
-from drf_spectacular.utils import extend_schema
+from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.generics import ListAPIView
 from rest_framework.pagination import LimitOffsetPagination
@@ -12,7 +14,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.exceptions import ConflictError
-from core.models import BankAccount, Budget, BudgetAllocation, BudgetHistory, Transaction
+from core.filters.budgets import BudgetHistoryFilterSet
+from core.models import BankAccount, Budget, BudgetAllocation, BudgetHistory, Goal, Transaction
 from core.serializers.budgets import (
     BudgetCreateSerializer,
     BudgetHistorySerializer,
@@ -22,6 +25,8 @@ from core.serializers.budgets import (
     DashboardGoalRequestSerializer,
     DashboardGoalResponseSerializer,
     DashboardResponseSerializer,
+    GoalInputSerializer,
+    GoalUpdateSerializer,
     SavingsProgressResponseSerializer,
     StarterTemplateSerializer,
 )
@@ -31,21 +36,21 @@ from services import file_storage
 
 def _months_elapsed(start_date, end_date):
     """Whole calendar-month difference — used throughout this file to derive
-    `months_remaining` from `goal_timeline_months` and a reference start date."""
+    `months_remaining` from `Goal.timeline_months` and a reference start date."""
     return (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
 
 
-def _months_remaining(budget):
-    if budget.goal_timeline_months is None:
+def _months_remaining(goal):
+    if goal is None:
         return None
-    # Reference point is the plan's creation date, not a dedicated "goal set
-    # at" timestamp — DB_Schema.md's `budgets` table doesn't have one, and
-    # `updated_at` isn't a clean substitute (it changes on every save, e.g. an
-    # allocation-only edit, not just when the goal itself changes). This is a
-    # deliberate simplification: the countdown doesn't reset if a user edits
-    # the goal without changing the plan's original creation date.
-    elapsed = _months_elapsed(budget.created_at.date(), date.today())
-    return max(0, budget.goal_timeline_months - elapsed)
+    # Reference point is Goal.created_at (PLAN.md Checkpoint C) — previously
+    # this was budget.created_at, which is set once at plan-creation time and
+    # never updates when a goal is later added/changed on top of an existing
+    # plan; that mismatch is what made GET /budget/savings-progress always
+    # compute ~0% for a plan created well before its goal was set. Goal now
+    # being its own entity with its own created_at fixes this directly.
+    elapsed = _months_elapsed(goal.created_at.date(), date.today())
+    return max(0, goal.timeline_months - elapsed)
 
 
 def _saved_so_far(user, since_date):
@@ -67,18 +72,15 @@ def _saved_so_far(user, since_date):
 
 
 def _serialize_budget(budget):
-    """GET/POST/PATCH /budget all return this same shape (Data_Shapes_Budgets.md)."""
+    """GET/POST/PATCH /budget all return this same shape (Data_Shapes_Budgets.md).
+    No `goal` key — Goal is its own entity (PLAN.md Checkpoint C), reached
+    via GET /goal or GET /dashboard, not nested here."""
     return {
         "id": str(budget.id),
         "name": budget.name,
         "period_type": budget.period_type,
         "status": budget.status,
         "selected_template_key": budget.selected_template_key,
-        "goal": {
-            "name": budget.savings_goal_name,
-            "target_amount": budget.goal_target_amount,
-            "months_remaining": _months_remaining(budget),
-        },
         "allocations": [
             {
                 "category": a.category,
@@ -101,15 +103,12 @@ def _snapshot(budget):
     just style): BudgetHistory.previous_values is a plain JSONField with no
     custom encoder, and the stdlib json encoder Django falls back to can't
     serialize Decimal on its own.
+
+    No `goal` key — Goal is its own entity now (PLAN.md Checkpoint C), with
+    no history/versioning of its own; budget_history only tracks Budget's
+    own fields (name, allocations).
     """
     return {
-        "goal": {
-            "name": budget.savings_goal_name,
-            "target_amount": (
-                float(budget.goal_target_amount) if budget.goal_target_amount is not None else None
-            ),
-            "target_months": budget.goal_timeline_months,
-        },
         "allocations": [
             {
                 "category": a.category,
@@ -167,9 +166,6 @@ class BudgetView(APIView):
             user=request.user,
             name=data.get("name") or "My Plan",
             selected_template_key=data.get("selected_template_key"),
-            savings_goal_name=data["goal"]["name"],
-            goal_target_amount=data["goal"]["target_amount"],
-            goal_timeline_months=data["goal"]["target_months"],
         )
         _apply_allocations(budget, data["allocations"], request.user.monthly_income or Decimal("0"))
         return Response(_serialize_budget(budget), status=201)
@@ -192,10 +188,6 @@ class BudgetView(APIView):
 
         if "name" in data:
             budget.name = data["name"]
-        if "goal" in data:
-            budget.savings_goal_name = data["goal"]["name"]
-            budget.goal_target_amount = data["goal"]["target_amount"]
-            budget.goal_timeline_months = data["goal"]["target_months"]
         budget.save()
 
         if "allocations" in data:
@@ -210,30 +202,47 @@ class BudgetView(APIView):
 
 
 class BudgetHistoryView(ListAPIView):
-    """GET /budget/history"""
+    """GET /budget/history — filtering via BudgetHistoryFilterSet (PLAN.md Checkpoint F)."""
 
     serializer_class = BudgetHistorySerializer
     pagination_class = LimitOffsetPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = BudgetHistoryFilterSet
 
     def get_queryset(self):
+        # swagger_fake_view: see aggregations.py's TransactionListCreateView.get_queryset().
+        if getattr(self, "swagger_fake_view", False):
+            return BudgetHistory.objects.none()
         budget = get_object_or_404(Budget, user=self.request.user)
-        qs = BudgetHistory.objects.filter(budget=budget)
-        if self.request.query_params.get("from"):
-            qs = qs.filter(changed_at__date__gte=self.request.query_params["from"])
-        if self.request.query_params.get("to"):
-            qs = qs.filter(changed_at__date__lte=self.request.query_params["to"])
-        return qs.order_by("-changed_at")
+        return BudgetHistory.objects.filter(budget=budget).order_by("-changed_at")
 
 
 class BudgetProgressView(APIView):
-    """GET /budget/progress"""
+    """GET /budget/progress
+
+    `period` genuinely filters the underlying Transaction query per
+    category, but the response is a custom aggregated shape, not a
+    serialized queryset — same reasoning as MonthlySummariesView/
+    CategoryBreakdownView (core/views/aggregations.py) for why this stays a
+    manually-documented APIView (PLAN.md Checkpoint F).
+    """
 
     # Simple, clearly-labeled thresholds — not a documented business rule,
     # just a reasonable default for the on_track/approaching_limit/over_budget
     # status field Data_Shapes_Budgets.md requires per category.
     APPROACHING_LIMIT_THRESHOLD = 80
 
-    @extend_schema(responses={200: BudgetProgressResponseSerializer})
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "period",
+                OpenApiTypes.STR,
+                required=False,
+                description="YYYY-MM, defaults to the current period",
+            )
+        ],
+        responses={200: BudgetProgressResponseSerializer},
+    )
     def get(self, request):
         budget = get_object_or_404(
             Budget.objects.prefetch_related("allocations"), user=request.user
@@ -275,17 +284,21 @@ class BudgetProgressView(APIView):
 
 
 class SavingsProgressView(APIView):
-    """GET /budget/savings-progress"""
+    """GET /budget/savings-progress
+
+    No longer requires a Budget to exist (PLAN.md Checkpoint C) — only a
+    Goal, since the two are now fully independent entities.
+    """
 
     @extend_schema(responses={200: SavingsProgressResponseSerializer})
     def get(self, request):
-        budget = get_object_or_404(Budget, user=request.user)
-        if budget.goal_target_amount is None or budget.goal_timeline_months is None:
-            raise NotFound("No savings goal set on the current plan.")
+        goal = Goal.objects.filter(user=request.user).first()
+        if goal is None:
+            raise NotFound("No savings goal set.")
 
-        since = budget.created_at.date()
+        since = goal.created_at.date()
         saved_so_far = _saved_so_far(request.user, since)
-        target = budget.goal_target_amount
+        target = goal.target_amount
         percentage_complete = (
             float(min(Decimal("100"), saved_so_far / target * 100)) if target else 0.0
         )
@@ -299,15 +312,15 @@ class SavingsProgressView(APIView):
             months_needed = float((target - saved_so_far) / monthly_rate)
             projected_completion_date = date.today() + timedelta(days=round(months_needed * 30))
 
-        deadline = since + timedelta(days=budget.goal_timeline_months * 30)
+        deadline = since + timedelta(days=goal.timeline_months * 30)
         on_track = projected_completion_date is not None and projected_completion_date <= deadline
 
         return Response(
             {
                 "goal": {
-                    "name": budget.savings_goal_name,
+                    "name": goal.name,
                     "target_amount": target,
-                    "months_remaining": _months_remaining(budget),
+                    "months_remaining": _months_remaining(goal),
                 },
                 "saved_so_far": saved_so_far,
                 "percentage_complete": round(percentage_complete, 2),
@@ -350,20 +363,106 @@ class StarterTemplatesView(APIView):
         return Response(templates)
 
 
-def _goal_progress(budget):
-    """Shared by DashboardView and DashboardGoalView — both return this exact
-    goal shape (Data_Shapes_Budgets.md: PATCH /dashboard/goal's response is
-    "same goal shape as GET /dashboard")."""
+def _goal_progress(goal):
+    """Shared by GoalView, DashboardView, and DashboardGoalView — all return
+    this exact shape (Data_Shapes_Budgets.md: PATCH /dashboard/goal's
+    response is "same goal shape as GET /dashboard"). Returns None outright
+    when there's no Goal row at all (PLAN.md Checkpoint C: "optional" means
+    no row exists, full stop — not a dict of null-ish fields)."""
+    if goal is None:
+        return None
     percentage_complete = 0.0
-    if budget.goal_target_amount:
-        saved = _saved_so_far(budget.user, budget.created_at.date())
-        percentage_complete = float(min(Decimal("100"), saved / budget.goal_target_amount * 100))
+    if goal.target_amount:
+        saved = _saved_so_far(goal.user, goal.created_at.date())
+        percentage_complete = float(min(Decimal("100"), saved / goal.target_amount * 100))
     return {
-        "name": budget.savings_goal_name,
-        "target_amount": budget.goal_target_amount,
-        "months_remaining": _months_remaining(budget),
+        "name": goal.name,
+        "target_amount": goal.target_amount,
+        "months_remaining": _months_remaining(goal),
         "percentage_complete": round(percentage_complete, 2),
     }
+
+
+class GoalView(APIView):
+    """GET/POST/PATCH/DELETE /goal
+
+    The user's single savings goal — its own entity, one-to-one with User
+    (PLAN.md Checkpoint C), independent of whether a budget plan exists.
+    "Optional" means no row exists at all, not a budget with null-ish goal
+    fields.
+    """
+
+    @extend_schema(responses={200: DashboardGoalResponseSerializer})
+    def get(self, request):
+        goal = Goal.objects.filter(user=request.user).first()
+        if goal is None:
+            raise NotFound("No savings goal set.")
+        return Response(_goal_progress(goal))
+
+    @extend_schema(request=GoalInputSerializer, responses={201: DashboardGoalResponseSerializer})
+    def post(self, request):
+        if Goal.objects.filter(user=request.user).exists():
+            # One-to-one with User (DB-level guarantee) — this just turns
+            # what would otherwise be an IntegrityError into a clean 409.
+            raise ConflictError(
+                "A savings goal already exists for this user. Use PATCH /goal to update it."
+            )
+        serializer = GoalInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        goal = Goal.objects.create(
+            user=request.user,
+            name=data["name"],
+            target_amount=data["target_amount"],
+            timeline_months=data["target_months"],
+        )
+        return Response(_goal_progress(goal), status=201)
+
+    @extend_schema(request=GoalUpdateSerializer, responses={200: DashboardGoalResponseSerializer})
+    def patch(self, request):
+        goal = get_object_or_404(Goal, user=request.user)
+        serializer = GoalUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        if "name" in data:
+            goal.name = data["name"]
+        if "target_amount" in data:
+            goal.target_amount = data["target_amount"]
+        if "target_months" in data:
+            goal.timeline_months = data["target_months"]
+        goal.save()
+        return Response(_goal_progress(goal))
+
+    @extend_schema(responses={204: None})
+    def delete(self, request):
+        goal = get_object_or_404(Goal, user=request.user)
+        goal.delete()
+        return Response(status=204)
+
+
+def _month_totals(user, year, month):
+    """(spend, inflow) for a user's transactions in a given calendar month —
+    shared by DashboardView's current- and previous-month metrics (PLAN.md
+    Checkpoint D). Computed live from Transaction, same as the pre-existing
+    current-month figures — not MonthlySummary, which DashboardView doesn't
+    read from today."""
+    txns = Transaction.objects.filter(
+        user=user, transaction_date__year=year, transaction_date__month=month
+    )
+    spend = txns.filter(transaction_type__in=["debit", "fee"]).aggregate(t=Sum("amount"))[
+        "t"
+    ] or Decimal("0")
+    inflow = txns.filter(transaction_type="credit").aggregate(t=Sum("amount"))["t"] or Decimal("0")
+    return spend, inflow
+
+
+def _percentage_change(current, previous):
+    """(current - previous) / abs(previous) * 100 — explicit None (not a
+    crash or a misleading infinity) when there's no previous-month figure to
+    compare against."""
+    if not previous:
+        return None
+    return round(float((current - previous) / abs(previous) * 100), 2)
 
 
 class DashboardView(APIView):
@@ -371,6 +470,10 @@ class DashboardView(APIView):
 
     @extend_schema(responses={200: DashboardResponseSerializer})
     def get(self, request):
+        # Fetched independently of budget (PLAN.md Checkpoint C) — a user can
+        # have a Goal with no Budget, or vice versa; the two are no longer
+        # coupled the way embedded goal fields on Budget used to be.
+        goal = Goal.objects.filter(user=request.user).first()
         budget = Budget.objects.filter(user=request.user).prefetch_related("allocations").first()
         if budget is None:
             # has_plan=false triggers the frontend's real, designed empty
@@ -378,12 +481,16 @@ class DashboardView(APIView):
             return Response(
                 {
                     "budget": None,
-                    "goal": None,
+                    "goal": _goal_progress(goal),
                     "allocations_summary": [],
                     "metrics": {
                         "income_stability_score": compute_stability_score(request.user),
                         "current_month_spend": Decimal("0"),
                         "current_month_inflow": Decimal("0"),
+                        "previous_month_spend": Decimal("0"),
+                        "previous_month_inflow": Decimal("0"),
+                        "spend_change_percentage": None,
+                        "inflow_change_percentage": None,
                     },
                     "net_worth": {
                         "total_across_accounts": Decimal("0"),
@@ -405,6 +512,15 @@ class DashboardView(APIView):
         current_month_inflow = month_txns.filter(transaction_type="credit").aggregate(
             t=Sum("amount")
         )["t"] or Decimal("0")
+
+        # Month-over-month differential metrics (PLAN.md Checkpoint D).
+        if today.month == 1:
+            prev_year, prev_month = today.year - 1, 12
+        else:
+            prev_year, prev_month = today.year, today.month - 1
+        previous_month_spend, previous_month_inflow = _month_totals(
+            request.user, prev_year, prev_month
+        )
 
         allocations_summary = []
         for alloc in budget.allocations.all():
@@ -428,12 +544,20 @@ class DashboardView(APIView):
         return Response(
             {
                 "budget": {"id": str(budget.id), "name": budget.name, "status": budget.status},
-                "goal": _goal_progress(budget),
+                "goal": _goal_progress(goal),
                 "allocations_summary": allocations_summary,
                 "metrics": {
                     "income_stability_score": compute_stability_score(request.user),
                     "current_month_spend": current_month_spend,
                     "current_month_inflow": current_month_inflow,
+                    "previous_month_spend": previous_month_spend,
+                    "previous_month_inflow": previous_month_inflow,
+                    "spend_change_percentage": _percentage_change(
+                        current_month_spend, previous_month_spend
+                    ),
+                    "inflow_change_percentage": _percentage_change(
+                        current_month_inflow, previous_month_inflow
+                    ),
                 },
                 "net_worth": {"total_across_accounts": total_net_worth, "as_of_date": today},
                 "has_plan": True,
@@ -445,9 +569,12 @@ class DashboardGoalView(APIView):
     """
     PATCH /dashboard/goal
 
-    Convenience alias — internally calls the same write path as PATCH
-    /budget with only the goal key (Data_Shapes_Budgets.md), rather than
-    holding any separate goal-update logic of its own.
+    Convenience upsert alias for the user's Goal (creates it if it doesn't
+    exist yet, updates it if it does) — operates on the standalone Goal
+    entity (PLAN.md Checkpoint C), not nested Budget fields anymore. Doesn't
+    hold any goal-update logic of its own beyond the upsert; GoalView's
+    POST/PATCH are the "own entity, own CRUD" surface this delegates to
+    conceptually (same fields, same _goal_progress() response shape).
     """
 
     @extend_schema(
@@ -458,21 +585,17 @@ class DashboardGoalView(APIView):
         if not goal_data:
             raise ValidationError({"goal": "This field is required."})
 
-        budget = get_object_or_404(
-            Budget.objects.prefetch_related("allocations"), user=request.user
-        )
-        serializer = BudgetUpdateSerializer(data={"goal": goal_data})
+        serializer = GoalInputSerializer(data=goal_data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        BudgetHistory.objects.create(
-            budget=budget,
-            previous_values=_snapshot(budget),
-            changed_via=data.get("changed_via", "dashboard"),
+        goal, _created = Goal.objects.update_or_create(
+            user=request.user,
+            defaults={
+                "name": data["name"],
+                "target_amount": data["target_amount"],
+                "timeline_months": data["target_months"],
+            },
         )
-        budget.savings_goal_name = data["goal"]["name"]
-        budget.goal_target_amount = data["goal"]["target_amount"]
-        budget.goal_timeline_months = data["goal"]["target_months"]
-        budget.save()
 
-        return Response(_goal_progress(budget))
+        return Response(_goal_progress(goal))
