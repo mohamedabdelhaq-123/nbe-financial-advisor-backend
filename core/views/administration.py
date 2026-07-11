@@ -2,7 +2,7 @@ from django.contrib.auth.hashers import check_password
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics
 from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import LimitOffsetPagination
@@ -18,6 +18,7 @@ from core.filters.administration import (
     AdminReactionFilterSet,
 )
 from core.models import AdminUser, ProblemStatement, Product, Reaction, ReportedIssue
+from core.openapi import error_responses
 from core.permissions import AdminAuthMixin, IsSuperAdmin
 from core.serializers.administration import (
     AdminIssueSerializer,
@@ -32,12 +33,26 @@ from core.serializers.administration import (
 
 
 class AdminLoginView(APIView):
-    """POST /admin/auth/login — pre-auth, own credential space (see core/authentication.py)."""
+    """
+    Authenticate an admin/internal-staff user. This is a completely
+    separate credential space from end-user auth (`POST /auth/login`) —
+    an admin token is never interchangeable with a user token on any
+    endpoint, and vice versa. Unlike the end-user flow, the refresh token
+    is returned directly in the response body here (no httpOnly cookie),
+    and there is no admin logout/refresh endpoint — admin tokens simply
+    expire on their own schedule. On failure, the error message is
+    deliberately generic ("Invalid email or password") regardless of
+    whether the email is registered, for the same anti-enumeration reason
+    as end-user login.
+    """
 
     authentication_classes = []
     permission_classes = [AllowAny]
 
-    @extend_schema(request=AdminLoginSerializer, responses={200: AdminLoginResponseSerializer})
+    @extend_schema(
+        request=AdminLoginSerializer,
+        responses={200: AdminLoginResponseSerializer, **error_responses(422)},
+    )
     def post(self, request):
         serializer = AdminLoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -87,8 +102,10 @@ class AdminLoginView(APIView):
 
 
 class AdminFeedbackListView(AdminAuthMixin, generics.ListAPIView):
-    """GET /admin/feedback — cross-user by design, reviewer or super_admin.
-    Filtering via AdminReactionFilterSet (PLAN.md Checkpoint F)."""
+    """List feedback (ratings/comments) left by every user, across the
+    whole system — cross-user by design, unlike the end-user-facing
+    Feedback domain which only ever shows a user their own. Any admin
+    role (reviewer or super_admin) can access this."""
 
     serializer_class = AdminReactionSerializer
     pagination_class = LimitOffsetPagination
@@ -100,8 +117,10 @@ class AdminFeedbackListView(AdminAuthMixin, generics.ListAPIView):
 
 
 class AdminIssueListView(AdminAuthMixin, generics.ListAPIView):
-    """GET /admin/issues — cross-user by design, reviewer or super_admin.
-    Filtering via AdminIssueFilterSet (PLAN.md Checkpoint F)."""
+    """List reported issues (bug reports/support requests) filed by every
+    user, across the whole system — cross-user by design. Any admin role
+    (reviewer or super_admin) can access this; use
+    PATCH /admin/issues/{id} to move one through triage."""
 
     serializer_class = AdminIssueSerializer
     pagination_class = LimitOffsetPagination
@@ -113,11 +132,21 @@ class AdminIssueListView(AdminAuthMixin, generics.ListAPIView):
 
 
 class AdminIssueUpdateView(AdminAuthMixin, APIView):
-    """PATCH /admin/issues/{issue_id} — reviewer or super_admin."""
+    """
+    Move a reported issue through triage: `status` is one of
+    `open | in_review | resolved | dismissed`. Setting it to `resolved` or
+    `dismissed` stamps `resolved_at` server-side; moving it back to
+    `open`/`in_review` clears that timestamp again. Any admin role
+    (reviewer or super_admin) can do this — cross-user by design, no
+    ownership check (any issue, filed by any user, can be triaged).
+    """
 
-    @extend_schema(request=AdminIssueUpdateSerializer, responses={200: AdminIssueSerializer})
+    @extend_schema(
+        request=AdminIssueUpdateSerializer,
+        responses={200: AdminIssueSerializer, **error_responses(404, 422)},
+    )
     def patch(self, request, issue_id):
-        issue = get_object_or_404(ReportedIssue, id=issue_id)  # cross-user: no ownership filter
+        issue = get_object_or_404(ReportedIssue, id=issue_id)
         serializer = AdminIssueUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         new_status = serializer.validated_data["status"]
@@ -131,12 +160,24 @@ class AdminIssueUpdateView(AdminAuthMixin, APIView):
         return Response(AdminIssueSerializer(issue).data)
 
 
+@extend_schema_view(
+    post=extend_schema(
+        request=AdminProductCreateSerializer,
+        responses={201: AdminProductSerializer, **error_responses(403, 422)},
+    )
+)
 class AdminProductListCreateView(AdminAuthMixin, generics.ListCreateAPIView):
     """
-    GET /admin/products — any admin role.
-    POST /admin/products — super_admin only.
+    List every product in the catalog (GET — any admin role, including
+    inactive products, unlike the user-facing `GET /recommendations`,
+    which only ever surfaces active ones), or add a new one
+    (POST — super_admin only, 403 for any other admin role).
 
-    Filtering via AdminProductFilterSet (PLAN.md Checkpoint F).
+    POST's optional `problem_statements` are seed text for the product's
+    future semantic-matching embeddings — the product is immediately
+    usable for direct display either way, but won't be matchable via
+    `GET /recommendations`'s query-based search until an embedding
+    pipeline processes them (not wired up yet).
     """
 
     pagination_class = LimitOffsetPagination
@@ -156,9 +197,6 @@ class AdminProductListCreateView(AdminAuthMixin, generics.ListCreateAPIView):
         )
 
     def get_queryset(self):
-        # Includes inactive products — unlike the user-facing GET
-        # /recommendations, which only ever surfaces active, matched ones
-        # (Data_Shapes_Administration.md).
         return Product.objects.all().order_by("created_at")
 
     def create(self, request, *args, **kwargs):
@@ -180,11 +218,15 @@ class AdminProductListCreateView(AdminAuthMixin, generics.ListCreateAPIView):
 
 
 class AdminProductDetailView(AdminAuthMixin, APIView):
-    """PATCH/DELETE /admin/products/{product_id} — super_admin only."""
+    """Update or remove a single product from the catalog. Both operations
+    are super_admin only — any other admin role gets 403."""
 
     permission_classes = [IsSuperAdmin]
 
-    @extend_schema(request=AdminProductUpdateSerializer, responses={200: AdminProductSerializer})
+    @extend_schema(
+        request=AdminProductUpdateSerializer,
+        responses={200: AdminProductSerializer, **error_responses(403, 404, 422)},
+    )
     def patch(self, request, product_id):
         product = get_object_or_404(Product, id=product_id)
         serializer = AdminProductUpdateSerializer(product, data=request.data, partial=True)
@@ -192,13 +234,17 @@ class AdminProductDetailView(AdminAuthMixin, APIView):
         serializer.save()
         return Response(AdminProductSerializer(product).data)
 
-    @extend_schema(responses={204: None})
+    @extend_schema(
+        description=(
+            "Hard-delete the product — this also cascades to its problem "
+            "statements and any recommendation logs that reference it. "
+            'Consider PATCH {"is_active": false} instead if the product '
+            "might be reinstated later; this endpoint doesn't enforce "
+            "that choice either way, it's just a permanent delete."
+        ),
+        responses={204: None, **error_responses(403, 404)},
+    )
     def delete(self, request, product_id):
-        # Hard delete, cascades to problem_statements and recommendation_logs
-        # (DB_Schema.md: ON DELETE CASCADE on both). Data_Shapes_
-        # Administration.md recommends PATCH {"is_active": false} instead
-        # where a product might be reinstated later — that's the caller's
-        # choice, not enforced here.
         product = get_object_or_404(Product, id=product_id)
         product.delete()
         return Response(status=204)
