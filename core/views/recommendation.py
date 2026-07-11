@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.models import Product, Reaction, RecommendationLog
+from core.openapi import error_responses
 from core.serializers.feedback import ReactionSerializer
 from core.serializers.recommendation import (
     RecommendationFeedbackSerializer,
@@ -17,19 +18,17 @@ from services import ai_service
 
 class RecommendationsView(APIView):
     """
-    GET /recommendations?q=<optional query text>
+    Get product recommendations, optionally guided by a free-text query
+    (`q`). Only ever surfaces **active** products — unlike the admin-facing
+    `GET /admin/products`, which also shows inactive ones. Every result
+    returned is also logged (who saw it, for what query, at what match
+    confidence), since a shown recommendation can later be reacted to via
+    `POST /recommendations/{recommendation_id}/feedback`, and that endpoint
+    needs a logged instance to attach the reaction to.
 
-    Only ever surfaces active, matched products (Data_Shapes_Administration.md's
-    contrast with the admin-facing GET /admin/products, which includes
-    inactive ones) — is_active=True is applied before matching even runs.
-    Every result shown is logged to `recommendation_logs`
-    (Data_Governance_Specs.md §6: "log of which product was shown to which
-    user, for which query, with what match confidence"), not just returned.
-
-    `q` is NOT a queryset filter (PLAN.md Checkpoint F) — it feeds
-    ai_service.match_recommendations()'s keyword-overlap ranking over an
-    already-fetched product list, not a `.filter()` call, so no FilterSet
-    applies; documented manually instead.
+    `q` is **not** a queryset filter — it feeds an in-memory keyword-overlap
+    ranking over the full active-product list rather than narrowing a
+    database query, so it can't be expressed as a django-filter field.
     """
 
     @extend_schema(
@@ -72,17 +71,21 @@ class RecommendationsView(APIView):
 
 class RecommendationFeedbackView(APIView):
     """
-    POST /recommendations/{recommendation_id}/feedback
+    React to a specific shown recommendation with an optional rating
+    (1-5) and/or comment — at least one of the two is required.
 
-    `recommendation_id` refers to a `recommendation_logs` row — a specific
-    shown instance — not a Product id (Data_Shapes_Feedback.md: "tied to a
-    specific shown instance"). Creates a Reaction exactly like POST
-    /feedback would, just via a dedicated path with target_type fixed to
-    "recommendation" (Data_Governance_Specs.md §6: "Recommendation log
-    entries may be targeted by Feedback").
+    `recommendation_id` refers to a logged "this product was shown to this
+    user" row (created by `GET /recommendations`), not a Product id
+    directly — so reacting to a recommendation this user was never shown
+    404s, even if the product id itself exists. Creates a reaction exactly
+    like `POST /feedback` would, just via a dedicated path with
+    `target_type` fixed to `"recommendation"`.
     """
 
-    @extend_schema(request=RecommendationFeedbackSerializer, responses={201: ReactionSerializer})
+    @extend_schema(
+        request=RecommendationFeedbackSerializer,
+        responses={201: ReactionSerializer, **error_responses(404, 422)},
+    )
     def post(self, request, recommendation_id):
         log = get_object_or_404(RecommendationLog, id=recommendation_id, user=request.user)
         serializer = RecommendationFeedbackSerializer(data=request.data)

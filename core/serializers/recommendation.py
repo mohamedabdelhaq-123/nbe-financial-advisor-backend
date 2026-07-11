@@ -3,15 +3,13 @@ from rest_framework import serializers
 
 class RecommendationItemSerializer(serializers.Serializer):
     """
-    GET /recommendations response item. No dedicated Data Shapes doc exists
-    for this domain (see PLAN.md §5's open items) — built from
-    Data_Governance_Specs.md §6's listed display fields ("title, description,
-    categories, tags, features, external link") plus `similarity_score`,
-    since Data_Governance_Specs.md §6 explicitly frames every match as a
-    "soft suggestion" the score should communicate, not a bare list.
-    Read-only/computed, so this is a plain Serializer (not a ModelSerializer)
-    over a dict the view assembles — mirrors the pattern already used for
-    other computed, non-1:1-model responses (e.g. statements' ocr-result).
+    One matched product recommendation: the usual display fields (title,
+    description, categories, tags, features, external link) plus
+    `similarity_score` — every match is framed as a soft suggestion the
+    score should communicate, not a bare ranked list, so the score always
+    travels with the result rather than only being used internally to sort.
+    Read-only/computed, so this is a plain Serializer over a dict the view
+    assembles, not a ModelSerializer.
     """
 
     id = serializers.UUIDField()
@@ -26,10 +24,10 @@ class RecommendationItemSerializer(serializers.Serializer):
 
 class RecommendationFeedbackSerializer(serializers.Serializer):
     """
-    POST /recommendations/{recommendation_id}/feedback body. Mirrors
-    POST /feedback's rating/comment convention (Data_Shapes_Feedback.md) —
-    target_type/target_id aren't accepted here since they're implied by the
-    URL path (always "recommendation" + the path's recommendation_id).
+    Request body for reacting to a specific shown recommendation. Mirrors
+    POST /feedback's rating/comment convention, but `target_type`/`target_id`
+    aren't accepted here since they're implied by the URL path itself
+    (always `"recommendation"` plus the path's `recommendation_id`).
     """
 
     rating = serializers.IntegerField(min_value=1, max_value=5, required=False, allow_null=True)
