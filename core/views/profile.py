@@ -1,13 +1,14 @@
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, mixins, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.filters.profile import BankAccountFilterSet
 from core.models import BankAccount, ConsentRecord, UserPreference
+from core.openapi import error_responses
 from core.serializers.profile import (
     BankAccountSerializer,
     ConsentGrantSerializer,
@@ -18,13 +19,21 @@ from core.serializers.profile import (
 
 
 class MeView(APIView):
-    """GET/PATCH /users/me, DELETE /users/me (full account + data deletion)."""
+    """GET/PATCH the current user's own profile, or DELETE the account
+    entirely. DELETE cascades to every one of the user's rows across the
+    whole schema (accounts, transactions, budgets, conversations,
+    statements, ...) since every domain table's foreign key back to the
+    user is ON DELETE CASCADE — this is one call, not a per-domain cleanup
+    the frontend needs to orchestrate."""
 
     @extend_schema(responses={200: UserSerializer})
     def get(self, request):
         return Response(UserSerializer(request.user).data)
 
-    @extend_schema(request=UserSerializer, responses={200: UserSerializer})
+    @extend_schema(
+        request=UserSerializer,
+        responses={200: UserSerializer, **error_responses(422)},
+    )
     def patch(self, request):
         serializer = UserSerializer(request.user, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
@@ -45,7 +54,11 @@ class MeView(APIView):
 
 
 class MePreferencesView(APIView):
-    """GET/PATCH /users/me/preferences"""
+    """GET/PATCH the current user's notification/display preferences. A
+    preferences row is created lazily with sensible defaults on first
+    access if one doesn't already exist (e.g. for a user created before
+    this endpoint existed, or via `manage.py createsuperuser`), so GET
+    never 404s for a signed-in user."""
 
     def _get_preferences(self, request):
         # get_or_create rather than assuming request.user.preferences exists —
@@ -60,7 +73,10 @@ class MePreferencesView(APIView):
     def get(self, request):
         return Response(UserPreferenceSerializer(self._get_preferences(request)).data)
 
-    @extend_schema(request=UserPreferenceSerializer, responses={200: UserPreferenceSerializer})
+    @extend_schema(
+        request=UserPreferenceSerializer,
+        responses={200: UserPreferenceSerializer, **error_responses(422)},
+    )
     def patch(self, request):
         serializer = UserPreferenceSerializer(
             self._get_preferences(request), data=request.data, partial=True
@@ -71,9 +87,15 @@ class MePreferencesView(APIView):
 
 
 class MeConsentView(APIView):
-    """POST /users/me/consent — records a grant event."""
+    """Record that the user granted consent (e.g. to a specific policy
+    version) — appends a new consent-record row rather than updating any
+    existing one, since the full grant/revoke history is kept, not just
+    the latest state."""
 
-    @extend_schema(request=ConsentGrantSerializer, responses={201: ConsentRecordSerializer})
+    @extend_schema(
+        request=ConsentGrantSerializer,
+        responses={201: ConsentRecordSerializer, **error_responses(422)},
+    )
     def post(self, request):
         serializer = ConsentGrantSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -87,17 +109,16 @@ class MeConsentView(APIView):
 
 class MeConsentRevokeView(APIView):
     """
-    DELETE /users/me/consent/{consent_id}
-
-    Consent history is append-only (Data_Governance_Specs.md §1, DB_Schema.md's
-    comment on consent_records: "rows are never updated/deleted, only inserted
-    (grant or revoke event)"). So despite the HTTP verb, this never deletes or
-    mutates the referenced row — it looks it up only to confirm ownership and
-    to copy its consent_type/policy_version, then inserts a NEW row recording
-    a revoke event, keeping the full grant/revoke timeline reconstructable.
+    Revoke a previously granted consent. Despite the DELETE verb, this never
+    deletes or mutates the referenced consent record — consent history is
+    append-only, so every grant/revoke is a separate row and the full
+    timeline stays reconstructable. This endpoint looks up the target
+    record only to confirm it belongs to the current user and to copy its
+    `consent_type`/`policy_version`, then inserts a brand new row recording
+    a revoke event against those same values.
     """
 
-    @extend_schema(responses={204: None})
+    @extend_schema(responses={204: None, **error_responses(404)})
     def delete(self, request, consent_id):
         target = get_object_or_404(ConsentRecord, id=consent_id, user=request.user)
         ConsentRecord.objects.create(
@@ -109,18 +130,23 @@ class MeConsentRevokeView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+@extend_schema_view(
+    post=extend_schema(responses={201: BankAccountSerializer, **error_responses(422)})
+)
 class BankAccountListCreateView(generics.ListCreateAPIView):
     """
-    GET/POST /accounts
+    List the current user's linked bank accounts, or link a new one.
 
-    GET returns a plain array, not the offset-paginated {count,next,previous,
-    results} envelope — there's no dedicated Data Shapes doc for this domain,
-    so this follows the precedent set by the Aggregations domain's small,
-    bounded per-user lists (monthly-summaries, recurring-charges, anomalies —
-    all explicitly "Pagination: none") rather than admin/products' precedent
-    (paginated despite being small, because that one is a cross-user catalog).
-    A user's own linked bank accounts is the same shape of collection as
-    those: small and bounded per user, not cross-user or unboundedly growing.
+    GET returns a plain array, not the offset-paginated
+    `{count,next,previous,results}` envelope used elsewhere in the API —
+    a single user's own linked accounts is a small, bounded, per-user
+    collection (unlike a cross-user catalog such as `GET /admin/products`,
+    which is paginated despite also being small), so pagination would add
+    overhead without solving any real problem here.
+
+    `masked_account_number`/`bank_name` query params let the frontend check
+    whether the user already has an account matching an OCR-derived mask
+    before creating a duplicate from a newly uploaded statement.
     """
 
     serializer_class = BankAccountSerializer
@@ -147,15 +173,14 @@ class BankAccountDetailView(
     mixins.UpdateModelMixin, mixins.DestroyModelMixin, generics.GenericAPIView
 ):
     """
-    PATCH/DELETE /accounts/{account_id}
+    Update or unlink one of the current user's bank accounts. There's
+    deliberately no GET on this path (only the list view, `GET /accounts`,
+    returns a single account's data) — fetch the account from the list
+    response rather than expecting a singular retrieve here.
 
-    Deliberately not RetrieveUpdateDestroyAPIView — API_Endpoints_1.md §3 only
-    documents PATCH and DELETE on this path (no singular GET), so no GET
-    method is exposed here to keep the route surface matching the doc exactly.
-
-    DELETE is a hard delete, which cascades to every transaction on this
-    account (DB_Schema.md: `transactions.account_id ... ON DELETE CASCADE`) —
-    a deliberate consequence of the documented schema, not an oversight here.
+    DELETE is a hard delete that cascades to every transaction recorded
+    against this account — removing an account also permanently removes its
+    transaction history, not just the account row itself.
     """
 
     serializer_class = BankAccountSerializer
@@ -167,8 +192,10 @@ class BankAccountDetailView(
         # Guidelines §10's existence-leak avoidance rule.
         return BankAccount.objects.filter(user=self.request.user)
 
+    @extend_schema(responses={200: BankAccountSerializer, **error_responses(404, 422)})
     def patch(self, request, *args, **kwargs):
         return self.partial_update(request, *args, **kwargs)
 
+    @extend_schema(responses={204: None, **error_responses(404)})
     def delete(self, request, *args, **kwargs):
         return self.destroy(request, *args, **kwargs)
