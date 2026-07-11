@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "django_extensions",  # show_urls, shell_plus, etc.
     "storages",  # django-storages (S3/SeaweedFS backend)
+    "django_filters",  # FilterSets for query-param filtering (PLAN.md Checkpoint F)
     # Project apps
     "core",
 ]

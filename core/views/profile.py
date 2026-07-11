@@ -1,10 +1,12 @@
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, mixins, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.filters.profile import BankAccountFilterSet
 from core.models import BankAccount, ConsentRecord, UserPreference
 from core.serializers.profile import (
     BankAccountSerializer,
@@ -122,19 +124,20 @@ class BankAccountListCreateView(generics.ListCreateAPIView):
     """
 
     serializer_class = BankAccountSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = BankAccountFilterSet
 
     def get_queryset(self):
-        qs = BankAccount.objects.filter(user=self.request.user)
-        params = self.request.query_params
-        # Lets the frontend check "does the user already have an account
-        # matching this OCR-derived mask?" (PLAN.md Checkpoint A) before/
-        # without creating a duplicate — exact match, same masking strategy
+        # swagger_fake_view: see core/views/aggregations.py's
+        # TransactionListCreateView.get_queryset().
+        if getattr(self, "swagger_fake_view", False):
+            return BankAccount.objects.none()
+        # masked_account_number/bank_name (BankAccountFilterSet) let the
+        # frontend check "does the user already have an account matching
+        # this OCR-derived mask?" (PLAN.md Checkpoint A) before/without
+        # creating a duplicate — exact match, same masking strategy
         # _run_normalization() already uses to resolve/create accounts.
-        if params.get("masked_account_number"):
-            qs = qs.filter(masked_account_number=params["masked_account_number"])
-        if params.get("bank_name"):
-            qs = qs.filter(bank_name=params["bank_name"])
-        return qs.order_by("-created_at")
+        return BankAccount.objects.filter(user=self.request.user).order_by("-created_at")
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)

@@ -2,13 +2,16 @@ import json
 
 from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
+from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import OpenApiResponse, extend_schema
-from rest_framework import generics
+from rest_framework import generics, mixins
 from rest_framework.exceptions import ValidationError
+from rest_framework.generics import GenericAPIView
 from rest_framework.pagination import CursorPagination, LimitOffsetPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.filters.conversations import ConversationFilterSet, MessageFilterSet
 from core.models import Budget, Conversation, Message
 from core.serializers.conversations import (
     ConversationAttachmentRequestSerializer,
@@ -24,9 +27,11 @@ from services import ai_service
 
 
 class ConversationListCreateView(generics.ListCreateAPIView):
-    """POST/GET /chat/conversations"""
+    """POST/GET /chat/conversations — filtering via ConversationFilterSet (PLAN.md Checkpoint F)."""
 
     pagination_class = LimitOffsetPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = ConversationFilterSet
 
     def get_serializer_class(self):
         return (
@@ -36,11 +41,10 @@ class ConversationListCreateView(generics.ListCreateAPIView):
         )
 
     def get_queryset(self):
-        qs = Conversation.objects.filter(user=self.request.user)
-        status_param = self.request.query_params.get("status")
-        if status_param:
-            qs = qs.filter(status=status_param)
-        return qs.order_by("-last_message_at")
+        # swagger_fake_view: see aggregations.py's TransactionListCreateView.get_queryset().
+        if getattr(self, "swagger_fake_view", False):
+            return Conversation.objects.none()
+        return Conversation.objects.filter(user=self.request.user).order_by("-last_message_at")
 
     def post(self, request, *args, **kwargs):
         # Empty body — a session needs no initial data, freely created
@@ -69,11 +73,33 @@ class MessageCursorPagination(CursorPagination):
     page_size = 50
 
 
-class ConversationMessagesView(APIView):
-    """GET/POST /chat/conversations/{conversation_id}/messages"""
+class ConversationMessagesView(mixins.ListModelMixin, GenericAPIView):
+    """
+    GET/POST /chat/conversations/{conversation_id}/messages
+
+    GET converted to ListModelMixin (PLAN.md Checkpoint F) for automatic
+    FilterSet-based Swagger docs — POST stays a fully custom method (SSE
+    streaming), which ListCreateAPIView can't express, so this combines
+    ListModelMixin directly with GenericAPIView instead (same pattern as
+    TransactionDetailView in core/views/aggregations.py).
+    """
+
+    serializer_class = MessageSerializer
+    pagination_class = MessageCursorPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = MessageFilterSet
 
     def _get_conversation(self, request, conversation_id):
         return get_object_or_404(Conversation, id=conversation_id, user=request.user)
+
+    def get_queryset(self):
+        # swagger_fake_view: same rationale as TransactionListCreateView's
+        # get_queryset() (aggregations.py), plus this view has no
+        # conversation_id kwarg at all during schema generation.
+        if getattr(self, "swagger_fake_view", False):
+            return Message.objects.none()
+        conversation = self._get_conversation(self.request, self.kwargs["conversation_id"])
+        return conversation.messages.order_by("created_at")
 
     @extend_schema(responses={200: MessageSerializer(many=True)})
     def get(self, request, conversation_id):
@@ -81,15 +107,7 @@ class ConversationMessagesView(APIView):
         # (Data_Shapes_Conversations.md's stale-session note) — only POSTing
         # a new message does, so the "may be stale" warning can be computed
         # from last_message_at's age at read time without racing this read.
-        conversation = self._get_conversation(request, conversation_id)
-        qs = conversation.messages.order_by("created_at")
-        stage = request.query_params.get("stage")
-        if stage:
-            qs = qs.filter(stage=stage)
-
-        paginator = MessageCursorPagination()
-        page = paginator.paginate_queryset(qs, request, view=self)
-        return paginator.get_paginated_response(MessageSerializer(page, many=True).data)
+        return self.list(request, conversation_id=conversation_id)
 
     @extend_schema(
         request=MessageCreateSerializer,

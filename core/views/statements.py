@@ -6,6 +6,7 @@ from django.db import transaction as db_transaction
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
+from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
@@ -15,6 +16,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.exceptions import BusinessRuleError
+from core.filters.statements import StatementFileFilterSet
 from core.models import (
     BankAccount,
     StatementFile,
@@ -293,28 +295,31 @@ def create_statement_from_upload(user, file_obj, target_status=None) -> Statemen
 
 
 class StatementListCreateView(generics.ListAPIView):
-    """GET /statements, POST /statements (multipart upload)"""
+    """GET /statements, POST /statements (multipart upload)
+
+    Filtering via StatementFileFilterSet (PLAN.md Checkpoint F).
+    """
 
     serializer_class = StatementFileSerializer
     pagination_class = LimitOffsetPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = StatementFileFilterSet
 
     def get_queryset(self):
+        # swagger_fake_view: see core/views/aggregations.py's
+        # TransactionListCreateView.get_queryset().
+        if getattr(self, "swagger_fake_view", False):
+            return StatementFile.objects.none()
         # select_related(account) + prefetch(normalized_records) keep the
         # newly-inlined metadata fields (bank_name/account_hint/model_used/
         # adjusted_at, all funnelling through latest_normalized_record) from
         # turning the list into an N+1 — see StatementFile.latest_normalized_record.
-        qs = (
+        return (
             StatementFile.objects.filter(user=self.request.user)
             .select_related("account")
             .prefetch_related("normalized_records")
+            .order_by("-upload_date")
         )
-        status_param = self.request.query_params.get("status")
-        if status_param:
-            qs = qs.filter(status=status_param)
-        account_id = self.request.query_params.get("account_id")
-        if account_id:
-            qs = qs.filter(account_id=account_id)
-        return qs.order_by("-upload_date")
 
     @extend_schema(
         request=StatementUploadRequestSerializer,

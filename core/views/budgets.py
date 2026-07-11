@@ -3,7 +3,9 @@ from decimal import Decimal
 
 from django.db.models import Sum
 from django.shortcuts import get_object_or_404
-from drf_spectacular.utils import extend_schema
+from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.generics import ListAPIView
 from rest_framework.pagination import LimitOffsetPagination
@@ -12,6 +14,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.exceptions import ConflictError
+from core.filters.budgets import BudgetHistoryFilterSet
 from core.models import BankAccount, Budget, BudgetAllocation, BudgetHistory, Goal, Transaction
 from core.serializers.budgets import (
     BudgetCreateSerializer,
@@ -199,30 +202,47 @@ class BudgetView(APIView):
 
 
 class BudgetHistoryView(ListAPIView):
-    """GET /budget/history"""
+    """GET /budget/history — filtering via BudgetHistoryFilterSet (PLAN.md Checkpoint F)."""
 
     serializer_class = BudgetHistorySerializer
     pagination_class = LimitOffsetPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = BudgetHistoryFilterSet
 
     def get_queryset(self):
+        # swagger_fake_view: see aggregations.py's TransactionListCreateView.get_queryset().
+        if getattr(self, "swagger_fake_view", False):
+            return BudgetHistory.objects.none()
         budget = get_object_or_404(Budget, user=self.request.user)
-        qs = BudgetHistory.objects.filter(budget=budget)
-        if self.request.query_params.get("from"):
-            qs = qs.filter(changed_at__date__gte=self.request.query_params["from"])
-        if self.request.query_params.get("to"):
-            qs = qs.filter(changed_at__date__lte=self.request.query_params["to"])
-        return qs.order_by("-changed_at")
+        return BudgetHistory.objects.filter(budget=budget).order_by("-changed_at")
 
 
 class BudgetProgressView(APIView):
-    """GET /budget/progress"""
+    """GET /budget/progress
+
+    `period` genuinely filters the underlying Transaction query per
+    category, but the response is a custom aggregated shape, not a
+    serialized queryset — same reasoning as MonthlySummariesView/
+    CategoryBreakdownView (core/views/aggregations.py) for why this stays a
+    manually-documented APIView (PLAN.md Checkpoint F).
+    """
 
     # Simple, clearly-labeled thresholds — not a documented business rule,
     # just a reasonable default for the on_track/approaching_limit/over_budget
     # status field Data_Shapes_Budgets.md requires per category.
     APPROACHING_LIMIT_THRESHOLD = 80
 
-    @extend_schema(responses={200: BudgetProgressResponseSerializer})
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "period",
+                OpenApiTypes.STR,
+                required=False,
+                description="YYYY-MM, defaults to the current period",
+            )
+        ],
+        responses={200: BudgetProgressResponseSerializer},
+    )
     def get(self, request):
         budget = get_object_or_404(
             Budget.objects.prefetch_related("allocations"), user=request.user
