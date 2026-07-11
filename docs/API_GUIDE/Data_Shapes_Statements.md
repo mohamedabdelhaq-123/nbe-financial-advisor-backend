@@ -57,9 +57,9 @@ The Statements responses split into two tiers by weight, so a document list stay
 **Request** — `multipart/form-data`
 ```
 file:        binary, required (pdf | jpg | png)
-account_id:  uuid, optional  // if known upfront; the Normalization Agent may otherwise resolve/create one
 status:      "extracted" | "normalized", optional, default "normalized"  // how far to auto-chain in this call
 ```
+No `account_id` here — the Normalization Agent always infers/resolves the account from OCR output once extraction runs (`bank_name`/`account_hint` below); the client confirms or corrects it at approval time instead (`POST /statements/{statement_id}/transactions`'s optional `account_id`, below), not at upload time. `GET /accounts?masked_account_number=...&bank_name=...` lets the frontend check whether the inferred account already exists before the user confirms.
 
 **Behavior:** Uploads and stores the file, then auto-chains the pipeline synchronously in the same call, up through `status` (or all the way to `normalized` — the original always-chain-to-the-end behavior — if omitted), stopping earlier if a phase fails. Pass `"extracted"` to stop right after extraction instead of running normalization too. Both this and `PATCH /statements/{statement_id}` drive the pipeline through the same underlying function, so the same rules apply to both — a target that isn't `extracted`/`normalized` is rejected the same way in either place.
 
@@ -83,7 +83,7 @@ status:      "extracted" | "normalized", optional, default "normalized"  // how 
 }
 ```
 
-**Response `422`** if the file itself could not be stored (`code: "storage_failed"`) — no row is created; see "Statement Status & Retry Model" above. Also `422` on a duplicate checksum (`code: "duplicate_statement"`) or a malformed/missing `account_id`.
+**Response `422`** if the file itself could not be stored (`code: "storage_failed"`) — no row is created; see "Statement Status & Retry Model" above. Also `422` on a duplicate checksum (`code: "duplicate_statement"`).
 
 **Rate limiting note:** subject to the upload rate limit enforced at the Django middleware layer (Services and Background Tasks §8) — the route in this domain most exposed to abuse (repeated large uploads).
 
@@ -195,21 +195,28 @@ Streams the OCR artifact's `document.md` (the markdown representation, File_Syst
 
 **Auth:** Required · **Scoping:** implicit self; `404` if not owned by caller · **Query params:** none
 
-Approves the whole proposed batch **atomically** — there is no per-transaction approval endpoint and no partial approval. Only valid while `status == "normalized"`. The submitted array must be the same length as the `transactions` array returned inline by `GET`/`PATCH /statements/{statement_id}` (rows are matched by position, not by an id — there is nothing else to address a row by in this design); a length mismatch is rejected rather than treated as a partial submission.
+Approves the whole proposed batch **atomically** — there is no per-transaction approval endpoint and no partial approval. Only valid while `status == "normalized"`. The `transactions` array must be the same length as the array returned inline by `GET`/`PATCH /statements/{statement_id}` (rows are matched by position, not by an id — there is nothing else to address a row by in this design); a length mismatch is rejected rather than treated as a partial submission.
+
+This is also the one and only account-confirmation moment: `account_id`, if present, confirms or overrides the account the Normalization Agent inferred from OCR (`bank_name`/`account_hint` on `GET /statements/{statement_id}`) — the client never supplies an account at upload time (see `POST /statements` above).
 
 **Request**
 ```json
-[
-  {
-    "transaction_date": "date",
-    "merchant_raw": "string | null",
-    "category": "string | null",
-    "amount": "number",
-    "transaction_type": "string | null"
-  }
-]
+{
+  "account_id": "uuid, optional  // confirms/overrides the OCR-inferred account",
+  "transactions": [
+    {
+      "transaction_date": "date",
+      "merchant_raw": "string | null",
+      "category": "string | null",
+      "amount": "number",
+      "transaction_type": "string | null"
+    }
+  ]
+}
 ```
-Any field here overrides the corresponding value the user saw in the inline `transactions` array — this is how in-flight corrections (a fixed category, a corrected amount) reach the ledger.
+Any field on a `transactions` row overrides the corresponding value the user saw in the inline `transactions` array — this is how in-flight corrections (a fixed category, a corrected amount) reach the ledger.
+
+**Contract change note:** this request body used to be the bare array directly (no wrapper) — wrapping it in `{"account_id", "transactions"}` was a deliberate change (PLAN.md Checkpoint A) to make room for account confirmation, not an oversight.
 
 **Behavior:** For each row, the duplicate check (System Architecture §8) is re-run against the ledger at commit time. A duplicate is **skipped**, not treated as an error — it's reported back with `duplicate_of` set instead of `transaction_id`. Every other row is inserted into `transactions` with `source: "statement"` and `statement_id` set to this statement. Once every row is resolved, the statement advances straight to `status: "approved"` — this is the one endpoint that action names itself after, unlike the status names elsewhere in this pipeline.
 

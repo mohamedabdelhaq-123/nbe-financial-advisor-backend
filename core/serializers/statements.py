@@ -157,7 +157,10 @@ class StatementUploadRequestSerializer(serializers.Serializer):
     # `use_url` behavior (format: uri — a string, not a file picker). Scoped
     # override instead of flipping that project-wide setting for one field.
     file = _BinaryFileField()
-    account_id = serializers.UUIDField(required=False)
+    # No account_id here — the Normalization Agent always infers/resolves the
+    # account from OCR output (core/views/statements.py::_run_normalization),
+    # and the user confirms/corrects it at approval time instead
+    # (TransactionApprovalRequestSerializer below), not at upload time.
     # Optional: how far to auto-chain the pipeline in this same call. Omit
     # to keep the original always-chain-to-the-end behavior (defaults to
     # STATUS_NORMALIZED); pass "extracted" to stop right after extraction
@@ -209,6 +212,24 @@ class TransactionApprovalItemSerializer(serializers.Serializer):
     transaction_type = serializers.CharField(
         max_length=20, allow_blank=True, allow_null=True, required=False
     )
+
+
+class TransactionApprovalRequestSerializer(serializers.Serializer):
+    """POST /statements/{id}/transactions — request body.
+
+    Wraps the proposed-batch array (`transactions`) alongside an optional
+    `account_id`, which is how the user confirms or corrects the account the
+    Normalization Agent inferred from OCR (core/views/statements.py's
+    `_run_normalization`) — the one and only account-confirmation moment,
+    since by this point the client has already seen the inferred
+    bank_name/account_hint/account_id via GET /statements/{id}. Previously
+    this endpoint's body was the bare `transactions` array with no wrapper;
+    wrapping it is a deliberate, documented contract change (PLAN.md
+    Checkpoint A), not an oversight.
+    """
+
+    account_id = serializers.UUIDField(required=False)
+    transactions = TransactionApprovalItemSerializer(many=True)
 
 
 class TransactionApprovalResultSerializer(serializers.Serializer):

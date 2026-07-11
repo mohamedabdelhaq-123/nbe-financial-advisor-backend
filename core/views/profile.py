@@ -124,7 +124,17 @@ class BankAccountListCreateView(generics.ListCreateAPIView):
     serializer_class = BankAccountSerializer
 
     def get_queryset(self):
-        return BankAccount.objects.filter(user=self.request.user).order_by("-created_at")
+        qs = BankAccount.objects.filter(user=self.request.user)
+        params = self.request.query_params
+        # Lets the frontend check "does the user already have an account
+        # matching this OCR-derived mask?" (PLAN.md Checkpoint A) before/
+        # without creating a duplicate — exact match, same masking strategy
+        # _run_normalization() already uses to resolve/create accounts.
+        if params.get("masked_account_number"):
+            qs = qs.filter(masked_account_number=params["masked_account_number"])
+        if params.get("bank_name"):
+            qs = qs.filter(bank_name=params["bank_name"])
+        return qs.order_by("-created_at")
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
