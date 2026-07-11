@@ -38,6 +38,8 @@ services:
       SEAWEED_S3_ENDPOINT: ${SEAWEED_S3_ENDPOINT:-http://seaweedfs:8333}
       SEAWEED_ACCESS_KEY: ${SEAWEED_ACCESS_KEY:-dev-seaweed-key}
       SEAWEED_SECRET_KEY: ${SEAWEED_SECRET_KEY:-dev-seaweed-secret}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
     volumes:
       - .:/app
       - /app/.venv  # or wherever your venv/site-packages live, see note below
@@ -48,6 +50,48 @@ services:
         condition: service_healthy
       seaweedfs:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-worker:
+    build:
+      context: .
+      args:
+        BUILD_ENV: ${BUILD_ENV:-development}
+    command: sh -c "celery -A config worker --loglevel=info --concurrency=2"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+      POSTGRES_USER: ${POSTGRES_USER:-appuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apppass}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-1}
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+      SEAWEED_S3_ENDPOINT: ${SEAWEED_S3_ENDPOINT:-http://seaweedfs:8333}
+      SEAWEED_ACCESS_KEY: ${SEAWEED_ACCESS_KEY:-dev-seaweed-key}
+      SEAWEED_SECRET_KEY: ${SEAWEED_SECRET_KEY:-dev-seaweed-secret}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+    volumes:
+      - .:/app
+      - /app/.venv
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"   # dev convenience, same rationale as seaweedfs's published ports
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   seaweedfs:
     image: chrislusf/seaweedfs:latest
