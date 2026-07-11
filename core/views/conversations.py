@@ -27,14 +27,19 @@ from core.views.statements import create_statement_from_upload
 from services import ai_service
 
 
+@extend_schema_view(
+    get=extend_schema(
+        description=(
+            "List the current user's chat sessions, newest-active-first. "
+            "Supports filtering/sorting via the query parameters below. "
+            "`preview` on each row is the most recent message's first ~80 "
+            "characters, for a session-list UI that doesn't want to fetch "
+            "every message just to show a snippet."
+        )
+    )
+)
 class ConversationListCreateView(generics.ListCreateAPIView):
-    """
-    List the current user's chat sessions (newest-active-first), or start a
-    new one. `GET` supports filtering/sorting via the query parameters
-    below; `preview` on each list row is the most recent message's first
-    ~80 characters, for a session-list UI that doesn't want to fetch every
-    message just to show a snippet.
-    """
+    """List the current user's chat sessions, or start a new one."""
 
     pagination_class = LimitOffsetPagination
     filter_backends = [DjangoFilterBackend]
@@ -53,13 +58,16 @@ class ConversationListCreateView(generics.ListCreateAPIView):
             return Conversation.objects.none()
         return Conversation.objects.filter(user=self.request.user).order_by("-last_message_at")
 
-    @extend_schema(request=None, responses={201: ConversationSerializer})
+    @extend_schema(
+        description=(
+            "Start a new chat session. Takes no request body at all — a "
+            "session needs no initial data to start, so there's nothing "
+            "for a client to send here."
+        ),
+        request=None,
+        responses={201: ConversationSerializer},
+    )
     def post(self, request, *args, **kwargs):
-        # Takes no request body at all — a session needs no initial data to
-        # start, so there's nothing for a client to send here. Explicitly
-        # declared above (request=None) rather than left undecorated, so
-        # Swagger states "no body needed" outright instead of a caller
-        # having to guess whether that's intentional.
         conversation = Conversation.objects.create(user=request.user)
         return Response(ConversationSerializer(conversation).data, status=201)
 

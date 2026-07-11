@@ -378,13 +378,20 @@ class SavingsProgressView(APIView):
 
 
 class StarterTemplatesView(APIView):
-    """GET /budget/starter-templates"""
+    """
+    List the reference budget-allocation templates (e.g. "balanced",
+    "aggressive_savings") shown during onboarding, each with its
+    category/percentage breakdown. Public — no authentication required —
+    since onboarding renders these before the user has an account or
+    token, and the templates themselves aren't user-specific data.
 
-    # Public: the frontend shows these during onboarding, before the user has
-    # an account/token. The reference templates themselves aren't user-scoped
-    # (Data Governance Specs §4), so there's nothing to leak — only the
-    # is_suggested flag depends on the user, and that gracefully falls back to
-    # a sensible default when there's no authenticated user (see below).
+    Exactly one template has `is_suggested: true`. For a signed-in user
+    with steady income and no dependents, that's `"aggressive_savings"`
+    (more room to safely save); every other case — including an
+    unauthenticated onboarding visitor, who has no income/dependents
+    signal to go on yet — falls back to `"balanced"`.
+    """
+
     permission_classes = [AllowAny]
 
     @extend_schema(responses={200: StarterTemplateSerializer(many=True)})

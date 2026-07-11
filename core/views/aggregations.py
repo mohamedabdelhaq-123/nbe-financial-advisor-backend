@@ -6,7 +6,7 @@ from django.db.models.functions import TruncMonth
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import mixins, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import GenericAPIView, ListAPIView
@@ -50,24 +50,21 @@ from core.serializers.aggregations import (
 # ============================================================================
 
 
+@extend_schema_view(
+    get=extend_schema(
+        description=(
+            "List the current user's transactions. Filtering/sorting/"
+            "pagination are all handled by query parameters — see the "
+            "parameter list below for the exact set (date range, amount "
+            "range, category, account, free-text merchant search, and "
+            "`sort`). django-filter is the single source of truth for both "
+            "the filtering behavior and this parameter list, so they can't "
+            "drift apart."
+        )
+    )
+)
 class TransactionListCreateView(ListAPIView):
-    """
-    List the current user's transactions, or record one manually.
-
-    Filtering/sorting/pagination are all handled by query parameters —
-    see the parameter list below for the exact set (date range, amount
-    range, category, account, free-text merchant search, and `sort`).
-    django-filter is the single source of truth for both the filtering
-    behavior and this parameter list, so they can't drift apart.
-
-    POST resolves and ownership-checks `account_id` before validating the
-    rest of the body — an unowned or nonexistent `account_id` returns 404,
-    while every other validation problem returns 422. `source` is always
-    set to `"manual"` server-side and can't be overridden by the client.
-    A transaction matching an existing one's date, amount, and merchant is
-    rejected as a likely duplicate (422, `error.code: "duplicate_transaction"`,
-    with the existing row's id in `error.fields.transaction_id`).
-    """
+    """List the current user's transactions, or record one manually."""
 
     serializer_class = TransactionListSerializer
     pagination_class = LimitOffsetPagination
@@ -90,6 +87,17 @@ class TransactionListCreateView(ListAPIView):
         return Transaction.objects.filter(user=self.request.user).order_by("-transaction_date")
 
     @extend_schema(
+        description=(
+            "Record a transaction manually. Resolves and ownership-checks "
+            "`account_id` before validating the rest of the body — an "
+            "unowned or nonexistent `account_id` returns 404, while every "
+            "other validation problem returns 422. `source` is always set "
+            'to `"manual"` server-side and can\'t be overridden by the '
+            "client. A transaction matching an existing one's date, "
+            "amount, and merchant is rejected as a likely duplicate (422, "
+            '`error.code: "duplicate_transaction"`, with the existing '
+            "row's id in `error.fields.transaction_id`)."
+        ),
         request=TransactionCreateRequestSerializer,
         responses={201: TransactionDetailSerializer, **error_responses(404, 422)},
     )
@@ -111,11 +119,11 @@ class TransactionListCreateView(ListAPIView):
             account=account,
             transaction_date=data["transaction_date"],
             amount=data["amount"],
-            merchant_raw=data["merchant_raw"],
+            merchant_raw=data.get("merchant_raw"),
         ).first()
         if duplicate is not None:
-            # Duplicate-prevention guardrail (System_Architecture.md §8) applies
-            # to manual entry exactly as it does to statement bulk-insert.
+            # Duplicate-prevention guardrail applies to manual entry exactly
+            # as it does to statement bulk-insert.
             raise BusinessRuleError(
                 "A transaction matching this date, amount, and merchant already exists.",
                 code="duplicate_transaction",
@@ -125,13 +133,13 @@ class TransactionListCreateView(ListAPIView):
         transaction = Transaction.objects.create(
             user=request.user,
             account=account,
-            source="manual",  # never client-supplied — API Design Guidelines' write contract
+            source="manual",  # never client-supplied, always server-set
             currency=data.get("currency") or account.currency,
             transaction_date=data["transaction_date"],
-            merchant_raw=data["merchant_raw"],
+            merchant_raw=data.get("merchant_raw"),
             category=data.get("category"),
             amount=data["amount"],
-            transaction_type=data["transaction_type"],
+            transaction_type=data.get("transaction_type"),
         )
         return Response(
             TransactionDetailSerializer(transaction).data, status=status.HTTP_201_CREATED
