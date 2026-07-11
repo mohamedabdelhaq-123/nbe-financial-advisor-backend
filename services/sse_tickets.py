@@ -26,7 +26,7 @@ def _key(ticket: str) -> str:
 
 def mint_ticket(user) -> str:
     ticket = secrets.token_urlsafe(32)
-    _redis_client.setex(_key(ticket), settings.SSE_TICKET_TTL_SECONDS, str(user.id))
+    _redis_client.set(_key(ticket), str(user.id), ex=settings.SSE_TICKET_TTL_SECONDS)
     return ticket
 
 
