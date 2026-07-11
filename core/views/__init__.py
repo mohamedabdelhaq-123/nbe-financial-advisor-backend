@@ -35,6 +35,7 @@ from core.views.conversations import (
     ConversationListCreateView,
     ConversationMessagesView,
 )
+from core.views.events import EventStreamView, SSETicketMintView
 from core.views.feedback import FeedbackCreateView, IssueListCreateView
 from core.views.health import db_check, health, ping
 from core.views.profile import (
@@ -95,6 +96,8 @@ __all__ = [
     "ConversationDetailView",
     "ConversationMessagesView",
     "ConversationAttachmentsView",
+    "SSETicketMintView",
+    "EventStreamView",
     "FeedbackCreateView",
     "IssueListCreateView",
     "RecommendationsView",

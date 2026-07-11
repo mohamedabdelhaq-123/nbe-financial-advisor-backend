@@ -75,6 +75,15 @@ services:
     volumes:
       - .:/app
       - /app/.venv
+    # Overrides the image's baked-in HEALTHCHECK (Dockerfile hits
+    # localhost:8000/health/, which nothing serves here — this service runs
+    # Celery, not gunicorn/runserver) with a Celery-native worker ping.
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A config inspect ping -d celery@$$HOSTNAME || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
     depends_on:
       postgres:
         condition: service_healthy
