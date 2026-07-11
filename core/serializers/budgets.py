@@ -7,11 +7,10 @@ from core.models import BudgetHistory
 
 class GoalInputSerializer(serializers.Serializer):
     """
-    Write-side goal shape (API Design Guidelines §4): name, target_amount,
-    target_months. Read-side responses replace target_months with
-    months_remaining instead — built separately in core/views/budgets.py
-    since it's a computed value, not something a serializer maps 1:1 from a
-    model field. Used for POST /goal (full create) and PATCH /dashboard/goal
+    Write-side goal shape: `name`, `target_amount`, `target_months`.
+    Read-side responses replace `target_months` with `months_remaining`
+    instead — a value computed at read time, not something stored 1:1 on
+    the model. Used for POST /goal (full create) and PATCH /dashboard/goal
     (upsert) — both require every field, unlike PATCH /goal's partial update.
     """
 
@@ -48,9 +47,9 @@ def _validate_allocations_sum_100(allocations):
 
 
 class BudgetCreateSerializer(serializers.Serializer):
-    """POST /budget body. No `goal` here — Goal is its own entity with its
-    own CRUD (POST/PATCH /goal, PLAN.md Checkpoint C), created independently
-    of a budget plan."""
+    """POST /budget body. No `goal` here — a savings goal is its own entity
+    with its own CRUD (POST/PATCH /goal), created independently of a
+    budget plan rather than nested inside one."""
 
     name = serializers.CharField(max_length=255, required=False, default="My Plan")
     selected_template_key = serializers.CharField(max_length=50, required=False, allow_null=True)
@@ -64,7 +63,7 @@ class BudgetUpdateSerializer(serializers.Serializer):
     """
     PATCH /budget body — every field optional (a subset update), but
     `allocations`, if present, replaces the full set rather than merging
-    (Data_Shapes_Budgets.md: "it replaces the full set... and must sum to 100").
+    with existing categories, and the replacement set must sum to 100.
     No `goal` here — see BudgetCreateSerializer's docstring.
     """
 
@@ -94,8 +93,9 @@ class BudgetHistorySerializer(serializers.ModelSerializer):
 
 
 class GoalProgressSerializer(serializers.Serializer):
-    """Read-side goal shape: months_remaining instead of target_months
-    (API Design Guidelines §4)."""
+    """Read-side goal shape: `months_remaining` (computed) instead of the
+    write-side `target_months`, so a client can't confuse "total plan
+    length" with "time left"."""
 
     name = serializers.CharField(allow_null=True)
     target_amount = serializers.DecimalField(max_digits=14, decimal_places=2, allow_null=True)
@@ -114,8 +114,8 @@ class AllocationOutputSerializer(serializers.Serializer):
 
 
 class BudgetResponseSerializer(serializers.Serializer):
-    """No `goal` here — Goal is its own entity (PLAN.md Checkpoint C),
-    reached via GET /goal or GET /dashboard, not nested under Budget."""
+    """No `goal` here — a savings goal is its own entity, reached via
+    GET /goal or GET /dashboard, never nested under Budget."""
 
     id = serializers.UUIDField()
     name = serializers.CharField()

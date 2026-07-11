@@ -5,7 +5,7 @@ from django.db.models import Sum
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.generics import ListAPIView
 from rest_framework.pagination import LimitOffsetPagination
@@ -16,6 +16,7 @@ from rest_framework.views import APIView
 from core.exceptions import ConflictError
 from core.filters.budgets import BudgetHistoryFilterSet
 from core.models import BankAccount, Budget, BudgetAllocation, BudgetHistory, Goal, Transaction
+from core.openapi import error_responses
 from core.serializers.budgets import (
     BudgetCreateSerializer,
     BudgetHistorySerializer,
@@ -140,20 +141,36 @@ def _apply_allocations(budget, allocations, monthly_income):
 
 
 class BudgetView(APIView):
-    """GET/POST/PATCH /budget"""
+    """The user's single active budget plan — one plan per user, no
+    parallel/historical rows kept on this table (see GET /budget/history
+    for that). There is no `goal` field on this shape; a savings goal is a
+    separate entity reached via GET /goal or GET /dashboard."""
 
-    @extend_schema(responses={200: BudgetResponseSerializer})
+    @extend_schema(
+        description="Fetch the current budget plan. 404 if the user hasn't created one yet.",
+        responses={200: BudgetResponseSerializer, **error_responses(404)},
+    )
     def get(self, request):
         budget = Budget.objects.filter(user=request.user).prefetch_related("allocations").first()
         if budget is None:
             raise NotFound("No budget plan exists yet.")
         return Response(_serialize_budget(budget))
 
-    @extend_schema(request=BudgetCreateSerializer, responses={201: BudgetResponseSerializer})
+    @extend_schema(
+        description=(
+            "Create the user's one budget plan. Rejected with 409 if one "
+            "already exists — PATCH /budget is the only way to change an "
+            "existing plan, there's no way to have two. `allocations` is "
+            "sent as percentages only; the backend computes and stores "
+            "each category's allocated_amount from the user's monthly "
+            "income, and the percentages across all categories must sum "
+            "to exactly 100 (422 otherwise)."
+        ),
+        request=BudgetCreateSerializer,
+        responses={201: BudgetResponseSerializer, **error_responses(409, 422)},
+    )
     def post(self, request):
         if Budget.objects.filter(user=request.user).exists():
-            # One plan per user, no parallel rows (Data_Governance_Specs.md
-            # §4) — PATCH is the only way to change an existing plan.
             raise ConflictError(
                 "A budget plan already exists for this user. Use PATCH /budget to update it."
             )
@@ -170,7 +187,18 @@ class BudgetView(APIView):
         _apply_allocations(budget, data["allocations"], request.user.monthly_income or Decimal("0"))
         return Response(_serialize_budget(budget), status=201)
 
-    @extend_schema(request=BudgetUpdateSerializer, responses={200: BudgetResponseSerializer})
+    @extend_schema(
+        description=(
+            "Partially update the existing budget plan (404 if none exists "
+            "yet — POST /budget creates it first). If `allocations` is "
+            "included, it fully replaces the existing category set rather "
+            "than merging with it, and must still sum to 100 (422 "
+            "otherwise). Every change is snapshotted into GET /budget/history "
+            "before being applied."
+        ),
+        request=BudgetUpdateSerializer,
+        responses={200: BudgetResponseSerializer, **error_responses(404, 422)},
+    )
     def patch(self, request):
         budget = get_object_or_404(
             Budget.objects.prefetch_related("allocations"), user=request.user
@@ -201,8 +229,18 @@ class BudgetView(APIView):
         return Response(_serialize_budget(budget))
 
 
+@extend_schema_view(
+    get=extend_schema(responses={200: BudgetHistorySerializer, **error_responses(404)})
+)
 class BudgetHistoryView(ListAPIView):
-    """GET /budget/history — filtering via BudgetHistoryFilterSet (PLAN.md Checkpoint F)."""
+    """
+    List every recorded change to the user's budget plan, newest first —
+    each row's `previous_values` is a snapshot of the plan's state
+    immediately before that change was applied, and `changed_via` records
+    what triggered it (`dashboard`, `chat_hitl`, or `onboarding`). 404 if
+    the user has no budget plan at all yet (there's nothing to have a
+    history of).
+    """
 
     serializer_class = BudgetHistorySerializer
     pagination_class = LimitOffsetPagination
@@ -218,18 +256,20 @@ class BudgetHistoryView(ListAPIView):
 
 
 class BudgetProgressView(APIView):
-    """GET /budget/progress
+    """
+    Per-category spend-vs-allocation progress for one calendar month
+    (`period`, defaults to the current month) — how much was actually
+    spent in each budgeted category against how much was allocated, plus
+    an `on_track` / `approaching_limit` / `over_budget` status per
+    category (the threshold for "approaching" is 80% of the allocation).
 
-    `period` genuinely filters the underlying Transaction query per
-    category, but the response is a custom aggregated shape, not a
-    serialized queryset — same reasoning as MonthlySummariesView/
-    CategoryBreakdownView (core/views/aggregations.py) for why this stays a
-    manually-documented APIView (PLAN.md Checkpoint F).
+    `period` genuinely filters the underlying transactions per category,
+    but the response is a custom aggregated shape rather than a serialized
+    queryset, so — same reasoning as the Analytics domain's
+    MonthlySummariesView/CategoryBreakdownView — this stays a
+    manually-documented view. 404 if the user has no budget plan yet.
     """
 
-    # Simple, clearly-labeled thresholds — not a documented business rule,
-    # just a reasonable default for the on_track/approaching_limit/over_budget
-    # status field Data_Shapes_Budgets.md requires per category.
     APPROACHING_LIMIT_THRESHOLD = 80
 
     @extend_schema(
@@ -241,7 +281,7 @@ class BudgetProgressView(APIView):
                 description="YYYY-MM, defaults to the current period",
             )
         ],
-        responses={200: BudgetProgressResponseSerializer},
+        responses={200: BudgetProgressResponseSerializer, **error_responses(404)},
     )
     def get(self, request):
         budget = get_object_or_404(
@@ -284,13 +324,20 @@ class BudgetProgressView(APIView):
 
 
 class SavingsProgressView(APIView):
-    """GET /budget/savings-progress
+    """
+    Progress toward the user's savings goal: amount saved so far, percentage
+    complete, a projected completion date, and whether that projection is
+    on track to land within the goal's own timeline. "Saved so far" is
+    approximated as net cash flow (inflow minus outflow) since the goal was
+    created — there's no dedicated mechanism for tagging individual
+    transactions as "goes toward this goal", so this is an approximation
+    of overall net cash position, not a precisely tracked figure.
 
-    No longer requires a Budget to exist (PLAN.md Checkpoint C) — only a
-    Goal, since the two are now fully independent entities.
+    Only requires a savings goal to exist — not a budget plan, since the
+    two are fully independent entities. 404 if no goal has been set yet.
     """
 
-    @extend_schema(responses={200: SavingsProgressResponseSerializer})
+    @extend_schema(responses={200: SavingsProgressResponseSerializer, **error_responses(404)})
     def get(self, request):
         goal = Goal.objects.filter(user=request.user).first()
         if goal is None:
@@ -384,26 +431,35 @@ def _goal_progress(goal):
 
 
 class GoalView(APIView):
-    """GET/POST/PATCH/DELETE /goal
-
-    The user's single savings goal — its own entity, one-to-one with User
-    (PLAN.md Checkpoint C), independent of whether a budget plan exists.
-    "Optional" means no row exists at all, not a budget with null-ish goal
-    fields.
+    """
+    The user's single savings goal — its own entity, one-to-one with the
+    user, independent of whether a budget plan exists (a user can have a
+    goal with no budget, or vice versa). "No goal set" means no row exists
+    at all, never a dict of null-ish fields, so every operation here 404s
+    cleanly when there isn't one (except POST, which is how you create it).
     """
 
-    @extend_schema(responses={200: DashboardGoalResponseSerializer})
+    @extend_schema(
+        description="Fetch the current savings goal and its progress. 404 if none is set.",
+        responses={200: DashboardGoalResponseSerializer, **error_responses(404)},
+    )
     def get(self, request):
         goal = Goal.objects.filter(user=request.user).first()
         if goal is None:
             raise NotFound("No savings goal set.")
         return Response(_goal_progress(goal))
 
-    @extend_schema(request=GoalInputSerializer, responses={201: DashboardGoalResponseSerializer})
+    @extend_schema(
+        description=(
+            "Create the user's one savings goal. Rejected with 409 if one "
+            "already exists — PATCH /goal is the only way to change an "
+            "existing goal."
+        ),
+        request=GoalInputSerializer,
+        responses={201: DashboardGoalResponseSerializer, **error_responses(409, 422)},
+    )
     def post(self, request):
         if Goal.objects.filter(user=request.user).exists():
-            # One-to-one with User (DB-level guarantee) — this just turns
-            # what would otherwise be an IntegrityError into a clean 409.
             raise ConflictError(
                 "A savings goal already exists for this user. Use PATCH /goal to update it."
             )
@@ -418,7 +474,11 @@ class GoalView(APIView):
         )
         return Response(_goal_progress(goal), status=201)
 
-    @extend_schema(request=GoalUpdateSerializer, responses={200: DashboardGoalResponseSerializer})
+    @extend_schema(
+        description="Partially update the existing goal. 404 if none exists yet.",
+        request=GoalUpdateSerializer,
+        responses={200: DashboardGoalResponseSerializer, **error_responses(404, 422)},
+    )
     def patch(self, request):
         goal = get_object_or_404(Goal, user=request.user)
         serializer = GoalUpdateSerializer(data=request.data)
@@ -433,7 +493,14 @@ class GoalView(APIView):
         goal.save()
         return Response(_goal_progress(goal))
 
-    @extend_schema(responses={204: None})
+    @extend_schema(
+        description=(
+            "Delete the savings goal entirely. Does not affect any budget "
+            "plan or transaction history — only the goal itself and its "
+            "progress tracking disappear. 404 if none exists."
+        ),
+        responses={204: None, **error_responses(404)},
+    )
     def delete(self, request):
         goal = get_object_or_404(Goal, user=request.user)
         goal.delete()
@@ -466,13 +533,22 @@ def _percentage_change(current, previous):
 
 
 class DashboardView(APIView):
-    """GET /dashboard — aggregate endpoint (API Design Guidelines §7)."""
+    """
+    Single combined read for the main dashboard screen: budget plan
+    summary, goal progress, per-category allocation usage, month-over-month
+    spend/inflow metrics, and net worth — one call instead of the frontend
+    stitching together five separate ones.
+
+    Always returns 200, even for a brand new user with no budget plan yet:
+    `has_plan` is `false` and every plan-dependent field falls back to a
+    zeroed/empty shape rather than 404ing, so the frontend can render its
+    real empty state directly from this same response instead of branching
+    on an error. Goal and budget are fetched independently of each other —
+    a user can have one without the other.
+    """
 
     @extend_schema(responses={200: DashboardResponseSerializer})
     def get(self, request):
-        # Fetched independently of budget (PLAN.md Checkpoint C) — a user can
-        # have a Goal with no Budget, or vice versa; the two are no longer
-        # coupled the way embedded goal fields on Budget used to be.
         goal = Goal.objects.filter(user=request.user).first()
         budget = Budget.objects.filter(user=request.user).prefetch_related("allocations").first()
         if budget is None:
@@ -567,18 +643,18 @@ class DashboardView(APIView):
 
 class DashboardGoalView(APIView):
     """
-    PATCH /dashboard/goal
-
-    Convenience upsert alias for the user's Goal (creates it if it doesn't
-    exist yet, updates it if it does) — operates on the standalone Goal
-    entity (PLAN.md Checkpoint C), not nested Budget fields anymore. Doesn't
-    hold any goal-update logic of its own beyond the upsert; GoalView's
-    POST/PATCH are the "own entity, own CRUD" surface this delegates to
-    conceptually (same fields, same _goal_progress() response shape).
+    Convenience upsert for the user's savings goal, callable directly from
+    the dashboard screen: creates the goal if it doesn't exist yet, updates
+    it if it does — a single call instead of the frontend having to check
+    whether a goal already exists before deciding whether to call
+    `POST /goal` or `PATCH /goal` itself. Same underlying goal entity,
+    same response shape as `GET /goal`. The request body is wrapped in a
+    top-level `goal` key: `{"goal": {"name", "target_amount", "target_months"}}`.
     """
 
     @extend_schema(
-        request=DashboardGoalRequestSerializer, responses={200: DashboardGoalResponseSerializer}
+        request=DashboardGoalRequestSerializer,
+        responses={200: DashboardGoalResponseSerializer, **error_responses(422)},
     )
     def patch(self, request):
         goal_data = request.data.get("goal")
