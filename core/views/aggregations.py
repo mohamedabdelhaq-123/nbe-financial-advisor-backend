@@ -28,6 +28,7 @@ from core.models import (
     SpendingPatternInsight,
     Transaction,
 )
+from core.openapi import error_responses
 from core.serializers.aggregations import (
     AnomalyFlagSerializer,
     AnomalyResolveSerializer,
@@ -37,6 +38,7 @@ from core.serializers.aggregations import (
     RecurringChargeSerializer,
     SpendingPatternInsightSerializer,
     StabilityScoreResponseSerializer,
+    TransactionCreateRequestSerializer,
     TransactionDetailSerializer,
     TransactionListSerializer,
     TransactionPatchSerializer,
@@ -49,13 +51,22 @@ from core.serializers.aggregations import (
 
 
 class TransactionListCreateView(ListAPIView):
-    """GET/POST /transactions
+    """
+    List the current user's transactions, or record one manually.
 
-    Filtering/sorting via TransactionFilterSet (PLAN.md Checkpoint F) —
+    Filtering/sorting/pagination are all handled by query parameters —
+    see the parameter list below for the exact set (date range, amount
+    range, category, account, free-text merchant search, and `sort`).
     django-filter is the single source of truth for both the filtering
-    behavior and its Swagger docs (drf-spectacular's built-in
-    DjangoFilterBackend introspection), so they can't drift apart the way a
-    separately-maintained doc decorator could.
+    behavior and this parameter list, so they can't drift apart.
+
+    POST resolves and ownership-checks `account_id` before validating the
+    rest of the body — an unowned or nonexistent `account_id` returns 404,
+    while every other validation problem returns 422. `source` is always
+    set to `"manual"` server-side and can't be overridden by the client.
+    A transaction matching an existing one's date, amount, and merchant is
+    rejected as a likely duplicate (422, `error.code: "duplicate_transaction"`,
+    with the existing row's id in `error.fields.transaction_id`).
     """
 
     serializer_class = TransactionListSerializer
@@ -78,6 +89,10 @@ class TransactionListCreateView(ListAPIView):
         # leaves the queryset's existing order alone otherwise.
         return Transaction.objects.filter(user=self.request.user).order_by("-transaction_date")
 
+    @extend_schema(
+        request=TransactionCreateRequestSerializer,
+        responses={201: TransactionDetailSerializer, **error_responses(404, 422)},
+    )
     def post(self, request, *args, **kwargs):
         account_id = request.data.get("account_id")
         if not account_id:
@@ -125,14 +140,15 @@ class TransactionListCreateView(ListAPIView):
 
 class TransactionDetailView(mixins.RetrieveModelMixin, mixins.DestroyModelMixin, GenericAPIView):
     """
-    GET/PATCH/DELETE /transactions/{transaction_id}
+    Retrieve, edit, or delete a single transaction.
 
-    Built from Retrieve+Destroy mixins directly (not
-    RetrieveUpdateDestroyAPIView) because the PATCH input shape
-    (TransactionPatchSerializer, a restricted field subset) differs from the
-    GET/response shape (TransactionDetailSerializer) — get_serializer_class()
-    can't cleanly serve both through the generic update() flow, so PATCH is
-    handled explicitly below instead.
+    PATCH only accepts a restricted field subset (`category`, `merchant_raw`,
+    `amount`, `transaction_date`, `transaction_type`) — `account_id` and
+    `source` are deliberately not patchable, since changing either would
+    misrepresent where the transaction actually came from. Built from
+    Retrieve+Destroy mixins directly (not RetrieveUpdateDestroyAPIView)
+    because PATCH's input shape genuinely differs from GET's response
+    shape, rather than being a partial version of it.
     """
 
     serializer_class = TransactionDetailSerializer
@@ -141,9 +157,14 @@ class TransactionDetailView(mixins.RetrieveModelMixin, mixins.DestroyModelMixin,
     def get_queryset(self):
         return Transaction.objects.filter(user=self.request.user)
 
+    @extend_schema(responses={200: TransactionDetailSerializer, **error_responses(404)})
     def get(self, request, *args, **kwargs):
         return self.retrieve(request, *args, **kwargs)
 
+    @extend_schema(
+        request=TransactionPatchSerializer,
+        responses={200: TransactionDetailSerializer, **error_responses(404, 422)},
+    )
     def patch(self, request, *args, **kwargs):
         instance = self.get_object()
         serializer = TransactionPatchSerializer(instance, data=request.data, partial=True)
@@ -151,12 +172,13 @@ class TransactionDetailView(mixins.RetrieveModelMixin, mixins.DestroyModelMixin,
         serializer.save()
         return Response(TransactionDetailSerializer(instance).data)
 
+    @extend_schema(responses={204: None, **error_responses(404)})
     def delete(self, request, *args, **kwargs):
-        # "Triggers the same re-aggregation background tasks as an edit"
-        # (Data_Shapes_Aggregations.md) — no-op here since no Celery worker
-        # exists yet (PLAN.md §5); the analytics endpoints below already
-        # compute live from the ledger on every read, so there's nothing
-        # stale left to re-trigger in this mock's design anyway.
+        # Editing/deleting a transaction would ideally trigger the same
+        # re-aggregation background tasks as any other ledger change, but
+        # there's no Celery worker wired up yet — the analytics endpoints
+        # already compute live from the ledger on every read instead, so
+        # there's nothing stale left to re-trigger in the meantime.
         return self.destroy(request, *args, **kwargs)
 
 
