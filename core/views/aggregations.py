@@ -1,7 +1,7 @@
 from datetime import date
 from decimal import Decimal
 
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.db.models.functions import TruncMonth
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
@@ -45,7 +45,20 @@ class TransactionListCreateView(ListAPIView):
 
     serializer_class = TransactionListSerializer
     pagination_class = LimitOffsetPagination
-    ALLOWED_SORT_FIELDS = {"amount", "-amount", "transaction_date", "-transaction_date", "category"}
+    ALLOWED_SORT_FIELDS = {
+        "amount",
+        "-amount",
+        "transaction_date",
+        "-transaction_date",
+        "category",
+        "-category",
+        # "name" (merchant) and "date_added" (created_at, distinct from
+        # transaction_date) — PLAN.md Checkpoint B.
+        "merchant_normalized",
+        "-merchant_normalized",
+        "created_at",
+        "-created_at",
+    }
 
     def get_queryset(self):
         qs = Transaction.objects.filter(user=self.request.user)
@@ -62,6 +75,17 @@ class TransactionListCreateView(ListAPIView):
             qs = qs.filter(source=params["source"])
         if "is_recurring" in params:
             qs = qs.filter(is_recurring=params["is_recurring"].lower() == "true")
+        if params.get("search"):
+            search = params["search"]
+            qs = qs.filter(
+                Q(merchant_raw__icontains=search) | Q(merchant_normalized__icontains=search)
+            )
+        if params.get("min_amount"):
+            qs = qs.filter(amount__gte=params["min_amount"])
+        if params.get("max_amount"):
+            qs = qs.filter(amount__lte=params["max_amount"])
+        if params.get("transaction_type"):
+            qs = qs.filter(transaction_type=params["transaction_type"])
         sort = params.get("sort", "-transaction_date")
         if sort not in self.ALLOWED_SORT_FIELDS:
             sort = "-transaction_date"
