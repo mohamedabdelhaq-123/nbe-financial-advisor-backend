@@ -9,6 +9,7 @@ from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from core.openapi import error_responses
 from core.serializers.auth import (
     LoginSerializer,
     RefreshResponseSerializer,
@@ -19,9 +20,9 @@ from core.serializers.auth import (
 
 def _set_refresh_cookie(response, refresh_token: str) -> None:
     """
-    The one place that sets the refresh-token cookie (PLAN.md Checkpoint E —
-    hybrid httpOnly approach: only the refresh token is a cookie, the access
-    token stays in the response body). See config/settings.py's
+    The one place that sets the refresh-token cookie: the hybrid httpOnly
+    approach where only the refresh token is a cookie, the access token
+    stays in the response body. See config/settings.py's
     REFRESH_TOKEN_COOKIE_* constants for the SameSite/Secure rationale.
     """
     response.set_cookie(
@@ -37,13 +38,11 @@ def _set_refresh_cookie(response, refresh_token: str) -> None:
 
 def _token_pair_response(user, status_code):
     """
-    Shared response shape for every endpoint that issues fresh tokens.
-    There's no dedicated Data Shapes doc for the Profile/Auth domain (see
-    PLAN.md §5's open items), so this mirrors the one concrete example the
-    docs do give — docs/API_GUIDE/Data_Shapes_Administration.md's
-    POST /admin/auth/login — for consistency across the whole API's auth
-    surface, minus refresh_token: that's an httpOnly cookie now, never in
-    the response body (PLAN.md Checkpoint E).
+    Shared response shape for every endpoint that issues fresh tokens:
+    an `access_token` (JWT bearer, 30-minute lifetime) plus the `user_id`
+    it belongs to. The refresh token is never included here — it's set as
+    an httpOnly cookie instead (see _set_refresh_cookie above), so it's
+    never readable by JavaScript even if the page were compromised by XSS.
     """
     refresh = RefreshToken.for_user(user)
     response = Response(
@@ -58,11 +57,24 @@ def _token_pair_response(user, status_code):
 
 
 class SignupView(APIView):
-    """POST /auth/signup — creates a user and returns a token pair immediately."""
+    """
+    Create a new end-user account and log them in immediately — there's no
+    separate email-verification step before the account is usable.
+
+    On success, returns an `access_token` (send it as
+    `Authorization: Bearer <access_token>` on every subsequent request) and
+    sets the refresh token as an httpOnly cookie automatically (never in the
+    response body — see `POST /auth/refresh` for how it's used later).
+    `email` must be unique; a duplicate signup fails validation rather than
+    silently logging into the existing account.
+    """
 
     permission_classes = [AllowAny]
 
-    @extend_schema(request=SignupSerializer, responses={201: TokenPairResponseSerializer})
+    @extend_schema(
+        request=SignupSerializer,
+        responses={201: TokenPairResponseSerializer, **error_responses(422)},
+    )
     def post(self, request):
         serializer = SignupSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -71,11 +83,23 @@ class SignupView(APIView):
 
 
 class LoginView(APIView):
-    """POST /auth/login"""
+    """
+    Authenticate with email + password and receive a fresh token pair, the
+    same shape `POST /auth/signup` returns (`access_token` in the body, the
+    refresh token set as an httpOnly cookie).
+
+    On failure, the error message is deliberately the same generic
+    "Invalid email or password" whether the email doesn't exist or the
+    password is wrong — this prevents a login attempt from being used to
+    discover which emails are registered.
+    """
 
     permission_classes = [AllowAny]
 
-    @extend_schema(request=LoginSerializer, responses={200: TokenPairResponseSerializer})
+    @extend_schema(
+        request=LoginSerializer,
+        responses={200: TokenPairResponseSerializer, **error_responses(422)},
+    )
     def post(self, request):
         serializer = LoginSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
@@ -84,22 +108,27 @@ class LoginView(APIView):
 
 class RefreshView(APIView):
     """
-    POST /auth/refresh
+    Exchange the httpOnly refresh-token cookie for a new access token —
+    call this when a request fails with 401 because the current
+    `access_token` (30-minute lifetime) has expired.
 
-    Takes no request body — the refresh token comes from the httpOnly cookie
-    (PLAN.md Checkpoint E), not a client-supplied field. Delegates the actual
-    rotate/blacklist logic to simplejwt's own TokenRefreshSerializer (it
-    correctly mutates the token's jti/exp/iat in place per simplejwt's
-    implementation — not something worth reimplementing by hand) and only
-    remaps the outer field name from simplejwt's default `access` to this
-    project's `access_token` convention, to stay consistent with
-    signup/login above. The rotated refresh token is re-set as the cookie,
-    never returned in the body.
+    Takes **no request body at all** — the browser sends the refresh
+    token automatically via its httpOnly cookie (it's never readable by
+    JavaScript, so there's nothing for a client to pass explicitly).
+    Refresh tokens rotate on every use: calling this endpoint invalidates
+    the previous refresh token and silently re-sets a new one as the same
+    cookie, so no client-side bookkeeping is needed beyond storing the new
+    `access_token`. A missing, expired, or already-used (blacklisted)
+    refresh cookie means the session is over — clear any in-memory auth
+    state and send the user back to login rather than retrying.
     """
 
     permission_classes = [AllowAny]
 
-    @extend_schema(request=None, responses={200: RefreshResponseSerializer})
+    @extend_schema(
+        request=None,
+        responses={200: RefreshResponseSerializer, **error_responses(401)},
+    )
     def post(self, request):
         refresh_token = request.COOKIES.get(settings.REFRESH_TOKEN_COOKIE_NAME)
         if not refresh_token:
@@ -127,17 +156,27 @@ class RefreshView(APIView):
 
 class LogoutView(APIView):
     """
-    POST /auth/logout — blacklists the refresh token so it can't be
-    replayed, then clears the cookie. Takes no request body — the refresh
-    token comes from the httpOnly cookie (PLAN.md Checkpoint E), never a
-    client-supplied field. Idempotent: no cookie present is treated as
-    "already logged out" (204), not an error — a cookie-driven flow can't
-    have a client "forget" to send it the way a body field could be omitted.
+    End the current session: blacklists the refresh token (so it can never
+    be exchanged for a new access token again, even if it leaked) and
+    clears the httpOnly cookie. Requires a currently-valid `access_token`
+    on the `Authorization` header — if that's already expired, there's
+    nothing meaningful left to blacklist server-side; simply drop the
+    client-side access token and cookie state instead of calling refresh
+    first just to log out.
+
+    Takes no request body — the refresh token comes from the cookie, never
+    a client-supplied field. Idempotent: no cookie present is treated as
+    "already logged out" (204), not an error, since a cookie-driven flow
+    can't have a client "forget" to send it the way a body field could be
+    omitted.
     """
 
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(request=None, responses={204: None})
+    @extend_schema(
+        request=None,
+        responses={204: None, **error_responses(401, 422)},
+    )
     def post(self, request):
         refresh_token = request.COOKIES.get(settings.REFRESH_TOKEN_COOKIE_NAME)
         if refresh_token:

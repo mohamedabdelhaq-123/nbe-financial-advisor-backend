@@ -41,25 +41,19 @@ class LoginSerializer(serializers.Serializer):
 
 
 class TokenPairResponseSerializer(serializers.Serializer):
-    """
-    Output-only shape for signup/login (core/views/auth.py's
-    _token_pair_response()) — documentation purposes only (drf-spectacular
-    schema generation, API Design Guidelines §11), never instantiated for
-    actual validation since the view builds this dict directly.
-
-    No `refresh_token` here — PLAN.md Checkpoint E moves it to an httpOnly
-    cookie (config.settings.REFRESH_TOKEN_COOKIE_NAME), never the response
-    body, so it's not readable by JS at all.
-    """
+    """Response shape for signup and login: a short-lived JWT access token
+    plus the id of the user it belongs to. No `refresh_token` field here —
+    it's set as an httpOnly cookie instead, so it's never readable by
+    client-side JavaScript, even via a successful XSS attack."""
 
     access_token = serializers.CharField()
     user_id = serializers.UUIDField()
 
 
 class RefreshResponseSerializer(serializers.Serializer):
-    """No `refresh_token` here either — see TokenPairResponseSerializer's
-    docstring. POST /auth/refresh takes no request body at all anymore
-    (the refresh token comes from the cookie), so there's no matching
-    RequestSerializer — see core/views/auth.py's RefreshView."""
+    """Response shape for POST /auth/refresh: just a new access token. No
+    `refresh_token` field (see TokenPairResponseSerializer) and no matching
+    request serializer, since the endpoint takes no request body at all —
+    the refresh token it rotates comes from the httpOnly cookie."""
 
     access_token = serializers.CharField()
