@@ -5,8 +5,14 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-appdb}
       POSTGRES_USER: ${POSTGRES_USER:-appuser}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apppass}
+      # Consumed by deploy/initdb/10-ai-roles.sh to provision the AI roles + DB.
+      AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-ai_readonly_pass}
+      AI_DB_PASSWORD: ${AI_DB_PASSWORD:-ai_db_pass}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Runs ONCE on first cluster init: creates ai_user + ai_appdb + ai_readonly
+      # so an AI service run separately against this DB can connect.
+      - ./deploy/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-appuser} -d ${POSTGRES_DB:-appdb}"]
       interval: 10s
