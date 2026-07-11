@@ -17,7 +17,15 @@ from pathlib import Path
 # ── Fail-fast env validation ──────────────────────────────────────────────────
 # The app refuses to start if any required env var is missing. This surfaces
 # misconfigurations immediately rather than at first DB query or API call.
-_REQUIRED_ENV = ["POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD", "AI_SERVICE_TOKEN"]
+_REQUIRED_ENV = [
+    "POSTGRES_DB",
+    "POSTGRES_USER",
+    "POSTGRES_PASSWORD",
+    "AI_SERVICE_TOKEN",
+    "SEAWEED_S3_ENDPOINT",
+    "SEAWEED_ACCESS_KEY",
+    "SEAWEED_SECRET_KEY",
+]
 _missing = [v for v in _REQUIRED_ENV if not os.environ.get(v)]
 if _missing:
     raise RuntimeError(
@@ -224,3 +232,32 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = "static/"
+
+
+# File storage — SeaweedFS via its S3-compatible Filer gateway
+# (docs/File_System_Structure.md, PLAN.md Checkpoint 0). One named storage
+# per bucket/file-type — services/storage_backends.py owns the connection
+# details read from the SEAWEED_* env vars above (_REQUIRED_ENV). "default"
+# stays FileSystemStorage since nothing in this project uses Django's generic
+# FileField storage; every real upload path picks one of the named storages
+# below explicitly via services/file_storage.py.
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+    "raw_statements": {
+        "BACKEND": "services.storage_backends.RawStatementStorage",
+    },
+    "ocr_artifacts": {
+        "BACKEND": "services.storage_backends.OcrArtifactStorage",
+    },
+    "normalized_artifacts": {
+        "BACKEND": "services.storage_backends.NormalizedArtifactStorage",
+    },
+    "reference_data": {
+        "BACKEND": "services.storage_backends.ReferenceDataStorage",
+    },
+}

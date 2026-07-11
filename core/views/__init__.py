@@ -48,6 +48,7 @@ from core.views.recommendation import RecommendationFeedbackView, Recommendation
 from core.views.statements import (
     StatementDetailView,
     StatementListCreateView,
+    StatementOcrArtifactDownloadView,
     StatementOcrResultView,
     StatementTransactionApprovalView,
 )
@@ -69,6 +70,7 @@ __all__ = [
     "StatementListCreateView",
     "StatementDetailView",
     "StatementOcrResultView",
+    "StatementOcrArtifactDownloadView",
     "StatementTransactionApprovalView",
     "TransactionListCreateView",
     "TransactionDetailView",

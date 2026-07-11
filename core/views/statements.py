@@ -3,7 +3,10 @@ from datetime import date
 from decimal import Decimal
 
 from django.db import transaction as db_transaction
+from django.http import FileResponse
 from django.shortcuts import get_object_or_404
+from django.urls import reverse
+from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
 from rest_framework.exceptions import NotFound, ValidationError
@@ -378,8 +381,12 @@ class StatementDetailView(generics.RetrieveDestroyAPIView):
         preferences, _ = UserPreference.objects.get_or_create(user=instance.user)
         if not preferences.retain_raw_documents:
             file_storage.delete_prefix(f"pfm-statements-raw/{instance.user_id}/{instance.id}/")
+            # OCR and normalized artifacts are separate buckets, not one
+            # shared "artifacts" bucket (PLAN.md's one-bucket-per-file-type
+            # decision) — each needs its own delete_prefix call.
+            file_storage.delete_prefix(f"pfm-statements-ocr/{instance.user_id}/{instance.id}/")
             file_storage.delete_prefix(
-                f"pfm-statements-artifacts/{instance.user_id}/{instance.id}/"
+                f"pfm-statements-normalized/{instance.user_id}/{instance.id}/"
             )
         instance.delete()
 
@@ -399,10 +406,45 @@ class StatementOcrResultView(APIView):
                 "ocr_engine": ocr.ocr_engine,
                 "confidence_score": ocr.confidence_score,
                 "processed_at": ocr.processed_at,
-                "artifact_url": file_storage.get_signed_url(
-                    file_storage.ocr_artifact_key(statement.user_id, statement.id)
+                # A Django-proxied download URL, not a signed SeaweedFS URL —
+                # SeaweedFS is never exposed publicly (System_Architecture.md
+                # §2/§10), so a client couldn't resolve a direct link to it.
+                "artifact_url": request.build_absolute_uri(
+                    reverse("statement-ocr-artifact-download", args=[statement.id])
                 ),
             }
+        )
+
+
+class StatementOcrArtifactDownloadView(APIView):
+    """GET /statements/{statement_id}/ocr-result/download
+
+    Proxies the OCR artifact's primary human-readable output (document.md)
+    through Django rather than handing out a signed SeaweedFS URL — see
+    StatementOcrResultView's artifact_url and services/file_storage.py's
+    module docstring. The OCR bucket also holds content.json/images/tables
+    (File_System_Structure.md §3), but those are inputs to the normalization
+    step, not something a user downloads directly, so this endpoint only
+    ever serves document.md.
+    """
+
+    @extend_schema(responses={200: OpenApiTypes.BINARY})
+    def get(self, request, statement_id):
+        statement = get_object_or_404(StatementFile, id=statement_id, user=request.user)
+        ocr = statement.ocr_results.order_by("-processed_at").first()
+        if ocr is None:
+            raise NotFound("OCR result not available yet.")
+
+        key = file_storage.ocr_artifact_key(statement.user_id, statement.id) + "document.md"
+        stream = file_storage.get_object_stream(key)
+        if stream is None:
+            raise NotFound("OCR document not available yet.")
+        body, content_type = stream
+        return FileResponse(
+            body,
+            content_type=content_type or "text/markdown",
+            as_attachment=True,
+            filename=f"{statement.id}-document.md",
         )
 
 
