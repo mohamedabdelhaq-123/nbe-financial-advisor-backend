@@ -37,8 +37,8 @@ class StatementFileSerializer(serializers.ModelSerializer):
     normalization resolved (bank_name/account_hint/model_used/adjusted_at) —
     so a document list can show "which bank / what file / when parsed"
     without a per-row detail call. The heavy part (the transaction array
-    itself) stays on StatementDetailSerializer: a list screen wants the
-    metadata, the detail screen wants the transactions (Data_Shapes_Statements.md)."""
+    itself) stays on StatementDetailSerializer instead: a list screen wants
+    the metadata, the detail screen wants the transactions."""
 
     # Renamed from DRF's default `account` (PrimaryKeyRelatedField) to
     # `account_id` to match the `_id`-suffixed foreign-reference convention
@@ -196,10 +196,10 @@ class StatementOcrResultResponseSerializer(serializers.Serializer):
 
 
 class TransactionApprovalItemSerializer(serializers.Serializer):
-    """POST /statements/{id}/transactions — one row of the submitted batch.
-    Matched to the proposed normalized_json array by position, not by an
-    id (PLAN.md: no per-transaction addressing in this design) — the whole
-    array is submitted and resolved together, corrections and all."""
+    """One row of the submitted approval batch. Matched to the proposed
+    array by position, not by an id — there's no per-transaction approval,
+    the whole array is submitted and resolved together, corrections and
+    all."""
 
     transaction_date = serializers.DateField()
     merchant_raw = serializers.CharField(
@@ -215,17 +215,14 @@ class TransactionApprovalItemSerializer(serializers.Serializer):
 
 
 class TransactionApprovalRequestSerializer(serializers.Serializer):
-    """POST /statements/{id}/transactions — request body.
+    """Request body for approving a statement's proposed transactions.
 
     Wraps the proposed-batch array (`transactions`) alongside an optional
-    `account_id`, which is how the user confirms or corrects the account the
-    Normalization Agent inferred from OCR (core/views/statements.py's
-    `_run_normalization`) — the one and only account-confirmation moment,
-    since by this point the client has already seen the inferred
-    bank_name/account_hint/account_id via GET /statements/{id}. Previously
-    this endpoint's body was the bare `transactions` array with no wrapper;
-    wrapping it is a deliberate, documented contract change (PLAN.md
-    Checkpoint A), not an oversight.
+    `account_id`, which is how the user confirms or corrects the account
+    that normalization inferred from OCR — the one and only
+    account-confirmation moment, since by this point the client has
+    already seen the inferred `bank_name`/`account_hint`/`account_id` via
+    `GET /statements/{id}`.
     """
 
     account_id = serializers.UUIDField(required=False)
