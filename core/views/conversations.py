@@ -1,10 +1,7 @@
-import json
-
-from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import OpenApiResponse, extend_schema, extend_schema_view
-from rest_framework import generics, mixins
+from drf_spectacular.utils import extend_schema, extend_schema_view
+from rest_framework import generics, mixins, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import GenericAPIView
 from rest_framework.pagination import CursorPagination, LimitOffsetPagination
@@ -12,7 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.filters.conversations import ConversationFilterSet, MessageFilterSet
-from core.models import Budget, Conversation, Message
+from core.models import Conversation, Message
 from core.openapi import error_responses
 from core.serializers.conversations import (
     ConversationAttachmentRequestSerializer,
@@ -20,11 +17,10 @@ from core.serializers.conversations import (
     ConversationListItemSerializer,
     ConversationSerializer,
     MessageCreateSerializer,
-    MessageDoneEventSerializer,
     MessageSerializer,
 )
+from core.tasks.conversations import generate_chat_reply
 from core.views.statements import create_statement_from_upload
-from services import ai_service
 
 
 @extend_schema_view(
@@ -101,10 +97,12 @@ class ConversationMessagesView(mixins.ListModelMixin, GenericAPIView):
     an arbitrary offset" here), or send a new one and get the assistant's
     reply streamed back.
 
-    Combines ListModelMixin directly with GenericAPIView rather than using
-    ListCreateAPIView, since POST's SSE-streaming response is a fully
-    custom method that ListCreateAPIView's generic create() flow can't
-    express.
+    GET converted to ListModelMixin (PLAN.md Checkpoint F) for automatic
+    FilterSet-based Swagger docs — POST stays a fully custom method (creates
+    the user message, enqueues reply generation, returns 202 immediately),
+    which ListCreateAPIView can't express, so this combines ListModelMixin
+    directly with GenericAPIView instead (same pattern as TransactionDetailView
+    in core/views/aggregations.py).
     """
 
     serializer_class = MessageSerializer
@@ -134,17 +132,7 @@ class ConversationMessagesView(mixins.ListModelMixin, GenericAPIView):
 
     @extend_schema(
         request=MessageCreateSerializer,
-        responses={
-            200: OpenApiResponse(
-                response=MessageDoneEventSerializer,
-                description=(
-                    'text/event-stream — a sequence of {"event": "token", "data": str} chunks '
-                    'followed by one terminal {"event": "done", "data": <this shape>} event. '
-                    "Not a single JSON body; documented here as the terminal event's payload only."
-                ),
-            ),
-            **error_responses(404, 422),
-        },
+        responses={202: MessageSerializer, **error_responses(404, 422)},
     )
     def post(self, request, conversation_id):
         conversation = self._get_conversation(request, conversation_id)
@@ -152,74 +140,23 @@ class ConversationMessagesView(mixins.ListModelMixin, GenericAPIView):
         serializer.is_valid(raise_exception=True)
         content = serializer.validated_data["content"]
 
-        Message.objects.create(
+        user_message = Message.objects.create(
             conversation=conversation, sender="user", content=content, stage="general"
         )
-
-        # The assistant's power to change data is deliberately narrow
-        # (Architectural_Guidelines.md §7) — chat never writes to Budget
-        # directly here, it only reads the user's existing plan (if any) to
-        # ground a possible allocation_slider widget; any actual edit still
-        # goes through PATCH /budget once the user confirms inside that widget.
-        budget = Budget.objects.filter(user=request.user).prefetch_related("allocations").first()
-        result = ai_service.chat(content, budget=budget)
-
-        assistant_message = Message.objects.create(
-            conversation=conversation,
-            sender="assistant",
-            content=result["content"],
-            stage="general",
-            widget_json=result["widget"],
-        )
-        for ref in result["references"]:
-            assistant_message.add_reference(ref["target_type"], ref["target_id"])
-
         # Conversation.last_message_at is auto_now=True, which only updates
-        # when *this* row is saved — creating related Message rows above
-        # doesn't touch it automatically, so it's bumped explicitly here.
+        # when *this* row is saved — bumped here for the user's own message
+        # too, not just once the assistant replies.
         conversation.save()
 
-        return StreamingHttpResponse(
-            _sse_stream(assistant_message), content_type="text/event-stream"
-        )
+        # Reply generation (ai_service.chat() + persisting the assistant
+        # Message/references) now runs in a Celery task
+        # (core/tasks/conversations.py's generate_chat_reply), publishing
+        # chat_token/chat_message events to the single multiplexed SSE
+        # connection (core/views/events.py) instead of streaming them back
+        # as this request's own response body.
+        generate_chat_reply.delay(str(conversation.id), str(user_message.id))
 
-
-def _sse_stream(message: Message):
-    """
-    Yields Server-Sent Events per Data_Shapes_Conversations.md's documented
-    shape: a few "token" events (the mock's already-fully-computed reply
-    chunked into words, simulating progressive generation — there's nothing
-    genuinely incremental to stream from a synchronous mock), then one
-    terminal "done" event carrying the already-persisted message's real
-    id/content/widget/references.
-
-    Runs under WSGI (gunicorn, per the Dockerfile), not the ASGI server real
-    streaming needs (API Design Guidelines §9: "requires the backend to run
-    under ASGI for that route") — Django's StreamingHttpResponse still works
-    under WSGI for a synchronous generator like this one, just without async
-    concurrency benefits. Swapping to true ASGI + an async generator is a
-    follow-up alongside wiring the real AI service, not something this mock
-    needs in order to exercise the endpoint's contract now.
-    """
-    for word in message.content.split(" "):
-        yield f"data: {json.dumps({'event': 'token', 'data': word + ' '})}\n\n"
-
-    yield "data: {}\n\n".format(
-        json.dumps(
-            {
-                "event": "done",
-                "data": {
-                    "id": str(message.id),
-                    "content": message.content,
-                    "widget": message.widget_json or {"type": None, "payload": None},
-                    "references": [
-                        {"target_type": r.target_type, "target_id": str(r.target_id)}
-                        for r in message.references.all()
-                    ],
-                },
-            }
-        )
-    )
+        return Response(MessageSerializer(user_message).data, status=status.HTTP_202_ACCEPTED)
 
 
 class ConversationAttachmentsView(APIView):
