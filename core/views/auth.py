@@ -1,3 +1,4 @@
+from django.conf import settings
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -10,12 +11,28 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from core.serializers.auth import (
     LoginSerializer,
-    LogoutSerializer,
-    RefreshRequestSerializer,
     RefreshResponseSerializer,
     SignupSerializer,
     TokenPairResponseSerializer,
 )
+
+
+def _set_refresh_cookie(response, refresh_token: str) -> None:
+    """
+    The one place that sets the refresh-token cookie (PLAN.md Checkpoint E —
+    hybrid httpOnly approach: only the refresh token is a cookie, the access
+    token stays in the response body). See config/settings.py's
+    REFRESH_TOKEN_COOKIE_* constants for the SameSite/Secure rationale.
+    """
+    response.set_cookie(
+        settings.REFRESH_TOKEN_COOKIE_NAME,
+        refresh_token,
+        max_age=settings.REFRESH_TOKEN_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=settings.REFRESH_TOKEN_COOKIE_SECURE,
+        samesite=settings.REFRESH_TOKEN_COOKIE_SAMESITE,
+        path="/",
+    )
 
 
 def _token_pair_response(user, status_code):
@@ -24,18 +41,20 @@ def _token_pair_response(user, status_code):
     There's no dedicated Data Shapes doc for the Profile/Auth domain (see
     PLAN.md §5's open items), so this mirrors the one concrete example the
     docs do give — docs/API_GUIDE/Data_Shapes_Administration.md's
-    POST /admin/auth/login, which returns access_token/refresh_token plus an
-    id — for consistency across the whole API's auth surface.
+    POST /admin/auth/login — for consistency across the whole API's auth
+    surface, minus refresh_token: that's an httpOnly cookie now, never in
+    the response body (PLAN.md Checkpoint E).
     """
     refresh = RefreshToken.for_user(user)
-    return Response(
+    response = Response(
         {
             "access_token": str(refresh.access_token),
-            "refresh_token": str(refresh),
             "user_id": str(user.id),
         },
         status=status_code,
     )
+    _set_refresh_cookie(response, str(refresh))
+    return response
 
 
 class SignupView(APIView):
@@ -67,19 +86,25 @@ class RefreshView(APIView):
     """
     POST /auth/refresh
 
-    Delegates the actual rotate/blacklist logic to simplejwt's own
-    TokenRefreshSerializer (it correctly mutates the token's jti/exp/iat in
-    place per simplejwt's implementation — not something worth reimplementing
-    by hand) and only remaps the outer field names from simplejwt's default
-    `refresh`/`access` to this project's `refresh_token`/`access_token`
-    convention, to stay consistent with signup/login above.
+    Takes no request body — the refresh token comes from the httpOnly cookie
+    (PLAN.md Checkpoint E), not a client-supplied field. Delegates the actual
+    rotate/blacklist logic to simplejwt's own TokenRefreshSerializer (it
+    correctly mutates the token's jti/exp/iat in place per simplejwt's
+    implementation — not something worth reimplementing by hand) and only
+    remaps the outer field name from simplejwt's default `access` to this
+    project's `access_token` convention, to stay consistent with
+    signup/login above. The rotated refresh token is re-set as the cookie,
+    never returned in the body.
     """
 
     permission_classes = [AllowAny]
 
-    @extend_schema(request=RefreshRequestSerializer, responses={200: RefreshResponseSerializer})
+    @extend_schema(request=None, responses={200: RefreshResponseSerializer})
     def post(self, request):
-        inner = TokenRefreshSerializer(data={"refresh": request.data.get("refresh_token")})
+        refresh_token = request.COOKIES.get(settings.REFRESH_TOKEN_COOKIE_NAME)
+        if not refresh_token:
+            raise InvalidToken("No refresh token cookie present.")
+        inner = TokenRefreshSerializer(data={"refresh": refresh_token})
         try:
             inner.is_valid(raise_exception=True)
         except TokenError as exc:
@@ -91,24 +116,35 @@ class RefreshView(APIView):
             # docstring). Without this, an invalid refresh token here would
             # leak out as an unhandled 500 instead of a clean 401 JSON error.
             raise InvalidToken(exc.args[0]) from exc
-        data = {"access_token": inner.validated_data["access"]}
+        response = Response(
+            {"access_token": inner.validated_data["access"]}, status=status.HTTP_200_OK
+        )
         if "refresh" in inner.validated_data:
             # Only present when SIMPLE_JWT["ROTATE_REFRESH_TOKENS"] is True.
-            data["refresh_token"] = inner.validated_data["refresh"]
-        return Response(data, status=status.HTTP_200_OK)
+            _set_refresh_cookie(response, inner.validated_data["refresh"])
+        return response
 
 
 class LogoutView(APIView):
-    """POST /auth/logout — blacklists the given refresh token so it can't be replayed."""
+    """
+    POST /auth/logout — blacklists the refresh token so it can't be
+    replayed, then clears the cookie. Takes no request body — the refresh
+    token comes from the httpOnly cookie (PLAN.md Checkpoint E), never a
+    client-supplied field. Idempotent: no cookie present is treated as
+    "already logged out" (204), not an error — a cookie-driven flow can't
+    have a client "forget" to send it the way a body field could be omitted.
+    """
 
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(request=LogoutSerializer, responses={204: None})
+    @extend_schema(request=None, responses={204: None})
     def post(self, request):
-        serializer = LogoutSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        try:
-            RefreshToken(serializer.validated_data["refresh_token"]).blacklist()
-        except TokenError as exc:
-            raise DRFValidationError(str(exc)) from exc
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        refresh_token = request.COOKIES.get(settings.REFRESH_TOKEN_COOKIE_NAME)
+        if refresh_token:
+            try:
+                RefreshToken(refresh_token).blacklist()
+            except TokenError as exc:
+                raise DRFValidationError(str(exc)) from exc
+        response = Response(status=status.HTTP_204_NO_CONTENT)
+        response.delete_cookie(settings.REFRESH_TOKEN_COOKIE_NAME, path="/")
+        return response

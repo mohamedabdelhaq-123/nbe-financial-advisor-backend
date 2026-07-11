@@ -1,13 +1,6 @@
-from core.serializers.auth import (
-    LoginSerializer,
-    LogoutSerializer,
-    RefreshRequestSerializer,
-    SignupSerializer,
-)
+from core.serializers.auth import LoginSerializer, SignupSerializer
 
 __all__ = [
     "SignupSerializer",
     "LoginSerializer",
-    "RefreshRequestSerializer",
-    "LogoutSerializer",
 ]
