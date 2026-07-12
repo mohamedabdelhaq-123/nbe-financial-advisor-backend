@@ -10,9 +10,33 @@ five times per endpoint across the whole API. error_responses() builds that
 fragment once per status code instead.
 """
 
+from drf_spectacular.extensions import OpenApiAuthenticationExtension
 from drf_spectacular.utils import OpenApiResponse
 
 from core.serializers.errors import ErrorResponseSerializer
+
+
+class SSETicketAuthenticationScheme(OpenApiAuthenticationExtension):
+    """
+    Documents core/authentication.py's SSETicketAuthentication for GET
+    /events/stream — without this, drf-spectacular has no built-in scheme
+    for a custom query-param ticket (unlike JWTAuthentication, which
+    simplejwt registers its own extension for) and just drops the security
+    requirement silently. target_class as a string, not an import, to avoid
+    core/authentication.py <-> core/openapi.py import ordering concerns.
+    """
+
+    target_class = "core.authentication.SSETicketAuthentication"
+    name = "SSETicketAuth"
+
+    def get_security_definition(self, auto_schema):
+        return {
+            "type": "apiKey",
+            "in": "query",
+            "name": "ticket",
+            "description": "Short-lived, single-use ticket minted via POST /events/ticket/.",
+        }
+
 
 _DEFAULT_DESCRIPTIONS = {
     400: "Malformed request — invalid JSON or a required field is missing entirely.",

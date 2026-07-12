@@ -22,6 +22,7 @@ from core.views import (
     ConversationMessagesView,
     DashboardGoalView,
     DashboardView,
+    EventStreamView,
     FeedbackCreateView,
     GoalView,
     IssueListCreateView,
@@ -40,6 +41,7 @@ from core.views import (
     SavingsProgressView,
     SignupView,
     SpendingInsightsView,
+    SSETicketMintView,
     StabilityScoreView,
     StarterTemplatesView,
     StatementDetailView,
@@ -110,6 +112,9 @@ urlpatterns = [
         "chat/conversations/<uuid:conversation_id>/attachments/",
         ConversationAttachmentsView.as_view(),
     ),
+    # Events (SSE) — async infra phase, single multiplexed connection per user
+    path("events/ticket/", SSETicketMintView.as_view()),
+    path("events/stream/", EventStreamView.as_view()),
     # 8. Analytics (API_Endpoints_1.md §8)
     path("analytics/monthly-summaries/", MonthlySummariesView.as_view()),
     path("analytics/category-breakdown/", CategoryBreakdownView.as_view()),

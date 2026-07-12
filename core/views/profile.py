@@ -162,7 +162,8 @@ class BankAccountListCreateView(generics.ListCreateAPIView):
         # frontend check "does the user already have an account matching
         # this OCR-derived mask?" (PLAN.md Checkpoint A) before/without
         # creating a duplicate — exact match, same masking strategy
-        # _run_normalization() already uses to resolve/create accounts.
+        # core/tasks/statements.py's run_normalization_phase() already uses
+        # to resolve/create accounts.
         return BankAccount.objects.filter(user=self.request.user).order_by("-created_at")
 
     def perform_create(self, serializer):

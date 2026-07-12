@@ -288,3 +288,28 @@ STORAGES = {
         "BACKEND": "services.storage_backends.ReferenceDataStorage",
     },
 }
+
+
+# ── Redis / Celery / SSE (Checkpoint: async infra phase) ──────────────────────
+# One Redis instance serves two independent purposes: Celery's broker (task
+# queue) and the SSE event bus's pub/sub (services/event_bus.py,
+# services/sse_tickets.py) — not added to _REQUIRED_ENV above since it has a
+# working default, same pattern as POSTGRES_HOST.
+REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
+
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", REDIS_URL)
+# No result backend: task completion is communicated to callers via the
+# persisted StatementFile/Message rows plus an SSE event published from
+# inside the task (core/tasks/*.py) — nothing ever calls .get()/.result on a
+# task, so a result backend would be dead infrastructure.
+CELERY_TASK_IGNORE_RESULT = True
+# Forced True in tests (tests/conftest.py) so the pipeline can be exercised
+# with an ordinary APIClient call and no live worker/broker.
+CELERY_TASK_ALWAYS_EAGER = os.environ.get("CELERY_TASK_ALWAYS_EAGER", "0") == "1"
+CELERY_TASK_EAGER_PROPAGATES = True
+
+# Short-lived, single-use ticket TTL for GET /events/stream (core/views/events.py)
+# — native EventSource can't set an Authorization header, and this project's
+# access token is never cookie-based (core/authentication.py), so the stream
+# is gated by a ticket minted just-in-time via POST /events/ticket instead.
+SSE_TICKET_TTL_SECONDS = int(os.environ.get("SSE_TICKET_TTL_SECONDS", "30"))
