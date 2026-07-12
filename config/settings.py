@@ -120,6 +120,18 @@ SPECTACULAR_SETTINGS = {
     "TITLE": "NBE Financial Advisor API",
     "VERSION": "0.1.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    # Three unrelated fields are all named "status" with different choice
+    # sets (StatementFile's pipeline-phase status, the statements pipeline's
+    # PATCH/POST advance-target subset, and admin issue triage status) —
+    # left alone, drf-spectacular's automatic enum-component naming collides
+    # all three into one "Status" name and disambiguates with unreadable
+    # hash suffixes (e.g. StatusC7eEnum). Naming each explicitly keeps the
+    # generated schema/Swagger UI readable.
+    "ENUM_NAME_OVERRIDES": {
+        "StatementFileStatusEnum": "core.models.statements.file.StatementFile.STATUS_CHOICES",
+        "StatementAdvanceTargetEnum": "core.serializers.statements._ADVANCE_TARGET_CHOICES",
+        "IssueTriageStatusEnum": ["open", "in_review", "resolved", "dismissed"],
+    },
 }
 
 SIMPLE_JWT = {

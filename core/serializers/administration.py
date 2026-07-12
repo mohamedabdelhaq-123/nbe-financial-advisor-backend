@@ -17,10 +17,11 @@ class AdminLoginResponseSerializer(serializers.Serializer):
 
 class AdminReactionSerializer(serializers.ModelSerializer):
     """
-    GET /admin/feedback — cross-user, so unlike the end-user-facing Feedback
-    domain's ReactionSerializer, this exposes user_id (Data_Shapes_
-    Administration.md: "opaque reference, not expanded to full profile —
-    Administration owns no user profile data itself").
+    Admin-facing feedback row — cross-user, so unlike the end-user-facing
+    Feedback domain's ReactionSerializer, this exposes `user_id`. It's an
+    opaque reference only (a UUID, not an expanded user profile) — the
+    Administration domain doesn't own or expose any user profile data
+    itself, it just needs to say whose feedback this was.
     """
 
     user_id = serializers.PrimaryKeyRelatedField(source="user", read_only=True)
@@ -89,8 +90,9 @@ class AdminProductCreateSerializer(serializers.ModelSerializer):
 
 
 class AdminProductUpdateSerializer(serializers.ModelSerializer):
-    """PATCH /admin/products/{id} — any subset of the writable fields; no problem_statements
-    (that's POST-only, per API_GUIDE/Data_Shapes_Administration.md's PATCH spec)."""
+    """Any subset of the writable product fields. No `problem_statements`
+    here — seeding a product's matching text only happens at creation time
+    (POST /admin/products); there's no endpoint to add more afterward."""
 
     class Meta:
         model = Product

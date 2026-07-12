@@ -32,8 +32,9 @@ class TransactionListSerializer(serializers.ModelSerializer):
 
 
 class TransactionDetailSerializer(TransactionListSerializer):
-    """Same as the list shape plus extra_fields, per Data_Shapes_Aggregations.md's
-    GET /transactions/{id} spec ("same shape as one item above, plus extra_fields")."""
+    """Single-transaction detail shape: everything the list shape has, plus
+    `extra_fields` (a free-form JSON bag for source-specific extras that
+    don't warrant a dedicated column)."""
 
     class Meta(TransactionListSerializer.Meta):
         fields = TransactionListSerializer.Meta.fields + ["extra_fields"]
@@ -42,12 +43,14 @@ class TransactionDetailSerializer(TransactionListSerializer):
 
 class TransactionWriteSerializer(serializers.ModelSerializer):
     """
-    POST /transactions body. Deliberately excludes account_id — the view
-    resolves and ownership-checks the account before this serializer ever
-    runs (via get_object_or_404, so an unowned account_id 404s rather than
-    surfacing as a field-validation 422 — API Design Guidelines §10). Also
-    excludes source/is_recurring/confidence_score, which are backend-set or
-    backend-computed, never client-supplied, per Data_Shapes_Aggregations.md.
+    Validates the manually-entered fields of POST /transactions.
+    Deliberately excludes `account_id` — the view resolves and
+    ownership-checks the account before this serializer ever runs, so an
+    unowned or nonexistent account returns 404 instead of a field-validation
+    422 (see TransactionCreateRequestSerializer for the full request shape,
+    account_id included). Also excludes `source`/`is_recurring`/
+    `confidence_score`, which are always backend-set or backend-computed,
+    never accepted from the client.
     """
 
     class Meta:
@@ -66,9 +69,24 @@ class TransactionWriteSerializer(serializers.ModelSerializer):
         }
 
 
+class TransactionCreateRequestSerializer(TransactionWriteSerializer):
+    """The full POST /transactions request body, documentation only —
+    account_id plus every field TransactionWriteSerializer itself
+    validates. Kept separate from TransactionWriteSerializer because the
+    view validates account_id itself (see that serializer's docstring),
+    but the client still has to send it as part of the same request body."""
+
+    account_id = serializers.UUIDField()
+
+    class Meta(TransactionWriteSerializer.Meta):
+        fields = ["account_id", *TransactionWriteSerializer.Meta.fields]
+
+
 class TransactionPatchSerializer(serializers.ModelSerializer):
-    """PATCH /transactions/{id} — only the subset Data_Shapes_Aggregations.md allows
-    (account_id and source are deliberately not patchable, would misrepresent origin)."""
+    """PATCH /transactions/{id} — only a restricted field subset is
+    patchable. `account_id` and `source` are deliberately not patchable,
+    since changing either would misrepresent where the transaction actually
+    came from."""
 
     class Meta:
         model = Transaction

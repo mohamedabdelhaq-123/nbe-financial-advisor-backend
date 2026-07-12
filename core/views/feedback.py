@@ -1,5 +1,5 @@
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics
 from rest_framework.exceptions import NotFound
 from rest_framework.pagination import LimitOffsetPagination
@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 
 from core.filters.feedback import IssueFilterSet
 from core.models import Budget, Message, Reaction, ReportedIssue, Transaction
+from core.openapi import error_responses
 from core.serializers.feedback import (
     FeedbackCreateSerializer,
     IssueCreateSerializer,
@@ -16,9 +17,8 @@ from core.serializers.feedback import (
 )
 
 # One ownership check per allowed target_type — "message" is scoped via its
-# owning conversation (Message has no direct user FK), matching
-# Data_Shapes_Feedback.md: "for message, belong to a conversation owned by
-# the requesting user".
+# owning conversation (Message has no direct user FK), rather than a
+# direct field on the message itself.
 _OWNERSHIP_CHECKS = {
     "transaction": lambda target_id, user: Transaction.objects.filter(
         id=target_id, user=user
@@ -31,9 +31,19 @@ _OWNERSHIP_CHECKS = {
 
 
 class FeedbackCreateView(APIView):
-    """POST /feedback"""
+    """
+    Leave feedback (a rating 1-5 and/or a comment — at least one is
+    required) on a transaction, chat message, or budget. The target must
+    belong to the current user: a `target_id` that exists but belongs to
+    someone else returns 404, the same as a `target_id` that doesn't exist
+    at all, so a caller can't use this endpoint to probe whether an id
+    belongs to another user.
+    """
 
-    @extend_schema(request=FeedbackCreateSerializer, responses={201: ReactionSerializer})
+    @extend_schema(
+        request=FeedbackCreateSerializer,
+        responses={201: ReactionSerializer, **error_responses(404, 422)},
+    )
     def post(self, request):
         serializer = FeedbackCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -41,9 +51,6 @@ class FeedbackCreateView(APIView):
 
         owns_target = _OWNERSHIP_CHECKS[data["target_type"]](data["target_id"], request.user)
         if not owns_target:
-            # 404, not 403 — API Design Guidelines §10's existence-leak
-            # avoidance rule applies here exactly as it does to owned
-            # resources accessed directly by id elsewhere in the API.
             raise NotFound("Target not found.")
 
         reaction = Reaction.objects.create(
@@ -56,8 +63,17 @@ class FeedbackCreateView(APIView):
         return Response(ReactionSerializer(reaction).data, status=201)
 
 
+@extend_schema_view(
+    post=extend_schema(
+        request=IssueCreateSerializer,
+        responses={201: IssueSerializer, **error_responses(422)},
+    )
+)
 class IssueListCreateView(generics.ListCreateAPIView):
-    """POST/GET /issues — filtering via IssueFilterSet (PLAN.md Checkpoint F)."""
+    """List the current user's reported issues (bug reports/support
+    requests), or file a new one. A new issue always starts with
+    `status: "open"` — only an admin can move it through triage via
+    `PATCH /admin/issues/{id}`, there's no user-facing way to change it."""
 
     pagination_class = LimitOffsetPagination
     filter_backends = [DjangoFilterBackend]

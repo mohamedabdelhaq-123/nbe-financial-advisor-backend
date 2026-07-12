@@ -5,11 +5,11 @@ from core.models import Reaction, ReportedIssue
 
 class FeedbackCreateSerializer(serializers.Serializer):
     """
-    POST /feedback body. `target_type` is deliberately narrower than what the
-    Reaction model/DB comment allows (transaction | recommendation | message
-    | budget) — "recommendation" feedback has its own dedicated endpoint
-    (POST /recommendations/{id}/feedback, Recommendation domain checkpoint),
-    per Data_Shapes_Feedback.md's own scoping note.
+    Request body for leaving feedback on a transaction, chat message, or
+    budget. `target_type` deliberately excludes `"recommendation"` even
+    though the underlying Reaction model allows it as a target — reacting
+    to a shown recommendation goes through its own dedicated endpoint,
+    POST /recommendations/{id}/feedback, instead.
     """
 
     target_type = serializers.ChoiceField(choices=["transaction", "message", "budget"])

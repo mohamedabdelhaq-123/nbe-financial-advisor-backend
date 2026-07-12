@@ -8,7 +8,7 @@ from django.shortcuts import get_object_or_404
 from django.urls import reverse
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, status
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.pagination import LimitOffsetPagination
@@ -25,6 +25,7 @@ from core.models import (
     Transaction,
     UserPreference,
 )
+from core.openapi import error_responses
 from core.serializers.statements import (
     StatementDetailSerializer,
     StatementFileSerializer,
@@ -295,9 +296,23 @@ def create_statement_from_upload(user, file_obj, target_status=None) -> Statemen
 
 
 class StatementListCreateView(generics.ListAPIView):
-    """GET /statements, POST /statements (multipart upload)
+    """
+    List the current user's uploaded bank statements, or upload a new one.
 
-    Filtering via StatementFileFilterSet (PLAN.md Checkpoint F).
+    Uploading (multipart, `file` required) kicks off the ingestion pipeline
+    immediately and returns `202 Accepted` — a statement moves through
+    `uploaded -> extracted -> normalized -> approved` asynchronously from
+    the caller's perspective (even though today's implementation happens to
+    finish synchronously within the request). By default the upload
+    auto-chains all the way to `normalized` (the furthest point reachable
+    without the user's explicit approval); pass the optional `status` field
+    (`extracted` or `normalized`) to stop the chain earlier. If the same
+    exact file (by checksum) was already uploaded by this user, the upload
+    is rejected as a duplicate rather than creating a second copy.
+
+    Poll `GET /statements/{id}` while `is_processing` is `true` to track
+    progress; `status`/`failure_reason`/`failed_phase` describe where the
+    pipeline stopped and why if a phase fails.
     """
 
     serializer_class = StatementFileSerializer
@@ -323,7 +338,7 @@ class StatementListCreateView(generics.ListAPIView):
 
     @extend_schema(
         request=StatementUploadRequestSerializer,
-        responses={202: StatementDetailSerializer},
+        responses={202: StatementDetailSerializer, **error_responses(422)},
     )
     def post(self, request, *args, **kwargs):
         upload = StatementUploadRequestSerializer(data=request.data)
@@ -343,8 +358,44 @@ class StatementListCreateView(generics.ListAPIView):
         return Response(StatementDetailSerializer(statement).data, status=status.HTTP_202_ACCEPTED)
 
 
+@extend_schema_view(
+    get=extend_schema(responses={200: StatementDetailSerializer, **error_responses(404)}),
+    delete=extend_schema(responses={204: None, **error_responses(404)}),
+)
 class StatementDetailView(generics.RetrieveDestroyAPIView):
-    """GET/DELETE/PATCH /statements/{statement_id}"""
+    """
+    Retrieve, delete, or advance a single statement.
+
+    `status` is one of `uploaded | extracted | normalized | approved`,
+    reflecting the last successfully completed pipeline phase (never a
+    phase "in progress" — check `is_processing` for that). There is no
+    `failed` status: a phase that fails leaves `status` at its last
+    completed value and sets `failure_reason`/`failed_phase` instead,
+    both cleared again on the next successful transition.
+
+    The `transactions` field (only present once `status` is `normalized`
+    or `approved`) is the proposed batch awaiting approval while
+    `normalized`, and switches to the real committed ledger rows once
+    `approved` — same field name, different underlying source, so a client
+    never needs to know which stage produced what it's looking at.
+
+    DELETE removes the statement and its stored file/artifacts (subject to
+    the user's `retain_raw_documents` preference), but never touches
+    transactions already committed to the ledger from this statement —
+    those stay exactly as they are; only their link back to this statement
+    is cleared.
+
+    PATCH retries or resumes the pipeline toward a given `status` target —
+    it never edits any other field. Requesting a target further out than
+    the next phase cascades through the intermediate ones in the same
+    call (e.g. retrying from `uploaded` straight to `normalized` runs both
+    extraction and normalization before returning). Rejected with a 422
+    and one of these `error.code` values if the request isn't a valid
+    retry: `already_approved` (this statement is terminal), `already_processing`
+    (a phase is already running on it — avoids a double-clicked retry
+    re-running the same phase concurrently), or `invalid_status_transition`
+    (the target isn't strictly ahead of the current status).
+    """
 
     serializer_class = StatementDetailSerializer
     lookup_url_kwarg = "statement_id"
@@ -354,17 +405,20 @@ class StatementDetailView(generics.RetrieveDestroyAPIView):
 
     @extend_schema(
         request=StatementPatchSerializer,
-        responses={200: StatementDetailSerializer},
+        responses={200: StatementDetailSerializer, **error_responses(404, 422)},
     )
     def patch(self, request, *args, **kwargs):
-        # Retry/resume, never a general field update — see PLAN.md
-        # Checkpoint 3. Only the pipeline phases, not the file upload, are
-        # retryable this way (services/file_storage.py's store_raw_file()
-        # docstring: a storage failure never leaves a row to PATCH at all).
-        # All the already_processed/already_processing/forward-only guards
-        # live in advance_statement_to() — the same function POST /statements
-        # calls for its own initial auto-chain, so both call sites enforce
-        # identical rules instead of duplicating them here.
+        # Retry/resume, never a general field update. Only the pipeline
+        # phases, not the file upload, are retryable this way — a storage
+        # failure never leaves a row to PATCH at all. All the
+        # already_approved/already_processing/forward-only guards live in
+        # advance_statement_to() — the same function POST /statements calls
+        # for its own initial auto-chain, so both call sites enforce
+        # identical rules instead of duplicating them here. Requesting a
+        # target further out than the next phase cascades through the
+        # intermediate ones in this same call (e.g. retrying from
+        # `uploaded` straight to `normalized` runs both extraction and
+        # normalization before returning).
         statement = self.get_object()
         serializer = StatementPatchSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -393,9 +447,14 @@ class StatementDetailView(generics.RetrieveDestroyAPIView):
 
 
 class StatementOcrResultView(APIView):
-    """GET /statements/{statement_id}/ocr-result"""
+    """Retrieve the raw OCR result for a statement — the engine used, its
+    confidence score, when it ran, and a link to download the extracted
+    document text. Returns 404 both when the statement itself doesn't
+    exist (or isn't the current user's) and when OCR hasn't completed yet
+    for it (`status` is still `uploaded`) — poll `GET /statements/{id}`
+    until `status` reaches at least `extracted` before calling this."""
 
-    @extend_schema(responses={200: StatementOcrResultResponseSerializer})
+    @extend_schema(responses={200: StatementOcrResultResponseSerializer, **error_responses(404)})
     def get(self, request, statement_id):
         statement = get_object_or_404(StatementFile, id=statement_id, user=request.user)
         ocr = statement.ocr_results.order_by("-processed_at").first()
@@ -418,18 +477,21 @@ class StatementOcrResultView(APIView):
 
 
 class StatementOcrArtifactDownloadView(APIView):
-    """GET /statements/{statement_id}/ocr-result/download
+    """
+    Download the OCR artifact's primary human-readable output
+    (`document.md`) as a file attachment.
 
-    Proxies the OCR artifact's primary human-readable output (document.md)
-    through Django rather than handing out a signed SeaweedFS URL — see
-    StatementOcrResultView's artifact_url and services/file_storage.py's
-    module docstring. The OCR bucket also holds content.json/images/tables
-    (File_System_Structure.md §3), but those are inputs to the normalization
-    step, not something a user downloads directly, so this endpoint only
-    ever serves document.md.
+    Proxied through Django rather than a signed storage URL — the file
+    storage backend is never exposed publicly, so there's no direct link a
+    client could resolve on its own. The same underlying storage location
+    also holds machine-oriented OCR output (raw JSON, extracted
+    images/tables), but those are inputs to the normalization step, not
+    something a user downloads directly — this endpoint only ever serves
+    `document.md`. Returns 404 if the statement doesn't exist/isn't the
+    current user's, or if OCR hasn't produced a document yet.
     """
 
-    @extend_schema(responses={200: OpenApiTypes.BINARY})
+    @extend_schema(responses={200: OpenApiTypes.BINARY, **error_responses(404)})
     def get(self, request, statement_id):
         statement = get_object_or_404(StatementFile, id=statement_id, user=request.user)
         ocr = statement.ocr_results.order_by("-processed_at").first()
@@ -450,29 +512,35 @@ class StatementOcrArtifactDownloadView(APIView):
 
 
 class StatementTransactionApprovalView(APIView):
-    """POST /statements/{statement_id}/transactions
+    """
+    Approve the whole proposed transaction batch for a statement, atomically
+    committing it to the ledger.
 
-    Approves the whole proposed transaction batch atomically — no per-
-    transaction endpoint and no partial approval (PLAN.md). Only valid
-    while the statement is normalized (awaiting the user's approval
-    decision); the submitted array must be the same length as the proposed
-    one (matched by position, not by an id — there's nothing else to match
-    on in this design). Duplicates are re-checked against the ledger at
-    commit time rather than trusted from the normalize-time `duplicate_of`
-    snapshot, since time may have passed; a duplicate is skipped, not
-    treated as an error. Advances the statement straight to approved once
-    every row is resolved — this is the endpoint that action names itself
-    after, unlike the status names elsewhere in this pipeline.
+    There's no per-transaction endpoint and no partial approval — the
+    submitted `transactions` array must be the exact same length as the
+    proposed one from `GET /statements/{id}`, matched by array position
+    (there's no per-row id to match on instead). Only valid while the
+    statement's `status` is `normalized`; anything else is rejected with a
+    422 (`error.code: "invalid_status_transition"`). A length mismatch is
+    rejected with a 422 (`error.code: "transaction_count_mismatch"`) rather
+    than treated as a partial batch.
 
-    Also the one and only account-confirmation moment (PLAN.md Checkpoint
-    A): the request body's optional `account_id` confirms or overrides the
-    account `_run_normalization()` already inferred from OCR — the client
-    never supplies one at upload time.
+    Each row is re-checked against the ledger for duplicates at commit
+    time (not trusted from the normalize-time preview, since time may have
+    passed) — a duplicate is silently skipped (`transaction_id: null`,
+    `duplicate_of` set to the existing row's id), not treated as an error.
+    On success the statement's `status` advances straight to `approved`.
+
+    This is also the one and only point where the account can be
+    confirmed or corrected: the optional `account_id` in the request body
+    overrides whatever account normalization inferred from OCR — the
+    client never supplies one at upload time, only here, once they've seen
+    the inferred `bank_name`/`account_hint` via `GET /statements/{id}`.
     """
 
     @extend_schema(
         request=TransactionApprovalRequestSerializer,
-        responses={200: TransactionApprovalResponseSerializer},
+        responses={200: TransactionApprovalResponseSerializer, **error_responses(404, 422)},
     )
     def post(self, request, statement_id):
         statement = get_object_or_404(StatementFile, id=statement_id, user=request.user)
