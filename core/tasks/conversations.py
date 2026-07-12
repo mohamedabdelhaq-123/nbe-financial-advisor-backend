@@ -35,9 +35,7 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
     # directly here, it only reads the user's existing plan (if any) to
     # ground a possible allocation_slider widget; any actual edit still
     # goes through PATCH /budget once the user confirms inside that widget.
-    budget = (
-        Budget.objects.filter(user=conversation.user).prefetch_related("allocations").first()
-    )
+    budget = Budget.objects.filter(user=conversation.user).prefetch_related("allocations").first()
     result = ai_service.chat(user_message.content, budget=budget)
 
     assistant_message = Message.objects.create(
