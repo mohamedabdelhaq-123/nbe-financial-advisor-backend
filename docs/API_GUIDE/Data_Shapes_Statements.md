@@ -214,7 +214,7 @@ This is also the one and only account-confirmation moment: `account_id`, if pres
   ]
 }
 ```
-Any field on a `transactions` row overrides the corresponding value the user saw in the inline `transactions` array — this is how in-flight corrections (a fixed category, a corrected amount) reach the ledger.
+Any field on a `transactions` row overrides the corresponding value the user saw in the inline `transactions` array — this is how in-flight corrections (a fixed category, a corrected amount) reach the ledger. Each row is committed as-is from its own submitted data, so the array need not match the proposed one in length or order: a row may be edited, dropped (OCR invented it) or added (OCR missed it) during review.
 
 **Contract change note:** this request body used to be the bare array directly (no wrapper) — wrapping it in `{"account_id", "transactions"}` was a deliberate change (PLAN.md Checkpoint A) to make room for account confirmation, not an oversight.
 
@@ -236,7 +236,7 @@ Any field on a `transactions` row overrides the corresponding value the user saw
 }
 ```
 
-**Response `422`** if the statement isn't `normalized` (`code: "invalid_status_transition"` — covers both "not normalized yet" and "already approved") or if the submitted array's length doesn't match the proposed one (`code: "transaction_count_mismatch"`).
+**Response `422`** if the statement isn't `normalized` (`code: "invalid_status_transition"` — covers both "not normalized yet" and "already approved").
 
 ---
 

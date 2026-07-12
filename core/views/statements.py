@@ -345,17 +345,16 @@ class StatementOcrArtifactDownloadView(APIView):
 
 class StatementTransactionApprovalView(APIView):
     """
-    Approve the whole proposed transaction batch for a statement, atomically
+    Approve the reviewed transaction batch for a statement, atomically
     committing it to the ledger.
 
-    There's no per-transaction endpoint and no partial approval — the
-    submitted `transactions` array must be the exact same length as the
-    proposed one from `GET /statements/{id}`, matched by array position
-    (there's no per-row id to match on instead). Only valid while the
-    statement's `status` is `normalized`; anything else is rejected with a
-    422 (`error.code: "invalid_status_transition"`). A length mismatch is
-    rejected with a 422 (`error.code: "transaction_count_mismatch"`) rather
-    than treated as a partial batch.
+    The submitted `transactions` array is taken as the user's final say after
+    reviewing the proposal from `GET /statements/{id}`: each submitted row
+    carries its own full data and is committed as-is, so a row may be edited,
+    dropped, or added during review and the array need not match the proposed
+    one in length or order. Only valid while the statement's `status` is
+    `normalized`; anything else is rejected with a 422
+    (`error.code: "invalid_status_transition"`).
 
     Each row is re-checked against the ledger for duplicates at commit
     time (not trusted from the normalize-time preview, since time may have
@@ -390,15 +389,6 @@ class StatementTransactionApprovalView(APIView):
         if account_id:
             statement.account = get_object_or_404(BankAccount, id=account_id, user=request.user)
             statement.save(update_fields=["account"])
-
-        proposed = (statement.normalized_payload or {}).get("transactions", [])
-
-        if len(submitted) != len(proposed):
-            raise BusinessRuleError(
-                f"Expected {len(proposed)} transactions, got {len(submitted)} — "
-                "the full proposed batch must be submitted together.",
-                code="transaction_count_mismatch",
-            )
 
         resolved = []
         with db_transaction.atomic():
