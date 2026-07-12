@@ -24,7 +24,10 @@ class SSETicketMintView(APIView):
     caller to open GET /events/stream with.
     """
 
-    @extend_schema(responses={200: OpenApiResponse(description="{ticket, expires_in}")})
+    @extend_schema(
+        request=None,
+        responses={200: OpenApiResponse(description="{ticket, expires_in}")},
+    )
     def post(self, request):
         ticket = sse_tickets.mint_ticket(request.user)
         return Response({"ticket": ticket, "expires_in": settings.SSE_TICKET_TTL_SECONDS})
