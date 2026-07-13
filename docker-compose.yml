@@ -5,13 +5,15 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-appdb}
       POSTGRES_USER: ${POSTGRES_USER:-appuser}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apppass}
-      # Consumed by deploy/initdb/10-ai-roles.sh to provision the AI roles + DB.
-      AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-ai_readonly_pass}
+      # Consumed by deploy/initdb/10-ai-roles.sh to provision ai_user + ai_appdb.
+      # ai_readonly is provisioned separately by a Django migration (see
+      # core/migrations/0009_grant_ai_readonly_role.py), which reads
+      # AI_READONLY_PASSWORD from the backend service's own environment below.
       AI_DB_PASSWORD: ${AI_DB_PASSWORD:-ai_db_pass}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # Runs ONCE on first cluster init: creates ai_user + ai_appdb + ai_readonly
-      # so an AI service run separately against this DB can connect.
+      # Runs ONCE on first cluster init: creates ai_user + ai_appdb so an AI
+      # service run separately against this DB can connect.
       - ./deploy/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-appuser} -d ${POSTGRES_DB:-appdb}"]
@@ -35,6 +37,9 @@ services:
       POSTGRES_PORT: 5432
       DJANGO_DEBUG: ${DJANGO_DEBUG:-1}
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+      # Consumed by core/migrations/0009_grant_ai_readonly_role.py to
+      # provision/refresh the ai_readonly role's password.
+      AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-ai_readonly_pass}
       SEAWEED_S3_ENDPOINT: ${SEAWEED_S3_ENDPOINT:-http://seaweedfs:8333}
       SEAWEED_ACCESS_KEY: ${SEAWEED_ACCESS_KEY:-dev-seaweed-key}
       SEAWEED_SECRET_KEY: ${SEAWEED_SECRET_KEY:-dev-seaweed-secret}
@@ -67,6 +72,7 @@ services:
       POSTGRES_PORT: 5432
       DJANGO_DEBUG: ${DJANGO_DEBUG:-1}
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+      AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-ai_readonly_pass}
       SEAWEED_S3_ENDPOINT: ${SEAWEED_S3_ENDPOINT:-http://seaweedfs:8333}
       SEAWEED_ACCESS_KEY: ${SEAWEED_ACCESS_KEY:-dev-seaweed-key}
       SEAWEED_SECRET_KEY: ${SEAWEED_SECRET_KEY:-dev-seaweed-secret}

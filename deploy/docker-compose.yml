@@ -36,6 +36,9 @@ services:
       POSTGRES_PORT: 5432
       AI_SERVICE_URL: http://ai-service:8001
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+      # Consumed by core/migrations/0009_grant_ai_readonly_role.py to
+      # provision/refresh the ai_readonly role's password.
+      AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-ai_readonly_pass}
       SEAWEED_S3_ENDPOINT: http://seaweedfs:8333
       SEAWEED_ACCESS_KEY: ${SEAWEED_ACCESS_KEY}
       SEAWEED_SECRET_KEY: ${SEAWEED_SECRET_KEY}
@@ -64,6 +67,7 @@ services:
       POSTGRES_PORT: 5432
       AI_SERVICE_URL: http://ai-service:8001
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+      AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-ai_readonly_pass}
       SEAWEED_S3_ENDPOINT: http://seaweedfs:8333
       SEAWEED_ACCESS_KEY: ${SEAWEED_ACCESS_KEY}
       SEAWEED_SECRET_KEY: ${SEAWEED_SECRET_KEY}
@@ -159,12 +163,14 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-appdb}
       POSTGRES_USER: ${POSTGRES_USER:-appuser}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apppass}
-      # Consumed by initdb/10-ai-roles.sh to provision the AI roles + database.
-      AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-ai_readonly_pass}
+      # Consumed by initdb/10-ai-roles.sh to provision ai_user + ai_appdb.
+      # ai_readonly is provisioned separately by a Django migration (see
+      # core/migrations/0009_grant_ai_readonly_role.py), which reads
+      # AI_READONLY_PASSWORD from the backend service's own environment above.
       AI_DB_PASSWORD: ${AI_DB_PASSWORD:-ai_db_pass}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # Runs ONCE on first cluster init: creates ai_user + ai_appdb + ai_readonly.
+      # Runs ONCE on first cluster init: creates ai_user + ai_appdb.
       - ./initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-appuser} -d ${POSTGRES_DB:-appdb}"]
