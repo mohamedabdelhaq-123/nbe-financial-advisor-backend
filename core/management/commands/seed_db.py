@@ -18,6 +18,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction as db_transaction
 from django.utils import timezone
 
+from core.constants import BUDGET_CATEGORIES
 from core.models import (
     AdminUser,
     AnomalyFlag,
@@ -62,42 +63,31 @@ BANKS = [
     "HSBC Egypt",
 ]
 
-CATEGORIES = [
-    "Groceries",
-    "Dining",
-    "Transportation",
-    "Utilities",
-    "Entertainment",
-    "Health",
-    "Shopping",
-    "Rent",
-    "Fees",
-    "Education",
-    "Travel",
-    "Cash",
-]
+# Seed data must speak the same vocabulary the budget allocates across, or seeded
+# spend lands in no bucket and every demo plan reads 0% used (core/constants.py).
+CATEGORIES = list(BUDGET_CATEGORIES)
 
 # (merchant_raw, merchant_normalized, category, transaction_type, (min, max) amount)
 ONE_OFF_MERCHANTS = [
-    ("CARREFOUR MAADI EG", "Carrefour", "Groceries", "debit", (150, 900)),
-    ("TALABAT EG*ORDER", "Talabat", "Dining", "debit", (80, 400)),
-    ("UBER *TRIP", "Uber", "Transportation", "debit", (40, 250)),
-    ("NOON.COM ONLINE", "Noon", "Shopping", "debit", (200, 3000)),
-    ("CIB ATM WITHDRAWAL", "ATM Withdrawal", "Cash", "debit", (500, 3000)),
-    ("EGYPTAIR RESERVATIONS", "EgyptAir", "Travel", "debit", (2000, 9000)),
-    ("SPINNEYS SUPERMARKET", "Spinneys", "Groceries", "debit", (200, 1200)),
-    ("CFC MALL RETAIL", "Cairo Festival City Mall", "Shopping", "debit", (300, 2500)),
-    ("BANK MAINTENANCE FEE", "Bank Maintenance Fee", "Fees", "fee", (25, 75)),
-    ("NOON.COM REFUND", "Noon", "Shopping", "credit", (100, 600)),
-    ("RIGHT2LEARN TUITION", "Right2Learn", "Education", "debit", (500, 2500)),
-    ("VEZEETA CLINIC", "Vezeeta", "Health", "debit", (150, 800)),
+    ("CARREFOUR MAADI EG", "Carrefour", "food", "debit", (150, 900)),
+    ("TALABAT EG*ORDER", "Talabat", "food", "debit", (80, 400)),
+    ("UBER *TRIP", "Uber", "transport", "debit", (40, 250)),
+    ("NOON.COM ONLINE", "Noon", "lifestyle", "debit", (200, 3000)),
+    ("CIB ATM WITHDRAWAL", "ATM Withdrawal", "other", "debit", (500, 3000)),
+    ("EGYPTAIR RESERVATIONS", "EgyptAir", "lifestyle", "debit", (2000, 9000)),
+    ("SPINNEYS SUPERMARKET", "Spinneys", "food", "debit", (200, 1200)),
+    ("CFC MALL RETAIL", "Cairo Festival City Mall", "lifestyle", "debit", (300, 2500)),
+    ("BANK MAINTENANCE FEE", "Bank Maintenance Fee", "other", "fee", (25, 75)),
+    ("NOON.COM REFUND", "Noon", "lifestyle", "credit", (100, 600)),
+    ("RIGHT2LEARN TUITION", "Right2Learn", "other", "debit", (500, 2500)),
+    ("VEZEETA CLINIC", "Vezeeta", "other", "debit", (150, 800)),
 ]
 
 # (merchant_raw, merchant_normalized, category, transaction_type, (min, max) amount)
 RECURRING_MERCHANTS = [
-    ("VODAFONE EGYPT-POSTPAID", "Vodafone Egypt", "Utilities", "debit", (180, 220)),
-    ("NETFLIX.COM", "Netflix", "Entertainment", "debit", (190, 210)),
-    ("GOLDS GYM MEMBERSHIP", "Gold's Gym", "Health", "debit", (450, 550)),
+    ("VODAFONE EGYPT-POSTPAID", "Vodafone Egypt", "housing", "debit", (180, 220)),
+    ("NETFLIX.COM", "Netflix", "lifestyle", "debit", (190, 210)),
+    ("GOLDS GYM MEMBERSHIP", "Gold's Gym", "other", "debit", (450, 550)),
 ]
 
 CONSENT_TYPES = ["data_processing", "terms_of_service"]
@@ -516,7 +506,7 @@ class Command(BaseCommand):
                     pay_date,
                     "EMPLOYER PAYROLL",
                     "Employer Payroll",
-                    "Salary",
+                    "other",
                     "credit",
                     _money(0, float(user.monthly_income) * 0.97, float(user.monthly_income) * 1.03),
                     True,
@@ -610,7 +600,10 @@ class Command(BaseCommand):
         for account_id, transactions in transactions_by_account.items():
             by_merchant = {}
             for txn in transactions:
-                if not txn.is_recurring or txn.category == "Salary":
+                # Payroll is recurring but is not a *charge*. It used to be spotted
+                # by its "Salary" category; categories are now spending buckets only
+                # (core/constants.py), so income is identified by its type instead.
+                if not txn.is_recurring or txn.transaction_type == "credit":
                     continue
                 by_merchant.setdefault(txn.merchant_normalized, []).append(txn)
             for merchant_normalized, txns in by_merchant.items():
@@ -788,13 +781,15 @@ class Command(BaseCommand):
             # always-zero bug _goal_progress()'s docstring explains.
             goal_created_at = timezone.make_aware(datetime.combine(goal_since, datetime.min.time()))
             Goal.objects.filter(pk=goal.pk).update(created_at=goal_created_at)
+        # One row per category, summing to 100 — the same six the starter templates
+        # allocate across, so seeded spend actually shows up against the plan.
         allocation_plan = [
-            ("Rent", Decimal("30.00")),
-            ("Groceries", Decimal("20.00")),
-            ("Transportation", Decimal("15.00")),
-            ("Utilities", Decimal("10.00")),
-            ("Entertainment", Decimal("10.00")),
-            ("Savings", Decimal("15.00")),
+            ("housing", Decimal("30.00")),
+            ("food", Decimal("20.00")),
+            ("transport", Decimal("15.00")),
+            ("savings", Decimal("15.00")),
+            ("lifestyle", Decimal("12.00")),
+            ("other", Decimal("8.00")),
         ]
         for category, percentage in allocation_plan:
             BudgetAllocation.objects.create(
@@ -808,12 +803,12 @@ class Command(BaseCommand):
         # A prior-state snapshot so planned-vs-actual history isn't empty on
         # first look (Budgets domain versions the previous row before an edit).
         previous_allocations = [
-            ("Rent", Decimal("35.00")),
-            ("Groceries", Decimal("18.00")),
-            ("Transportation", Decimal("12.00")),
-            ("Utilities", Decimal("10.00")),
-            ("Entertainment", Decimal("10.00")),
-            ("Savings", Decimal("15.00")),
+            ("housing", Decimal("35.00")),
+            ("food", Decimal("18.00")),
+            ("transport", Decimal("12.00")),
+            ("savings", Decimal("15.00")),
+            ("lifestyle", Decimal("12.00")),
+            ("other", Decimal("8.00")),
         ]
         BudgetHistory.objects.create(
             budget=budget,
@@ -857,8 +852,8 @@ class Command(BaseCommand):
                     {
                         "type": "allocation_slider",
                         "allocations": [
-                            {"category": "Savings", "allocated_percentage": 20},
-                            {"category": "Entertainment", "allocated_percentage": 5},
+                            {"category": "savings", "allocated_percentage": 20},
+                            {"category": "lifestyle", "allocated_percentage": 5},
                         ],
                     },
                 ),

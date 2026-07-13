@@ -16,6 +16,8 @@ checkpoint), match_recommendations() (Recommendation checkpoint).
 import random
 from datetime import date, timedelta
 
+from core.constants import BUDGET_CATEGORIES
+
 
 def normalize(statement_file) -> dict:
     """
@@ -33,7 +35,11 @@ def normalize(statement_file) -> dict:
     rng = random.Random(seed)
 
     merchants = ["Carrefour", "Uber", "Vodafone", "Talabat", "Fawry"]
-    categories = ["groceries", "transport", "utilities", "food", "bills"]
+    # Must be drawn from BUDGET_CATEGORIES: budget progress matches a transaction
+    # to its allocation by exact category equality, so a category outside that set
+    # (the old "groceries"/"utilities"/"bills") lands in no bucket at all — the
+    # plan then reports 0% used while the money has genuinely been spent.
+    categories = list(BUDGET_CATEGORIES)
 
     transactions = [
         {

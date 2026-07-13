@@ -3,6 +3,8 @@ import uuid
 from django.db import models
 from pgvector.django import HnswIndex, VectorField
 
+from core.constants import normalize_category
+
 
 class Transaction(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -59,6 +61,17 @@ class Transaction(models.Model):
                 opclasses=["vector_cosine_ops"],
             ),
         ]
+
+    def save(self, *args, **kwargs):
+        # Budget progress matches a transaction to its allocation by exact string
+        # equality on `category`, so an off-vocabulary or differently-cased value
+        # ("Utilities" vs "utilities") lands in no bucket and silently understates
+        # the plan's usage. Normalising here rather than in each view makes that
+        # impossible to bypass: manual entry, statement approval and seeding all
+        # come through save(). (Bulk .update()/.bulk_create() would still skip it,
+        # so neither is used to write this field.)
+        self.category = normalize_category(self.category)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         merchant = self.merchant_normalized or self.merchant_raw
