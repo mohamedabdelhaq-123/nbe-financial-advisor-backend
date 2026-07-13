@@ -129,6 +129,10 @@ services:
       timeout: 5s
       retries: 5
 
+networks:
+  default:
+    name: nbe-dev
+
 volumes:
   pgdata:
   seaweed_data:
