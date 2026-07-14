@@ -1,18 +1,14 @@
-import os
-
 import requests as http_client
+from django.conf import settings
 from django.http import JsonResponse
-
-AI_SERVICE_URL = os.environ.get("AI_SERVICE_URL", "http://ai-service:8001")
-AI_SERVICE_TOKEN = os.environ.get("AI_SERVICE_TOKEN", "")
 
 
 def ask(request):
     """
     GET /ask/?q=<message>
 
-    Forwards the query to the AI service at AI_SERVICE_URL/chat using a
-    Bearer token from AI_SERVICE_TOKEN, then returns the model's reply.
+    Forwards the query to the AI service at settings.AI_SERVICE_URL/chat using a
+    Bearer token from settings.AI_SERVICE_TOKEN, then returns the model's reply.
     Returns 502 if the AI service call fails.
     """
     q = request.GET.get("q", "").strip()
@@ -21,9 +17,9 @@ def ask(request):
 
     try:
         resp = http_client.post(
-            f"{AI_SERVICE_URL}/chat",
+            f"{settings.AI_SERVICE_URL}/chat",
             json={"message": q},
-            headers={"Authorization": f"Bearer {AI_SERVICE_TOKEN}"},
+            headers={"Authorization": f"Bearer {settings.AI_SERVICE_TOKEN}"},
             timeout=30,
         )
         resp.raise_for_status()

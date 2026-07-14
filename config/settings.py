@@ -10,43 +10,49 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
-import os
 from datetime import timedelta
 from pathlib import Path
 
-# ── Fail-fast env validation ──────────────────────────────────────────────────
-# The app refuses to start if any required env var is missing. This surfaces
-# misconfigurations immediately rather than at first DB query or API call.
-_REQUIRED_ENV = [
-    "POSTGRES_DB",
-    "POSTGRES_USER",
-    "POSTGRES_PASSWORD",
-    "AI_SERVICE_TOKEN",
-    "SEAWEED_S3_ENDPOINT",
-    "SEAWEED_ACCESS_KEY",
-    "SEAWEED_SECRET_KEY",
-]
-_missing = [v for v in _REQUIRED_ENV if not os.environ.get(v)]
-if _missing:
-    raise RuntimeError(
-        f"Missing required environment variables: {', '.join(_missing)}. "
-        "Copy .env.example to .env and fill in the values."
-    )
+import environ
+
+env = environ.Env()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Read the project-root .env into os.environ once. override=False → real env /
+# Compose-injected vars always win (safe in Docker & prod), while host-run
+# (python manage.py, pytest, celery -A config) gets the .env values nothing
+# else provides.
+environ.Env.read_env(BASE_DIR / ".env")
+
+# ── Required env vars (fail-fast) ─────────────────────────────────────────────
+# Each read below has no default, so django-environ raises ImproperlyConfigured
+# immediately if any is missing — surfacing misconfigurations at startup rather
+# than at first DB query or API call. They're consumed elsewhere
+# (services/storage_backends.py, core/ask_view.py) but are read here too so
+# every required var is validated in one place. AI_READONLY_PASSWORD is
+# intentionally NOT required here: only core/migrations/0009_grant_ai_readonly_role.py
+# consumes it (during `migrate`), reading os.environ directly then — so
+# `check`/`runserver`/`test` must not need it.
+SEAWEED_S3_ENDPOINT = env.str("SEAWEED_S3_ENDPOINT")
+SEAWEED_ACCESS_KEY = env.str("SEAWEED_ACCESS_KEY")
+SEAWEED_SECRET_KEY = env.str("SEAWEED_SECRET_KEY")
+AI_SERVICE_TOKEN = env.str("AI_SERVICE_TOKEN")
+# Has a default; consumed by core/ask_view.py.
+AI_SERVICE_URL = env.str("AI_SERVICE_URL", "http://ai-service:8001")
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-insecure-change-me")
+SECRET_KEY = env.str("DJANGO_SECRET_KEY", "dev-insecure-change-me")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
+DEBUG = env.bool("DJANGO_DEBUG", True)
 
-ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",")
+ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["*"])
 
 
 # Application definition
@@ -181,10 +187,14 @@ MIDDLEWARE = [
 # In production, DJANGO_CORS_ALLOWED_ORIGINS should be set to the real domain.
 CORS_ALLOWED_ORIGINS = [
     o.strip()
-    for o in os.environ.get(
+    for o in env.list(
         "DJANGO_CORS_ALLOWED_ORIGINS",
-        "http://localhost:5173,http://localhost:8080,http://127.0.0.1:5173",
-    ).split(",")
+        default=[
+            "http://localhost:5173",
+            "http://localhost:8080",
+            "http://127.0.0.1:5173",
+        ],
+    )
     if o.strip()
 ]
 CORS_ALLOW_CREDENTIALS = True
@@ -215,11 +225,11 @@ WSGI_APPLICATION = "config.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.environ.get("POSTGRES_DB", "appdb"),
-        "USER": os.environ.get("POSTGRES_USER", "appuser"),
-        "PASSWORD": os.environ.get("POSTGRES_PASSWORD", "apppass"),
-        "HOST": os.environ.get("POSTGRES_HOST", "postgres"),
-        "PORT": os.environ.get("POSTGRES_PORT", "5432"),
+        "NAME": env.str("POSTGRES_DB", "appdb"),
+        "USER": env.str("POSTGRES_USER", "appuser"),
+        "PASSWORD": env.str("POSTGRES_PASSWORD", "apppass"),
+        "HOST": env.str("POSTGRES_HOST", "postgres"),
+        "PORT": env.str("POSTGRES_PORT", "5432"),
     }
 }
 
@@ -295,9 +305,9 @@ STORAGES = {
 # queue) and the SSE event bus's pub/sub (services/event_bus.py,
 # services/sse_tickets.py) — not added to _REQUIRED_ENV above since it has a
 # working default, same pattern as POSTGRES_HOST.
-REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
+REDIS_URL = env.str("REDIS_URL", "redis://redis:6379/0")
 
-CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", REDIS_URL)
+CELERY_BROKER_URL = env.str("CELERY_BROKER_URL", REDIS_URL)
 # No result backend: task completion is communicated to callers via the
 # persisted StatementFile/Message rows plus an SSE event published from
 # inside the task (core/tasks/*.py) — nothing ever calls .get()/.result on a
@@ -305,11 +315,11 @@ CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", REDIS_URL)
 CELERY_TASK_IGNORE_RESULT = True
 # Forced True in tests (tests/conftest.py) so the pipeline can be exercised
 # with an ordinary APIClient call and no live worker/broker.
-CELERY_TASK_ALWAYS_EAGER = os.environ.get("CELERY_TASK_ALWAYS_EAGER", "0") == "1"
+CELERY_TASK_ALWAYS_EAGER = env.bool("CELERY_TASK_ALWAYS_EAGER", False)
 CELERY_TASK_EAGER_PROPAGATES = True
 
 # Short-lived, single-use ticket TTL for GET /events/stream (core/views/events.py)
 # — native EventSource can't set an Authorization header, and this project's
 # access token is never cookie-based (core/authentication.py), so the stream
 # is gated by a ticket minted just-in-time via POST /events/ticket instead.
-SSE_TICKET_TTL_SECONDS = int(os.environ.get("SSE_TICKET_TTL_SECONDS", "30"))
+SSE_TICKET_TTL_SECONDS = env.int("SSE_TICKET_TTL_SECONDS", 30)
