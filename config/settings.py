@@ -29,14 +29,16 @@ environ.Env.read_env(BASE_DIR / ".env")
 # ── Required env vars (fail-fast) ─────────────────────────────────────────────
 # Each read below has no default, so django-environ raises ImproperlyConfigured
 # immediately if any is missing — surfacing misconfigurations at startup rather
-# than at first DB query or API call. Some are consumed elsewhere
-# (services/storage_backends.py, core/ask_view.py, migration 0009) but are read
-# here too so every required var is validated in one place.
+# than at first DB query or API call. They're consumed elsewhere
+# (services/storage_backends.py, core/ask_view.py) but are read here too so
+# every required var is validated in one place. AI_READONLY_PASSWORD is
+# intentionally NOT required here: only core/migrations/0009_grant_ai_readonly_role.py
+# consumes it (during `migrate`), reading os.environ directly then — so
+# `check`/`runserver`/`test` must not need it.
 SEAWEED_S3_ENDPOINT = env.str("SEAWEED_S3_ENDPOINT")
 SEAWEED_ACCESS_KEY = env.str("SEAWEED_ACCESS_KEY")
 SEAWEED_SECRET_KEY = env.str("SEAWEED_SECRET_KEY")
 AI_SERVICE_TOKEN = env.str("AI_SERVICE_TOKEN")
-AI_READONLY_PASSWORD = env.str("AI_READONLY_PASSWORD")
 # Has a default; consumed by core/ask_view.py.
 AI_SERVICE_URL = env.str("AI_SERVICE_URL", "http://ai-service:8001")
 
