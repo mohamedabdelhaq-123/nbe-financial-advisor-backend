@@ -1,10 +1,9 @@
-import os
-
 import requests as http_client
+from django.conf import settings
 from django.http import JsonResponse
 
-AI_SERVICE_URL = os.environ.get("AI_SERVICE_URL", "http://ai-service:8001")
-AI_SERVICE_TOKEN = os.environ.get("AI_SERVICE_TOKEN", "")
+AI_SERVICE_URL = settings.AI_SERVICE_URL
+AI_SERVICE_TOKEN = settings.AI_SERVICE_TOKEN
 
 
 def ask(request):

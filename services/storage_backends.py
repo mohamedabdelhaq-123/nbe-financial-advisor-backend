@@ -11,13 +11,12 @@ needs to set `bucket_name`; connection details are shared via the base class
 so there is exactly one place that reads the SEAWEED_* env vars.
 """
 
-import os
-
+from django.conf import settings
 from storages.backends.s3boto3 import S3Boto3Storage
 
-_SEAWEED_S3_ENDPOINT = os.environ.get("SEAWEED_S3_ENDPOINT")
-_SEAWEED_ACCESS_KEY = os.environ.get("SEAWEED_ACCESS_KEY")
-_SEAWEED_SECRET_KEY = os.environ.get("SEAWEED_SECRET_KEY")
+_SEAWEED_S3_ENDPOINT = settings.SEAWEED_S3_ENDPOINT
+_SEAWEED_ACCESS_KEY = settings.SEAWEED_ACCESS_KEY
+_SEAWEED_SECRET_KEY = settings.SEAWEED_SECRET_KEY
 
 
 class _SeaweedBucketStorage(S3Boto3Storage):
