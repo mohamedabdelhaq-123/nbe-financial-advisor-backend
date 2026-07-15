@@ -2,6 +2,8 @@ from django.urls import path
 
 from core.ask_view import ask
 from core.views import (
+    AdminCategoryDetailView,
+    AdminCategoryListCreateView,
     AdminFeedbackListView,
     AdminIssueListView,
     AdminIssueUpdateView,
@@ -16,6 +18,7 @@ from core.views import (
     BudgetProgressView,
     BudgetView,
     CategoryBreakdownView,
+    CategoryListView,
     ConversationAttachmentsView,
     ConversationDetailView,
     ConversationListCreateView,
@@ -89,6 +92,9 @@ urlpatterns = [
         "statements/<uuid:statement_id>/transactions/",
         StatementTransactionApprovalView.as_view(),
     ),
+    # Categories — shared income/expense taxonomy for transactions and budget
+    # allocations; read-only here, writes are admin-only (see §12 below).
+    path("categories/", CategoryListView.as_view()),
     # 5. Transactions (API_Endpoints_1.md §5)
     path("transactions/", TransactionListCreateView.as_view()),
     path("transactions/<uuid:transaction_id>/", TransactionDetailView.as_view()),
@@ -139,4 +145,6 @@ urlpatterns = [
     path("admin/issues/<uuid:issue_id>/", AdminIssueUpdateView.as_view()),
     path("admin/products/", AdminProductListCreateView.as_view()),
     path("admin/products/<uuid:product_id>/", AdminProductDetailView.as_view()),
+    path("admin/categories/", AdminCategoryListCreateView.as_view()),
+    path("admin/categories/<uuid:category_id>/", AdminCategoryDetailView.as_view()),
 ]
