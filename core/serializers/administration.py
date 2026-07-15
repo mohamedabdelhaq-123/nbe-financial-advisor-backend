@@ -63,8 +63,9 @@ class AdminProductSerializer(serializers.ModelSerializer):
 
 
 class AdminProductCreateSerializer(serializers.ModelSerializer):
-    # Seed text(s) for embedding generation (AI service /internal/embed) —
-    # not a Product field itself, popped and handled separately by the view.
+    # Seed text(s) for embedding generation (AI service /internal/embeddings,
+    # via services/ai_service.py's create_embeddings()) — not a Product
+    # field itself, popped and handled separately by the view.
     problem_statements = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )

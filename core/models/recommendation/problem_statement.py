@@ -12,8 +12,8 @@ class ProblemStatement(models.Model):
         related_name="problem_statements",
     )
     statement_text = models.TextField()
-    # pgvector configuration matching 1024-dimension embedding strategy
-    embedding = VectorField(dimensions=1024, blank=True, null=True)
+    # 768 dimensions, matching the AI service's configured embedding model.
+    embedding = VectorField(dimensions=768, blank=True, null=True)
 
     class Meta:
         db_table = "problem_statements"

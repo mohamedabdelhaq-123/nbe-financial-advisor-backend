@@ -50,6 +50,13 @@ def ocr_result(statement):
     )
 
 
+@pytest.fixture
+def account(user):
+    return BankAccount.objects.create(
+        user=user, bank_name="Test Bank", masked_account_number="1234"
+    )
+
+
 # ============================================================================
 # Mock branch — shape must match the real contract
 # ============================================================================
@@ -137,6 +144,116 @@ def test_match_recommendations_mock_shape(user):
     assert set(result) == {"matches"}
     for match in result["matches"]:
         assert set(match) == {"product_id", "product_name", "similarity"}
+
+
+def test_embed_transactions_mock_writes_vector_and_confirms(user, account):
+    txn = Transaction.objects.create(
+        user=user,
+        account=account,
+        transaction_date="2026-06-01",
+        amount="100.00",
+        transaction_type="debit",
+    )
+
+    result = ai_service.embed_transactions([str(txn.id)])
+
+    assert result == {"results": [{"transaction_id": str(txn.id), "status": "embedded"}]}
+    txn.refresh_from_db()
+    assert txn.embedding is not None
+    assert len(txn.embedding) == 1536
+
+
+def test_embed_transactions_mock_raises_on_unknown_id(db):
+    with pytest.raises(ai_service.AIServiceError):
+        ai_service.embed_transactions(["00000000-0000-0000-0000-000000000000"])
+
+
+def test_create_embeddings_mock_shape_and_dimensions(user):
+    result = ai_service.create_embeddings(["hello world", "second text"], dimensions=768)
+
+    assert set(result) == {"object", "data", "model", "usage"}
+    assert len(result["data"]) == 2
+    assert [datum["index"] for datum in result["data"]] == [0, 1]
+    assert all(len(datum["embedding"]) == 768 for datum in result["data"])
+
+
+def test_create_embeddings_mock_defaults_dimensions(user):
+    result = ai_service.create_embeddings(["hello"])
+    assert len(result["data"][0]["embedding"]) == 768
+
+
+def test_run_post_ingestion_analysis_mock_computes_live_summary(user, account):
+    Transaction.objects.create(
+        user=user,
+        account=account,
+        transaction_date="2026-06-05",
+        amount="5000.00",
+        transaction_type="credit",
+    )
+    for day in ("2026-06-08", "2026-06-22"):
+        Transaction.objects.create(
+            user=user,
+            account=account,
+            transaction_date=day,
+            amount="200.00",
+            transaction_type="debit",
+            category="food",
+            merchant_raw="Carrefour",
+        )
+    Transaction.objects.create(
+        user=user,
+        account=account,
+        transaction_date="2026-06-15",
+        amount="900.00",
+        transaction_type="debit",
+        category="lifestyle",
+        merchant_raw="Electronics Store",
+    )
+
+    result = ai_service.run_post_ingestion_analysis(str(user.id), str(account.id), "2026-06")
+
+    assert set(result) == {"summary", "recurring_charges", "anomalies"}
+    summary = result["summary"]
+    assert summary["total_income"] == 5000.0
+    assert summary["total_expense"] == 1300.0
+    assert summary["net"] == 3700.0
+    assert summary["by_category"]["food"] == 400.0
+    assert len(summary["embedding"]) == 1536
+
+    # Carrefour appears twice — the mock's simple "2+ occurrences" heuristic.
+    assert any(rc["merchant"] == "Carrefour" for rc in result["recurring_charges"])
+    # The 900.00 lifestyle charge is the largest debit that month.
+    assert result["anomalies"][0]["amount"] == 900.0
+
+
+def test_run_post_ingestion_analysis_mock_null_summary_when_no_transactions(user, account):
+    result = ai_service.run_post_ingestion_analysis(str(user.id), str(account.id), "2026-01")
+    assert result == {"summary": None, "recurring_charges": [], "anomalies": []}
+
+
+def test_next_plan_question_mock_sequence_then_exhausts():
+    seen = []
+    for i in range(4):
+        result = ai_service.next_plan_question({}, {}, i)
+        seen.append(result["question"])
+    assert seen[-1] is None
+    assert all(q is not None for q in seen[:-1])
+    assert len({q["id"] for q in seen[:-1]}) == len(seen) - 1  # no repeats
+
+
+def test_generate_plan_mock_sums_to_100():
+    result = ai_service.generate_plan({}, {})
+    allocations = result["allocations"]
+    total = sum(float(a["percentage"]) for a in allocations)
+    assert total == 100.0
+    assert {a["category"] for a in allocations} <= {
+        "housing",
+        "food",
+        "transport",
+        "savings",
+        "lifestyle",
+        "other",
+    }
 
 
 # ============================================================================
@@ -315,3 +432,91 @@ def test_real_stream_chat_raises_when_stream_ends_without_terminal_event(real_mo
         list(ai_service.stream_chat("conv-1", "user-1", "hi"))
 
     assert response.close_calls == 1
+
+
+def test_embed_transactions_real_calls_correct_endpoint(real_mode, monkeypatch):
+    fake = _FakeSession(
+        _FakeResponse({"results": [{"transaction_id": "t1", "status": "embedded"}]})
+    )
+    monkeypatch.setattr(ai_service, "_session", fake)
+
+    result = ai_service.embed_transactions(["t1"])
+
+    assert fake.calls[0]["url"] == "http://fake-ai-service:8001/internal/transactions/embed"
+    assert fake.calls[0]["json"] == {"transaction_ids": ["t1"]}
+    assert result["results"][0]["status"] == "embedded"
+
+
+def test_create_embeddings_real_calls_correct_endpoint_with_dimensions(real_mode, monkeypatch):
+    fake = _FakeSession(
+        _FakeResponse(
+            {
+                "object": "list",
+                "data": [{"object": "embedding", "embedding": [0.1], "index": 0}],
+                "model": "real-embedder",
+                "usage": {"prompt_tokens": 1, "total_tokens": 1},
+            }
+        )
+    )
+    monkeypatch.setattr(ai_service, "_session", fake)
+
+    result = ai_service.create_embeddings(["hello"], dimensions=768)
+
+    assert fake.calls[0]["url"] == "http://fake-ai-service:8001/internal/embeddings"
+    assert fake.calls[0]["json"] == {"input": ["hello"], "dimensions": 768}
+    assert result["model"] == "real-embedder"
+
+
+def test_create_embeddings_real_omits_dimensions_when_not_given(real_mode, monkeypatch):
+    fake = _FakeSession(_FakeResponse({"object": "list", "data": [], "model": "x", "usage": {}}))
+    monkeypatch.setattr(ai_service, "_session", fake)
+
+    ai_service.create_embeddings(["hello"])
+
+    assert fake.calls[0]["json"] == {"input": ["hello"]}
+
+
+def test_run_post_ingestion_analysis_real_calls_correct_endpoint(real_mode, monkeypatch):
+    fake = _FakeSession(_FakeResponse({"summary": None, "recurring_charges": [], "anomalies": []}))
+    monkeypatch.setattr(ai_service, "_session", fake)
+
+    result = ai_service.run_post_ingestion_analysis("user-1", "acct-1", "2026-06")
+
+    assert fake.calls[0]["url"] == "http://fake-ai-service:8001/internal/analyze/post-ingestion"
+    assert fake.calls[0]["json"] == {
+        "user_id": "user-1",
+        "account_id": "acct-1",
+        "month": "2026-06",
+    }
+    assert result == {"summary": None, "recurring_charges": [], "anomalies": []}
+
+
+def test_next_plan_question_real_calls_correct_endpoint(real_mode, monkeypatch):
+    fake = _FakeSession(_FakeResponse({"question": {"id": "housing_cost", "text": "?"}}))
+    monkeypatch.setattr(ai_service, "_session", fake)
+
+    result = ai_service.next_plan_question({"monthly_income": 100}, {}, 0)
+
+    assert fake.calls[0]["url"] == "http://fake-ai-service:8001/internal/plan/question"
+    assert fake.calls[0]["json"] == {
+        "user_context": {"monthly_income": 100},
+        "answers": {},
+        "questions_asked": 0,
+    }
+    assert result["question"]["id"] == "housing_cost"
+
+
+def test_generate_plan_real_calls_correct_endpoint(real_mode, monkeypatch):
+    fake = _FakeSession(
+        _FakeResponse({"allocations": [{"category": "housing", "percentage": "30.0"}]})
+    )
+    monkeypatch.setattr(ai_service, "_session", fake)
+
+    result = ai_service.generate_plan({"monthly_income": 100}, {"housing_cost": 3000})
+
+    assert fake.calls[0]["url"] == "http://fake-ai-service:8001/internal/plan/generate"
+    assert fake.calls[0]["json"] == {
+        "user_context": {"monthly_income": 100},
+        "answers": {"housing_cost": 3000},
+    }
+    assert result["allocations"][0]["category"] == "housing"
