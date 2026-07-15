@@ -127,10 +127,21 @@ REST_FRAMEWORK = {
 # rather than applied globally.
 SILENCED_SYSTEM_CHECKS = ["rest_framework.W001"]
 
+# Base path Swagger UI/Redoc prepend to every "Try it out" request. Django's
+# own urlpatterns (core.urls) carry no "/api" prefix — only deploy/nginx.conf
+# adds one, stripping it back off before forwarding (deploy/docker-compose.yml
+# sets this to "/api" on the backend service to match). Left empty (the
+# default, matching dev's docker-compose.yml, which publishes this service
+# directly with no reverse proxy in front) means requests go straight to the
+# path drf-spectacular already documents — exactly what an unprefixed
+# core.urls route needs.
+API_URL_PREFIX = env.str("API_URL_PREFIX", "")
+
 SPECTACULAR_SETTINGS = {
     "TITLE": "NBE Financial Advisor API",
     "VERSION": "0.1.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "SERVERS": [{"url": API_URL_PREFIX}] if API_URL_PREFIX else [],
     # Three unrelated fields are all named "status" with different choice
     # sets (StatementFile's pipeline-phase status, the statements pipeline's
     # PATCH/POST advance-target subset, and admin issue triage status) —

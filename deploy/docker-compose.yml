@@ -34,6 +34,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apppass}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
+      # nginx.conf mounts this service at /api/ (stripping the prefix before
+      # forwarding) — tells drf-spectacular's schema to prefix Swagger UI/
+      # Redoc's "Try it out" requests the same way, or they 404/hit the
+      # frontend's catch-all instead of this service.
+      API_URL_PREFIX: /api
       AI_SERVICE_URL: http://ai-service:8001
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
       # Consumed by core/migrations/0009_grant_ai_readonly_role.py to
