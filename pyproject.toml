@@ -7,9 +7,15 @@ select = ["E", "F", "I"]
 
 [tool.black]
 line-length = 100
+# Black normally skips gitignored paths (.venv/ included) automatically, but
+# that detection needs `git` on PATH — absent from the backend/celery-worker
+# container images, where it then silently falls back to scanning everything
+# under `.`, including the multi-hundred-MB .venv volume. Excluded explicitly
+# here so the check doesn't depend on git being available wherever it runs.
 exclude = '''
 /(
     migrations
+    | \.venv
 )/
 '''
 
