@@ -145,10 +145,12 @@ def test_match_recommendations_mock_shape(user):
 
 
 class _FakeResponse:
-    def __init__(self, json_data=None, lines=None, status_code=200):
+    def __init__(self, json_data=None, lines=None, status_code=200, json_raises=False):
         self._json_data = json_data
         self._lines = lines or []
         self.status_code = status_code
+        self._json_raises = json_raises
+        self.close_calls = 0
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -160,13 +162,15 @@ class _FakeResponse:
             raise error
 
     def json(self):
+        if self._json_raises:
+            raise json.JSONDecodeError("Expecting value", "", 0)
         return self._json_data
 
     def iter_lines(self, decode_unicode=True):
         return iter(self._lines)
 
     def close(self):
-        pass
+        self.close_calls += 1
 
 
 class _FakeSession:
@@ -272,3 +276,42 @@ def test_real_call_error_surfaces_ai_service_detail_body(real_mode, monkeypatch)
 
     with pytest.raises(ai_service.AIServiceError, match="failed to retrieve source document"):
         ai_service.process_statement("stmt-1")
+
+
+def test_post_closes_response_on_http_failure(real_mode, monkeypatch):
+    response = _FakeResponse(status_code=500)
+    fake = _FakeSession(response)
+    monkeypatch.setattr(ai_service, "_session", fake)
+
+    with pytest.raises(ai_service.AIServiceError):
+        ai_service.process_statement("stmt-1")
+
+    assert response.close_calls == 1
+
+
+@pytest.mark.parametrize(
+    "real_call",
+    [
+        lambda: ai_service.process_statement("stmt-1"),
+        lambda: ai_service.normalize_statement("ocr-1"),
+        lambda: ai_service.match_recommendations("user-1", "savings"),
+    ],
+)
+def test_real_call_raises_ai_service_error_on_malformed_json(real_mode, monkeypatch, real_call):
+    fake = _FakeSession(_FakeResponse(json_raises=True))
+    monkeypatch.setattr(ai_service, "_session", fake)
+
+    with pytest.raises(ai_service.AIServiceError, match="not valid JSON"):
+        real_call()
+
+
+def test_real_stream_chat_raises_when_stream_ends_without_terminal_event(real_mode, monkeypatch):
+    lines = ['data: {"event": "token", "data": "Hi "}']
+    response = _FakeResponse(lines=lines)
+    fake = _FakeSession(response)
+    monkeypatch.setattr(ai_service, "_session", fake)
+
+    with pytest.raises(ai_service.AIServiceError, match="without a terminal event"):
+        list(ai_service.stream_chat("conv-1", "user-1", "hi"))
+
+    assert response.close_calls == 1

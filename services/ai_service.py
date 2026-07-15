@@ -40,6 +40,8 @@ _REQUEST_TIMEOUT_SECONDS = 30
 
 
 def _auth_headers():
+    """Bearer header built from settings at call time (not import time) —
+    see the module docstring for why."""
     return {"Authorization": f"Bearer {settings.AI_SERVICE_TOKEN}"}
 
 
@@ -47,6 +49,7 @@ def _post(path: str, json_body: dict, *, stream: bool = False):
     """Shared real-HTTP-call helper — builds the URL/auth from settings at
     call time, applies a timeout, and normalizes any failure into
     AIServiceError so task/view code has one thing to catch."""
+    resp = None
     try:
         resp = _session.post(
             f"{settings.AI_SERVICE_URL}{path}",
@@ -57,8 +60,25 @@ def _post(path: str, json_body: dict, *, stream: bool = False):
         )
         resp.raise_for_status()
     except requests.exceptions.RequestException as exc:
+        # resp exists (and may hold an open connection, e.g. stream=True)
+        # whenever the failure is a bad status rather than a connection-level
+        # error, where _session.post() itself raised before assigning it —
+        # close it either way rather than leaking the connection.
+        if resp is not None:
+            resp.close()
         raise AIServiceError(f"AI service call to {path} failed: {_describe(exc)}") from exc
     return resp
+
+
+def _parse_json(resp, path: str) -> dict:
+    """resp.json() wrapped so a malformed or empty successful response
+    becomes an AIServiceError too, not a raw requests/json decode error —
+    otherwise callers that only catch AIServiceError (e.g. RecommendationsView)
+    would still see an unhandled exception on a broken response body."""
+    try:
+        return resp.json()
+    except ValueError as exc:
+        raise AIServiceError(f"AI service response from {path} was not valid JSON: {exc}") from exc
 
 
 def _describe(exc: requests.exceptions.RequestException) -> str:
@@ -109,6 +129,8 @@ def normalize_statement(ocr_result_id: str) -> dict:
 
 
 def _mock_process_statement(statement_id: str) -> dict:
+    """Mock for POST /internal/ingestion/process — no OCR actually runs, this
+    just fabricates the confirmation shape the real MinerU pass would return."""
     return {
         "prefix": f"pfm-statements-ocr/{statement_id}/",
         "ocr_engine": "MinerU",
@@ -117,6 +139,10 @@ def _mock_process_statement(statement_id: str) -> dict:
 
 
 def _mock_normalize_statement(ocr_result_id: str) -> dict:
+    """Mock for POST /internal/ingestion/normalize — fabricates 3 transactions
+    deterministically seeded off the statement's own id (so repeated calls
+    for the same statement agree), with duplicate_of computed the same way
+    the real ai-service's find_duplicate() does."""
     from core.models import StatementOcrResult, Transaction
 
     ocr_result = StatementOcrResult.objects.select_related("statement__user").get(id=ocr_result_id)
@@ -178,13 +204,15 @@ def _mock_normalize_statement(ocr_result_id: str) -> dict:
 
 
 def _real_process_statement(statement_id: str) -> dict:
+    """Real POST /internal/ingestion/process call."""
     resp = _post("/internal/ingestion/process", {"statement_id": statement_id})
-    return resp.json()
+    return _parse_json(resp, "/internal/ingestion/process")
 
 
 def _real_normalize_statement(ocr_result_id: str) -> dict:
+    """Real POST /internal/ingestion/normalize call."""
     resp = _post("/internal/ingestion/normalize", {"ocr_result_id": ocr_result_id})
-    return resp.json()
+    return _parse_json(resp, "/internal/ingestion/normalize")
 
 
 # ============================================================================
@@ -258,11 +286,15 @@ def _mock_stream_chat(conversation_id: str, user_id: str, message: str):
 
 
 def _real_stream_chat(conversation_id: str, user_id: str, message: str):
+    """Real POST /internal/chat call — parses the raw SSE wire format (each
+    frame is one `data: {json}\\n\\n` line) and yields the same envelope
+    shape _mock_stream_chat produces."""
     resp = _post(
         "/internal/chat",
         {"conversation_id": conversation_id, "user_id": user_id, "message": message},
         stream=True,
     )
+    terminal_event_seen = False
     try:
         for line in resp.iter_lines(decode_unicode=True):
             if not line or not line.startswith("data: "):
@@ -270,11 +302,18 @@ def _real_stream_chat(conversation_id: str, user_id: str, message: str):
             envelope = json.loads(line[len("data: ") :])
             yield envelope
             if envelope.get("event") in ("done", "error"):
+                terminal_event_seen = True
                 return
     except (requests.exceptions.RequestException, json.JSONDecodeError) as exc:
         raise AIServiceError(f"AI service chat stream failed: {exc}") from exc
     finally:
         resp.close()
+    if not terminal_event_seen:
+        # The stream closed cleanly but never sent a done/error frame (e.g.
+        # the ai-service crashed mid-stream) — without this, the caller's
+        # loop just ends with no result, per generate_chat_reply's own
+        # matching fix for the "no terminal event" case.
+        raise AIServiceError("AI service chat stream ended without a terminal event")
 
 
 # ============================================================================
@@ -337,8 +376,9 @@ def _mock_match_recommendations(user_id: str, query: str, top_k: int) -> dict:
 
 
 def _real_match_recommendations(user_id: str, query: str, top_k: int) -> dict:
+    """Real POST /internal/recommendations/match call."""
     resp = _post(
         "/internal/recommendations/match",
         {"user_id": user_id, "query": query, "top_k": top_k},
     )
-    return resp.json()
+    return _parse_json(resp, "/internal/recommendations/match")

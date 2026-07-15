@@ -39,6 +39,7 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
     conversation = Conversation.objects.select_related("user").get(id=conversation_id)
     user_message = Message.objects.get(id=user_message_id)
 
+    result = None
     try:
         for envelope in ai_service.stream_chat(
             str(conversation.id), str(conversation.user_id), user_message.content
@@ -55,6 +56,13 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
                 break
             elif event == "error":
                 raise AIServiceError(envelope["data"].get("message", "AI service chat failed"))
+        if result is None:
+            # The generator ended without a done/error event — stream_chat()
+            # itself already guards against this for the real branch, but
+            # this is the backstop that keeps result["content"] below from
+            # raising an unhandled TypeError on any implementation that
+            # doesn't.
+            raise AIServiceError("AI service chat ended without a result")
     except AIServiceError as exc:
         event_bus.publish_user_event(
             conversation.user_id,

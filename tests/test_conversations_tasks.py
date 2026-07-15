@@ -12,6 +12,8 @@ import pytest
 from rest_framework.test import APIClient
 
 from core.models import Budget, BudgetAllocation, Conversation, Message, User
+from core.tasks.conversations import generate_chat_reply
+from services import ai_service
 
 
 @pytest.fixture
@@ -73,3 +75,27 @@ def test_post_message_mentioning_budget_produces_allocation_widget(
     assistant_message = Message.objects.get(conversation=conversation, sender="assistant")
     assert assistant_message.widget_json["type"] == "allocation_slider"
     assert assistant_message.references.filter(target_type="budget", target_id=budget.id).exists()
+
+
+def test_generate_chat_reply_skips_message_when_stream_has_no_terminal_event(
+    user, conversation, fake_redis, monkeypatch
+):
+    """
+    A stream_chat() implementation that ends without a "done"/"error" event
+    (e.g. the ai-service crashed mid-stream) must not fall through to
+    persisting a Message from an unset result — this is the backstop
+    core/tasks/conversations.py adds on top of stream_chat()'s own guard for
+    the real branch specifically.
+    """
+    user_message = Message.objects.create(
+        conversation=conversation, sender="user", content="hello", stage="general"
+    )
+
+    def _stream_with_no_terminal_event(*args, **kwargs):
+        yield {"event": "token", "data": "partial "}
+
+    monkeypatch.setattr(ai_service, "stream_chat", _stream_with_no_terminal_event)
+
+    generate_chat_reply(str(conversation.id), str(user_message.id))
+
+    assert not Message.objects.filter(conversation=conversation, sender="assistant").exists()
