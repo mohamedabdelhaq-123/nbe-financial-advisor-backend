@@ -2,7 +2,7 @@
 
 Replaces the old core/constants.py::normalize_category()/BUDGET_CATEGORIES, which
 validated against a hardcoded tuple. The vocabulary now lives in the `categories`
-table, seeded by core/migrations (see 0010_category.py).
+table, seeded by core/migrations (see 0011_category.py).
 """
 
 from core.models.categories.category import Category

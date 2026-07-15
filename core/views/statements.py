@@ -16,6 +16,7 @@ from rest_framework.views import APIView
 from core.exceptions import BusinessRuleError
 from core.filters.statements import StatementFileFilterSet
 from core.models import BankAccount, StatementFile, Transaction, UserPreference
+from core.models.categories.resolution import resolve_category
 from core.openapi import error_responses
 from core.serializers.statements import (
     StatementDetailSerializer,
@@ -422,7 +423,7 @@ class StatementTransactionApprovalView(APIView):
                     statement=statement,
                     transaction_date=row["transaction_date"],
                     merchant_raw=merchant_raw,
-                    category=row.get("category"),
+                    category=resolve_category(row.get("category"), row.get("transaction_type")),
                     amount=row["amount"],
                     transaction_type=row.get("transaction_type"),
                     source="statement",

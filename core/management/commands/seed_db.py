@@ -18,7 +18,6 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction as db_transaction
 from django.utils import timezone
 
-from core.constants import BUDGET_CATEGORIES
 from core.models import (
     AdminUser,
     AnomalyFlag,
@@ -27,6 +26,7 @@ from core.models import (
     Budget,
     BudgetAllocation,
     BudgetHistory,
+    Category,
     ConsentRecord,
     Conversation,
     Goal,
@@ -62,10 +62,6 @@ BANKS = [
     "Arab African International Bank",
     "HSBC Egypt",
 ]
-
-# Seed data must speak the same vocabulary the budget allocates across, or seeded
-# spend lands in no bucket and every demo plan reads 0% used (core/constants.py).
-CATEGORIES = list(BUDGET_CATEGORIES)
 
 # (merchant_raw, merchant_normalized, category, transaction_type, (min, max) amount)
 ONE_OFF_MERCHANTS = [
@@ -164,6 +160,7 @@ class Command(BaseCommand):
 
         with db_transaction.atomic():
             self._flush()
+            self._categories = {c.name: c for c in Category.objects.all()}
             admins = self._seed_admins()
             products = self._seed_products()
             templates = self._seed_templates() if gen_statements else []
@@ -584,7 +581,7 @@ class Command(BaseCommand):
                     transaction_date=row["transaction_date"],
                     merchant_raw=row["merchant_raw"],
                     merchant_normalized=row["merchant_normalized"],
-                    category=row["category"],
+                    category=self._categories[row["category"]],
                     amount=row["amount"],
                     currency=account.currency,
                     is_recurring=row["is_recurring"],
@@ -600,9 +597,9 @@ class Command(BaseCommand):
         for account_id, transactions in transactions_by_account.items():
             by_merchant = {}
             for txn in transactions:
-                # Payroll is recurring but is not a *charge*. It used to be spotted
-                # by its "Salary" category; categories are now spending buckets only
-                # (core/constants.py), so income is identified by its type instead.
+                # Payroll is recurring but is not a *charge*: identified by its
+                # transaction_type, not its category (this seed data still tags
+                # payroll rows "other" rather than the newer "salary" category).
                 if not txn.is_recurring or txn.transaction_type == "credit":
                     continue
                 by_merchant.setdefault(txn.merchant_normalized, []).append(txn)
@@ -698,8 +695,8 @@ class Command(BaseCommand):
                 for t in txns:
                     if t.category is None:
                         continue
-                    category_breakdown[t.category] = (
-                        category_breakdown.get(t.category, Decimal("0")) + t.amount
+                    category_breakdown[t.category.name] = (
+                        category_breakdown.get(t.category.name, Decimal("0")) + t.amount
                     )
                 merchant_totals = {}
                 for t in txns:
@@ -794,7 +791,7 @@ class Command(BaseCommand):
         for category, percentage in allocation_plan:
             BudgetAllocation.objects.create(
                 budget=budget,
-                category=category,
+                category=self._categories[category],
                 allocated_percentage=percentage,
                 allocated_amount=_money(user.monthly_income * percentage / Decimal("100")),
                 currency="EGP",

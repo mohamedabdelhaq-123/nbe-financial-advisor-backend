@@ -11,13 +11,13 @@ from .aggregations.spending_pattern_insight import SpendingPatternInsight
 from .aggregations.transaction import Transaction
 from .budgets.allocation import BudgetAllocation
 
-# Import Categories Domain
-from .categories.category import Category
-
 # Import Budgets Domain
 from .budgets.budget import Budget
 from .budgets.goal import Goal
 from .budgets.history import BudgetHistory
+
+# Import Categories Domain
+from .categories.category import Category
 
 # Import Conversations Domain
 from .conversations.conversation import Conversation

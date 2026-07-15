@@ -48,7 +48,7 @@ def remove_seeded_categories(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("core", "0009_grant_ai_readonly_role"),
+        ("core", "0010_alter_problemstatement_embedding"),
     ]
 
     operations = [
