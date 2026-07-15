@@ -30,6 +30,7 @@ from core.serializers.administration import (
     AdminProductUpdateSerializer,
     AdminReactionSerializer,
 )
+from services import ai_service
 
 
 class AdminLoginView(APIView):
@@ -173,11 +174,13 @@ class AdminProductListCreateView(AdminAuthMixin, generics.ListCreateAPIView):
     which only ever surfaces active ones), or add a new one
     (POST — super_admin only, 403 for any other admin role).
 
-    POST's optional `problem_statements` are seed text for the product's
-    future semantic-matching embeddings — the product is immediately
-    usable for direct display either way, but won't be matchable via
-    `GET /recommendations`'s query-based search until an embedding
-    pipeline processes them (not wired up yet).
+    POST's optional `problem_statements` are seed text embedded in one
+    batch call to the AI service (services/ai_service.py's
+    create_embeddings()) and stored on each ProblemStatement.embedding,
+    powering `GET /recommendations`'s semantic-match search. The product
+    itself is usable for direct display immediately either way. A create
+    failure (AIServiceError) is not caught here, so it surfaces as a clear
+    error rather than silently leaving problem_statements unembedded.
     """
 
     pagination_class = LimitOffsetPagination
@@ -206,13 +209,22 @@ class AdminProductListCreateView(AdminAuthMixin, generics.ListCreateAPIView):
         problem_statements = data.pop("problem_statements", [])
 
         product = Product.objects.create(**data)
-        for statement_text in problem_statements:
-            # embedding stays null — no local embedding model is wired up
-            # (services/ai_service.py has no embed() yet); the product is
-            # usable for direct display immediately, per this endpoint's
-            # documented behavior, but not yet matchable via semantic search
-            # until a real embedding pipeline populates this.
-            ProblemStatement.objects.create(product=product, statement_text=statement_text)
+
+        # Embedded in one batch call (not per-statement) — /internal/embeddings
+        # takes a list of texts and returns one vector per index. A failure
+        # here (AIServiceError) is deliberately not caught, so it surfaces as
+        # a clear 500 rather than silently leaving problem_statements unembedded.
+        embeddings = []
+        if problem_statements:
+            response = ai_service.create_embeddings(problem_statements, dimensions=768)
+            # Matched by `index`, not array position — the response's own
+            # ordering isn't documented as guaranteed to match input order.
+            by_index = {datum["index"]: datum["embedding"] for datum in response["data"]}
+            embeddings = [by_index[i] for i in range(len(problem_statements))]
+        for statement_text, embedding in zip(problem_statements, embeddings):
+            ProblemStatement.objects.create(
+                product=product, statement_text=statement_text, embedding=embedding
+            )
 
         return Response(AdminProductSerializer(product).data, status=201)
 
