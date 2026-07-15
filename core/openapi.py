@@ -47,6 +47,7 @@ _DEFAULT_DESCRIPTIONS = {
     409: "Conflicts with an existing resource — e.g. this already exists, use PATCH instead.",
     422: "The request is well-formed but fails a validation or business rule "
     "(e.g. budget allocations must sum to 100).",
+    502: "The AI service failed or is unreachable.",
 }
 
 

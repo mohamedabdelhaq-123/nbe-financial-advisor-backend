@@ -34,6 +34,22 @@ class ConflictError(APIException):
     default_code = "conflict"
 
 
+class AIServiceUnavailable(APIException):
+    """
+    502 — for endpoints that call services/ai_service.py synchronously in
+    the request/response cycle (e.g. GET /recommendations) rather than
+    buffering the call behind a Celery task the way chat/statement-ingestion
+    do. Those async flows record an ai_service failure as
+    failure_reason/chat_error instead; this is for the ones with no such
+    buffer, where an AIServiceError has to become the HTTP response itself.
+    DRF has no built-in exception for 502.
+    """
+
+    status_code = 502
+    default_detail = "The AI service failed or is unreachable."
+    default_code = "ai_service_unavailable"
+
+
 class BusinessRuleError(DRFValidationError):
     """
     Raise this instead of a plain DRFValidationError when a business-rule

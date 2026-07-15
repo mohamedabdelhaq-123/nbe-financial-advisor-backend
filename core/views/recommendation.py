@@ -6,6 +6,7 @@ from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.exceptions import AIServiceUnavailable
 from core.models import Product, Reaction, RecommendationLog
 from core.openapi import error_responses
 from core.serializers.feedback import ReactionSerializer
@@ -14,6 +15,7 @@ from core.serializers.recommendation import (
     RecommendationItemSerializer,
 )
 from services import ai_service
+from services.ai_service import AIServiceError
 
 
 class RecommendationsView(APIView):
@@ -26,9 +28,14 @@ class RecommendationsView(APIView):
     `POST /recommendations/{recommendation_id}/feedback`, and that endpoint
     needs a logged instance to attach the reaction to.
 
-    `q` is **not** a queryset filter — it feeds an in-memory keyword-overlap
-    ranking over the full active-product list rather than narrowing a
-    database query, so it can't be expressed as a django-filter field.
+    `q` is **not** a queryset filter — matching happens in
+    services/ai_service.py's match_recommendations() (a real
+    /internal/recommendations/match call, or an in-process mock), which
+    returns product ids for this view to resolve, so it can't be expressed
+    as a django-filter field. Unlike chat/statement-ingestion, this call
+    happens synchronously in the request/response cycle rather than behind a
+    Celery task — a failure here becomes a 502 (AIServiceUnavailable)
+    directly, not a buffered failure_reason/chat_error.
     """
 
     @extend_schema(
@@ -37,21 +44,35 @@ class RecommendationsView(APIView):
                 "q", OpenApiTypes.STR, required=False, description="Free-text query for matching"
             )
         ],
-        responses={200: RecommendationItemSerializer(many=True)},
+        responses={200: RecommendationItemSerializer(many=True), **error_responses(502)},
     )
     def get(self, request):
         query = request.query_params.get("q", "").strip()
-        active_products = list(Product.objects.filter(is_active=True))
-        matches = ai_service.match_recommendations(query, active_products)
+        try:
+            response = ai_service.match_recommendations(str(request.user.id), query)
+        except AIServiceError as exc:
+            raise AIServiceUnavailable(str(exc)) from exc
+
+        # match_recommendations only returns product_id — resolve back to
+        # Product rows here (is_active=True, same as before), preserving the
+        # AI service's ranking order.
+        products_by_id = {
+            str(p.id): p
+            for p in Product.objects.filter(
+                id__in=[m["product_id"] for m in response["matches"]], is_active=True
+            )
+        }
 
         results = []
-        for match in matches:
-            product = match["product"]
+        for match in response["matches"]:
+            product = products_by_id.get(match["product_id"])
+            if product is None:
+                continue
             RecommendationLog.objects.create(
                 user=request.user,
                 product=product,
                 matched_query=query or None,
-                similarity_score=Decimal(str(match["similarity_score"])),
+                similarity_score=Decimal(str(match["similarity"])),
             )
             results.append(
                 {
@@ -62,7 +83,7 @@ class RecommendationsView(APIView):
                     "tags": product.tags,
                     "features": product.features,
                     "external_link": product.external_link,
-                    "similarity_score": match["similarity_score"],
+                    "similarity_score": match["similarity"],
                 }
             )
 

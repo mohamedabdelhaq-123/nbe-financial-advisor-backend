@@ -10,33 +10,66 @@ inline-request producer sharing a pipe by convention only.
 
 from celery import shared_task
 
-from core.models import Budget, Conversation, Message
+from core.models import Conversation, Message
 from services import ai_service, event_bus
+from services.ai_service import AIServiceError
 
 
 @shared_task
 def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
     """
     Runs in the Celery worker — re-fetches by id (task args must be JSON-
-    serializable). Calls ai_service.chat() (unchanged mock), persists the
-    assistant Message + its references exactly as the old inline code did,
-    then publishes the word-by-word "typing" effect as chat_token events
-    (preserving the old _sse_stream()'s UX, now over the persistent
-    connection instead of a per-request fake stream) followed by one
-    terminal chat_message event carrying the same fields
-    MessageDoneEventSerializer already documents, plus conversation_id since
-    the connection is multiplexed across all of a user's conversations.
+    serializable). Consumes ai_service.stream_chat()'s {"event", "data"}
+    envelope: each "token" event is forwarded immediately as a chat_token SSE
+    event (a genuine relay of the AI service's own stream, mock or real —
+    see services/ai_service.py), then the terminal "done" event's content is
+    persisted as the assistant Message (+ its references) exactly as the old
+    inline code did, and published as one terminal chat_message event
+    carrying the same fields MessageDoneEventSerializer already documents,
+    plus conversation_id since the connection is multiplexed across all of a
+    user's conversations. An "error" event — or a request-level failure —
+    publishes chat_error instead, with no assistant Message persisted.
+
+    Context-gathering (e.g. the user's Budget, for a possible
+    allocation_slider widget — Architectural_Guidelines.md §7: chat never
+    writes to Budget directly, only reads it) is each implementation's own
+    concern now, not fetched here: the mock branch reads it in-process, the
+    real ai-service reads it via its own read-only DB connection.
     """
     conversation = Conversation.objects.select_related("user").get(id=conversation_id)
     user_message = Message.objects.get(id=user_message_id)
 
-    # The assistant's power to change data is deliberately narrow
-    # (Architectural_Guidelines.md §7) — chat never writes to Budget
-    # directly here, it only reads the user's existing plan (if any) to
-    # ground a possible allocation_slider widget; any actual edit still
-    # goes through PATCH /budget once the user confirms inside that widget.
-    budget = Budget.objects.filter(user=conversation.user).prefetch_related("allocations").first()
-    result = ai_service.chat(user_message.content, budget=budget)
+    result = None
+    try:
+        for envelope in ai_service.stream_chat(
+            str(conversation.id), str(conversation.user_id), user_message.content
+        ):
+            event = envelope["event"]
+            if event == "token":
+                event_bus.publish_user_event(
+                    conversation.user_id,
+                    "chat_token",
+                    {"conversation_id": str(conversation.id), "data": envelope["data"]},
+                )
+            elif event == "done":
+                result = envelope["data"]
+                break
+            elif event == "error":
+                raise AIServiceError(envelope["data"].get("message", "AI service chat failed"))
+        if result is None:
+            # The generator ended without a done/error event — stream_chat()
+            # itself already guards against this for the real branch, but
+            # this is the backstop that keeps result["content"] below from
+            # raising an unhandled TypeError on any implementation that
+            # doesn't.
+            raise AIServiceError("AI service chat ended without a result")
+    except AIServiceError as exc:
+        event_bus.publish_user_event(
+            conversation.user_id,
+            "chat_error",
+            {"conversation_id": str(conversation.id), "message": str(exc)},
+        )
+        return
 
     assistant_message = Message.objects.create(
         conversation=conversation,
@@ -52,13 +85,6 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
     # when *this* row is saved — creating the Message row above doesn't
     # touch it automatically, so it's bumped explicitly here.
     conversation.save()
-
-    for word in result["content"].split(" "):
-        event_bus.publish_user_event(
-            conversation.user_id,
-            "chat_token",
-            {"conversation_id": str(conversation.id), "data": word + " "},
-        )
 
     event_bus.publish_user_event(
         conversation.user_id,

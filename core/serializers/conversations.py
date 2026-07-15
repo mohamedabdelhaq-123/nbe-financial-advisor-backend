@@ -80,6 +80,20 @@ class MessageDoneEventSerializer(serializers.Serializer):
     references = MessageReferenceSerializer(many=True)
 
 
+class ChatErrorEventSerializer(serializers.Serializer):
+    """
+    Documents the `data` payload of the `chat_error` SSE event — published by
+    generate_chat_reply (core/tasks/conversations.py) in place of
+    chat_message when the AI service's reply fails (a stream-level `error`
+    event, or the request itself failing). No assistant Message is persisted
+    when this fires. Same documentation-only role as MessageDoneEventSerializer
+    above — not a real DRF response body, EventStreamView's is text/event-stream.
+    """
+
+    conversation_id = serializers.UUIDField()
+    message = serializers.CharField()
+
+
 class ConversationAttachmentResponseSerializer(serializers.Serializer):
     statement_id = serializers.UUIDField()
     status = serializers.CharField()

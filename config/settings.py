@@ -41,6 +41,11 @@ SEAWEED_SECRET_KEY = env.str("SEAWEED_SECRET_KEY")
 AI_SERVICE_TOKEN = env.str("AI_SERVICE_TOKEN")
 # Has a default; consumed by core/ask_view.py.
 AI_SERVICE_URL = env.str("AI_SERVICE_URL", "http://ai-service:8001")
+# Toggles services/ai_service.py's dispatch functions between an in-process
+# mock and a real HTTP call to AI_SERVICE_URL — same pattern as the AI
+# service's own USE_MOCK_LLM/USE_MOCK_MINERU. Defaults on so dev/test runs
+# never need a live ai-service; flip to 0 once one is reachable.
+USE_MOCK_AI_SERVICE = env.bool("USE_MOCK_AI_SERVICE", True)
 
 
 # Quick-start development settings - unsuitable for production

@@ -18,9 +18,8 @@ from core.models import (
     StatementFile,
     StatementNormalized,
     StatementOcrResult,
-    Transaction,
 )
-from services import ai_service, event_bus, file_storage
+from services import ai_service, event_bus
 
 
 def run_extraction_phase(statement: StatementFile) -> None:
@@ -33,7 +32,7 @@ def run_extraction_phase(statement: StatementFile) -> None:
     statement.save(update_fields=["is_processing"])
 
     try:
-        result = ai_service.normalize(statement)
+        result = ai_service.process_statement(str(statement.id))
     except Exception as exc:
         statement.failure_reason = str(exc)
         statement.failed_phase = StatementFile.PHASE_EXTRACTION
@@ -43,9 +42,9 @@ def run_extraction_phase(statement: StatementFile) -> None:
 
     StatementOcrResult.objects.create(
         statement=statement,
-        seaweed_file_id=file_storage.ocr_artifact_key(statement.user_id, statement.id),
-        ocr_engine=result["ocr"]["engine"],
-        confidence_score=Decimal(str(result["ocr"]["confidence_score"])),
+        seaweed_file_id=result["prefix"],
+        ocr_engine=result["ocr_engine"],
+        confidence_score=Decimal(str(result["confidence_score"])),
     )
 
     statement.status = StatementFile.STATUS_EXTRACTED
@@ -61,23 +60,23 @@ def run_normalization_phase(statement: StatementFile) -> None:
     proposed transaction array to normalized_json for the user to review —
     nothing is written to the ledger here; that only happens via
     POST /statements/{id}/transactions once the user approves the whole
-    batch (PLAN.md). duplicate_of is still computed here for display, but is
-    re-checked at approval time rather than trusted, since time may have
-    passed since this ran.
+    batch (PLAN.md). `duplicate_of` on each transaction is computed by the AI
+    service itself (both mock and real — see services/ai_service.py), not
+    re-derived here; it's a preview only, re-checked at approval time rather
+    than trusted, since time may have passed since this ran.
 
-    Both this and run_extraction_phase() call ai_service.normalize()
-    independently rather than sharing one result — the mock bundles OCR +
-    LLM output in one deterministic, seeded-by-statement-id call (see its
-    docstring), so a second call for the same statement reproduces the same
-    data. This mirrors the two separate calls a real integration would make
-    (Pipeline.md §2: MinerU and the Normalization Agent are distinct steps)
-    without requiring state to be threaded between two separate task runs.
+    Unlike run_extraction_phase() above, this calls ai_service.normalize_statement()
+    against the specific StatementOcrResult that phase just created — the two
+    real AI-service endpoints (/internal/ingestion/process,
+    .../normalize) are genuinely separate steps threaded by ocr_result_id,
+    not two calls sharing one fabricated result.
     """
     statement.is_processing = True
     statement.save(update_fields=["is_processing"])
 
+    ocr_result = statement.latest_ocr_run
     try:
-        result = ai_service.normalize(statement)
+        result = ai_service.normalize_statement(str(ocr_result.id))
     except Exception as exc:
         statement.failure_reason = str(exc)
         statement.failed_phase = StatementFile.PHASE_NORMALIZATION
@@ -85,35 +84,22 @@ def run_normalization_phase(statement: StatementFile) -> None:
         statement.save(update_fields=["failure_reason", "failed_phase", "is_processing"])
         return
 
-    normalized = result["normalized"]
+    normalized = result["normalized_json"]
 
     if statement.account is None:
         # System_Architecture.md §5: "Normalization Agent maps columns...".
         # When the client didn't supply account_id upfront, the Normalization
-        # Agent may resolve or create one — mocked here as a get_or_create
-        # keyed on the (mock) bank_name + account_hint the AI service "found".
+        # Agent may resolve or create one — keyed on the bank_name +
+        # account_hint the AI service found.
         statement.account, _ = BankAccount.objects.get_or_create(
             user=statement.user,
             bank_name=normalized["bank_name"],
             masked_account_number=normalized["account_hint"],
         )
 
-    transaction_dates = []
-    for txn in normalized["transactions"]:
-        transaction_date = date.fromisoformat(txn["transaction_date"])
-        amount = Decimal(str(txn["amount"]))
-        # Preview-only duplicate check (System_Architecture.md §8) — informs
-        # the user before they approve; POST /statements/{id}/transactions
-        # re-runs this same lookup at commit time rather than trusting it.
-        existing = Transaction.objects.filter(
-            user=statement.user,
-            account=statement.account,
-            transaction_date=transaction_date,
-            amount=amount,
-            merchant_raw=txn["merchant_raw"],
-        ).first()
-        txn["duplicate_of"] = str(existing.id) if existing is not None else None
-        transaction_dates.append(transaction_date)
+    transaction_dates = [
+        date.fromisoformat(txn["transaction_date"]) for txn in normalized["transactions"]
+    ]
 
     StatementNormalized.objects.create(
         statement=statement,
@@ -214,7 +200,7 @@ def process_statement_pipeline(statement_id: str, target_status: str) -> None:
     a mid-cascade failure is a valid outcome, not something this re-raises).
 
     The outer try/except hardens a pre-existing gap: run_extraction_phase()/
-    run_normalization_phase() only ever catch ai_service.normalize()'s own
+    run_normalization_phase() only ever catch ai_service's own call
     exceptions — anything else raised in the loop (e.g. a DB error saving
     StatementOcrResult) used to 500 the request and leave is_processing
     stuck True forever, with the request/response cycle there to at least
