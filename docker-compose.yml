@@ -37,6 +37,13 @@ services:
       POSTGRES_PORT: 5432
       DJANGO_DEBUG: ${DJANGO_DEBUG:-1}
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+      # ai-service stays host-run in dev (not a compose service) — this
+      # points the container at it via Docker's host gateway, since
+      # "localhost" from inside a container means the container itself, not
+      # the host. Set USE_MOCK_AI_SERVICE=0 once ai-service is actually up
+      # on the host at :8001; it defaults on otherwise.
+      AI_SERVICE_URL: http://host.docker.internal:8001
+      USE_MOCK_AI_SERVICE: ${USE_MOCK_AI_SERVICE:-1}
       # Consumed by core/migrations/0009_grant_ai_readonly_role.py to
       # provision/refresh the ai_readonly role's password.
       AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-ai_readonly_pass}
@@ -50,6 +57,10 @@ services:
       - /app/.venv  # or wherever your venv/site-packages live, see note below
     ports:
       - "8000:8000"
+    # Required on Linux for host.docker.internal to resolve above (Docker
+    # Desktop on Mac/Windows provides this mapping automatically).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -72,6 +83,9 @@ services:
       POSTGRES_PORT: 5432
       DJANGO_DEBUG: ${DJANGO_DEBUG:-1}
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+      # See backend's AI_SERVICE_URL/USE_MOCK_AI_SERVICE above — same reasoning.
+      AI_SERVICE_URL: http://host.docker.internal:8001
+      USE_MOCK_AI_SERVICE: ${USE_MOCK_AI_SERVICE:-1}
       AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-ai_readonly_pass}
       SEAWEED_S3_ENDPOINT: ${SEAWEED_S3_ENDPOINT:-http://seaweedfs:8333}
       SEAWEED_ACCESS_KEY: ${SEAWEED_ACCESS_KEY:-dev-seaweed-key}
@@ -90,6 +104,8 @@ services:
       timeout: 10s
       retries: 5
       start_period: 10s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
