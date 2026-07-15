@@ -49,8 +49,11 @@ class EventStreamView(APIView):
             200: OpenApiResponse(
                 description=(
                     "text/event-stream — a persistent connection relaying "
-                    "statement_status, chat_token, and chat_message events "
-                    "(named SSE `event:` types) as they occur."
+                    "statement_status, chat_token, chat_message, and chat_error "
+                    "events (named SSE `event:` types) as they occur. chat_error "
+                    "(core.serializers.conversations.ChatErrorEventSerializer) "
+                    "fires instead of chat_message when the AI service's reply "
+                    "fails — no assistant message is persisted in that case."
                 )
             )
         }
