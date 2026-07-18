@@ -19,7 +19,7 @@ from core.models import (
     StatementNormalized,
     StatementOcrResult,
 )
-from services import ai_service, event_bus
+from services import ai_service, event_bus, notification_service
 
 
 def run_extraction_phase(statement: StatementFile) -> None:
@@ -136,6 +136,13 @@ def run_normalization_phase(statement: StatementFile) -> None:
             "start_transaction_date",
             "last_transaction_date",
         ]
+    )
+
+    notification_service.notify(
+        statement.user,
+        "Your statement is ready to review",
+        f"{len(normalized['transactions'])} transaction(s) were found in your uploaded "
+        "statement and are ready to review in the app.",
     )
 
 

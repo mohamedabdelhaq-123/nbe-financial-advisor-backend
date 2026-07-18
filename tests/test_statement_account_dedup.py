@@ -17,6 +17,7 @@ duplicate BankAccount.
 """
 
 import pytest
+from django.core import mail
 
 import core.tasks.statements as statements_task_module
 from core.models import BankAccount, StatementFile, StatementOcrResult, User
@@ -114,3 +115,23 @@ def test_statement_with_preselected_account_is_left_untouched(monkeypatch, user)
     stmt.refresh_from_db()
     assert stmt.account_id == account.id
     assert not BankAccount.objects.filter(bank_name="Some Other Bank").exists()
+
+
+def test_normalization_emails_the_user_that_the_statement_is_ready(monkeypatch, user):
+    """PLAN.md Checkpoint 6 — a finished statement upload now also emails
+    the user, not just SSE (this call has no fake_redis fixture, so it
+    incidentally also proves run_normalization_phase itself never touches
+    event_bus directly — only the outer process_statement_pipeline task
+    does)."""
+    monkeypatch.setattr(
+        statements_task_module.ai_service,
+        "normalize_statement",
+        _fake_normalize("National Bank of Egypt", "****aaaa"),
+    )
+    stmt = _make_statement(user, "checksum-6")
+
+    statements_task_module.run_normalization_phase(stmt)
+
+    assert len(mail.outbox) == 1
+    assert mail.outbox[0].to == [user.email]
+    assert mail.outbox[0].subject == "Your statement is ready to review"

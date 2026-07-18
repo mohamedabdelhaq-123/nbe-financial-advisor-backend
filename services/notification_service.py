@@ -32,3 +32,18 @@ def send_email(to: str, subject: str, body: str) -> None:
         # unreachable, DNS failure, connection refused/reset) surfaces as a
         # socket-level OSError, not smtplib's own exception hierarchy.
         raise NotificationServiceError(f"Failed to send email to {to}: {exc}") from exc
+
+
+def notify(user, subject: str, body: str) -> None:
+    """
+    Best-effort email to a core.User — every "let the user know something
+    happened" call site (budget changes, detected anomalies, a finished
+    statement upload: PLAN.md Checkpoint 6) wants the exact same "don't fail
+    the parent action over a notification that couldn't be sent" behavior
+    that core/tasks/bank_sync.py implemented inline before this existed.
+    Collected here once instead of repeating the try/except at every site.
+    """
+    try:
+        send_email(user.email, subject, body)
+    except NotificationServiceError:
+        pass

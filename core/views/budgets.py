@@ -33,7 +33,7 @@ from core.serializers.budgets import (
     StarterTemplateSerializer,
 )
 from core.views.aggregations import compute_stability_score
-from services import file_storage
+from services import file_storage, notification_service
 
 
 def _months_elapsed(start_date, end_date):
@@ -227,6 +227,15 @@ class BudgetView(APIView):
             )
 
         budget.refresh_from_db()
+
+        changed_via = data.get("changed_via", "dashboard")
+        notification_service.notify(
+            request.user,
+            "Your budget plan was updated",
+            f"Your budget plan '{budget.name}' was just changed via {changed_via}. "
+            "Open the app to review the new allocations.",
+        )
+
         return Response(_serialize_budget(budget))
 
 

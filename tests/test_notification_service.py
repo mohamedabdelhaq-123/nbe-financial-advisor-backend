@@ -31,3 +31,26 @@ def test_send_email_raises_notification_service_error_on_smtp_failure(monkeypatc
 
     with pytest.raises(notification_service.NotificationServiceError):
         notification_service.send_email("customer@example.com", "Your code", "123456")
+
+
+class _FakeUser:
+    email = "customer@example.com"
+
+
+def test_notify_happy_path_sends_the_email(db):
+    notification_service.notify(_FakeUser(), "Subject", "Body")
+
+    assert len(mail.outbox) == 1
+    assert mail.outbox[0].to == ["customer@example.com"]
+    assert mail.outbox[0].subject == "Subject"
+
+
+def test_notify_swallows_send_failures(monkeypatch):
+    def _raise(*args, **kwargs):
+        raise SMTPException("connection refused")
+
+    monkeypatch.setattr(notification_service, "send_mail", _raise)
+
+    # Doesn't raise — this is the whole point of notify() vs. send_email().
+    notification_service.notify(_FakeUser(), "Subject", "Body")
+    assert len(mail.outbox) == 0
