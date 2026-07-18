@@ -1,3 +1,4 @@
+import calendar
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -514,15 +515,55 @@ class GoalView(APIView):
         return Response(status=204)
 
 
-def _month_totals(user, year, month):
-    """(spend, inflow) for a user's transactions in a given calendar month —
-    shared by DashboardView's current- and previous-month metrics (PLAN.md
-    Checkpoint D). Computed live from Transaction, same as the pre-existing
-    current-month figures — not MonthlySummary, which DashboardView doesn't
-    read from today."""
-    txns = Transaction.objects.filter(
-        user=user, transaction_date__year=year, transaction_date__month=month
-    )
+_DASHBOARD_PERIODS = ("this_month", "last_month", "last_3_months", "this_year")
+
+
+def _resolve_window(period):
+    """(start, end, prev_start, prev_end) for a GET /dashboard `period` value.
+
+    `end` is always today (these are all "up to now" windows, not fixed
+    historical ranges). `prev_start`/`prev_end` is the immediately preceding
+    span of the *same length in days* as (start, end) — this is what lets
+    `_percentage_change()` below generalize from "this month vs last month"
+    to any window length without changing its own logic at all.
+    """
+    today = date.today()
+    if period == "last_month":
+        if today.month == 1:
+            year, month = today.year - 1, 12
+        else:
+            year, month = today.year, today.month - 1
+        start = date(year, month, 1)
+        end = date(year, month, calendar.monthrange(year, month)[1])
+    elif period == "last_3_months":
+        month = today.month - 3
+        year = today.year
+        while month <= 0:
+            month += 12
+            year -= 1
+        start = date(year, month, 1)
+        end = today
+    elif period == "this_year":
+        start = date(today.year, 1, 1)
+        end = today
+    else:  # "this_month" — also the default when no period is given
+        start = date(today.year, today.month, 1)
+        end = today
+
+    length_days = (end - start).days + 1
+    prev_end = start - timedelta(days=1)
+    prev_start = prev_end - timedelta(days=length_days - 1)
+    return start, end, prev_start, prev_end
+
+
+def _window_totals(user, start, end, account=None):
+    """(spend, inflow) for a user's transactions in [start, end], optionally
+    restricted to a single BankAccount — shared by DashboardView's current-
+    and preceding-window metrics. Computed live from Transaction, same as
+    the pre-existing month-based figures this replaces."""
+    txns = Transaction.objects.filter(user=user, transaction_date__range=(start, end))
+    if account is not None:
+        txns = txns.filter(account=account)
     spend = txns.filter(transaction_type__in=["debit", "fee"]).aggregate(t=Sum("amount"))[
         "t"
     ] or Decimal("0")
@@ -532,7 +573,7 @@ def _month_totals(user, year, month):
 
 def _percentage_change(current, previous):
     """(current - previous) / abs(previous) * 100 — explicit None (not a
-    crash or a misleading infinity) when there's no previous-month figure to
+    crash or a misleading infinity) when there's no previous-window figure to
     compare against."""
     if not previous:
         return None
@@ -542,20 +583,64 @@ def _percentage_change(current, previous):
 class DashboardView(APIView):
     """
     Single combined read for the main dashboard screen: budget plan
-    summary, goal progress, per-category allocation usage, month-over-month
-    spend/inflow metrics, and net worth — one call instead of the frontend
-    stitching together five separate ones.
+    summary, goal progress, per-category allocation usage, spend/inflow
+    metrics (vs. the preceding equal-length window), and net worth — one
+    call instead of the frontend stitching together five separate ones.
+
+    `period` (`this_month` | `last_month` | `last_3_months` | `this_year`,
+    default `this_month`) selects the window every metric below is computed
+    over. `account_id`, when given, restricts every metric to that one
+    account's transactions/balance instead of all of the user's accounts
+    combined — 404 if it doesn't belong to the current user.
 
     Always returns 200, even for a brand new user with no budget plan yet:
     `has_plan` is `false` and every plan-dependent field falls back to a
     zeroed/empty shape rather than 404ing, so the frontend can render its
     real empty state directly from this same response instead of branching
     on an error. Goal and budget are fetched independently of each other —
-    a user can have one without the other.
+    a user can have one without the other. `period`/`account_id` are still
+    validated in this branch (422/404 apply regardless of plan state) since
+    net worth is real data either way.
     """
 
-    @extend_schema(responses={200: DashboardResponseSerializer})
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "period",
+                OpenApiTypes.STR,
+                required=False,
+                enum=list(_DASHBOARD_PERIODS),
+                description="Window every metric is computed over. Defaults to this_month.",
+            ),
+            OpenApiParameter(
+                "account_id",
+                OpenApiTypes.UUID,
+                required=False,
+                description="Restrict every metric to this one account.",
+            ),
+        ],
+        responses={200: DashboardResponseSerializer, **error_responses(404, 422)},
+    )
     def get(self, request):
+        period = request.query_params.get("period", "this_month")
+        if period not in _DASHBOARD_PERIODS:
+            raise ValidationError({"period": f"Must be one of {list(_DASHBOARD_PERIODS)}."})
+
+        account = None
+        account_id = request.query_params.get("account_id")
+        if account_id:
+            account = get_object_or_404(BankAccount, id=account_id, user=request.user)
+
+        start, end, prev_start, prev_end = _resolve_window(period)
+
+        if account is not None:
+            total_net_worth = account.current_balance or Decimal("0")
+        else:
+            accounts = BankAccount.objects.filter(user=request.user, is_active=True)
+            total_net_worth = sum(
+                (a.current_balance or Decimal("0") for a in accounts), Decimal("0")
+            )
+
         goal = Goal.objects.filter(user=request.user).first()
         budget = Budget.objects.filter(user=request.user).prefetch_related("allocations").first()
         if budget is None:
@@ -576,38 +661,25 @@ class DashboardView(APIView):
                         "inflow_change_percentage": None,
                     },
                     "net_worth": {
-                        "total_across_accounts": Decimal("0"),
+                        "total_across_accounts": total_net_worth,
                         "as_of_date": date.today(),
                     },
                     "has_plan": False,
                 }
             )
 
-        today = date.today()
-        month_txns = Transaction.objects.filter(
-            user=request.user,
-            transaction_date__year=today.year,
-            transaction_date__month=today.month,
+        current_spend, current_inflow = _window_totals(request.user, start, end, account)
+        previous_spend, previous_inflow = _window_totals(
+            request.user, prev_start, prev_end, account
         )
-        current_month_spend = month_txns.filter(transaction_type__in=["debit", "fee"]).aggregate(
-            t=Sum("amount")
-        )["t"] or Decimal("0")
-        current_month_inflow = month_txns.filter(transaction_type="credit").aggregate(
-            t=Sum("amount")
-        )["t"] or Decimal("0")
 
-        # Month-over-month differential metrics (PLAN.md Checkpoint D).
-        if today.month == 1:
-            prev_year, prev_month = today.year - 1, 12
-        else:
-            prev_year, prev_month = today.year, today.month - 1
-        previous_month_spend, previous_month_inflow = _month_totals(
-            request.user, prev_year, prev_month
-        )
+        window_txns = Transaction.objects.filter(user=request.user, transaction_date__range=(start, end))
+        if account is not None:
+            window_txns = window_txns.filter(account=account)
 
         allocations_summary = []
         for alloc in budget.allocations.all():
-            actual = month_txns.filter(
+            actual = window_txns.filter(
                 category=alloc.category, transaction_type__in=["debit", "fee"]
             ).aggregate(t=Sum("amount"))["t"] or Decimal("0")
             percentage_used = (
@@ -621,9 +693,6 @@ class DashboardView(APIView):
                 }
             )
 
-        accounts = BankAccount.objects.filter(user=request.user, is_active=True)
-        total_net_worth = sum((a.current_balance or Decimal("0") for a in accounts), Decimal("0"))
-
         return Response(
             {
                 "budget": {"id": str(budget.id), "name": budget.name, "status": budget.status},
@@ -631,18 +700,16 @@ class DashboardView(APIView):
                 "allocations_summary": allocations_summary,
                 "metrics": {
                     "income_stability_score": compute_stability_score(request.user),
-                    "current_month_spend": current_month_spend,
-                    "current_month_inflow": current_month_inflow,
-                    "previous_month_spend": previous_month_spend,
-                    "previous_month_inflow": previous_month_inflow,
-                    "spend_change_percentage": _percentage_change(
-                        current_month_spend, previous_month_spend
-                    ),
+                    "current_month_spend": current_spend,
+                    "current_month_inflow": current_inflow,
+                    "previous_month_spend": previous_spend,
+                    "previous_month_inflow": previous_inflow,
+                    "spend_change_percentage": _percentage_change(current_spend, previous_spend),
                     "inflow_change_percentage": _percentage_change(
-                        current_month_inflow, previous_month_inflow
+                        current_inflow, previous_inflow
                     ),
                 },
-                "net_worth": {"total_across_accounts": total_net_worth, "as_of_date": today},
+                "net_worth": {"total_across_accounts": total_net_worth, "as_of_date": end},
                 "has_plan": True,
             }
         )
