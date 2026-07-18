@@ -106,6 +106,10 @@ class User(AbstractBaseUser, PermissionsMixin):
     updated_at = models.DateTimeField(auto_now=True)
 
     is_staff = models.BooleanField(default=False)  # Django /admin/ site gate only — see docstring
+    # Informational only — nothing gates login on this today (PLAN.md
+    # Checkpoint 5). Set True by EmailVerificationConfirmView once the user
+    # clicks the link from their signup verification email.
+    email_verified = models.BooleanField(default=False)
 
     objects = UserManager()
 

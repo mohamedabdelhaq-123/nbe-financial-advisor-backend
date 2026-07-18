@@ -81,3 +81,29 @@ class BankLoginCallbackSerializer(serializers.Serializer):
 
     code = serializers.CharField()
     state = serializers.CharField()
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """POST /auth/password-reset/request body. Always answered with a
+    generic 202 regardless of whether `email` matches a real account (same
+    enumeration-avoidance reasoning as LoginSerializer's generic error)."""
+
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """POST /auth/password-reset/confirm body — `user_id`/`token` come from
+    the link emailed by the request step above."""
+
+    user_id = serializers.UUIDField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, min_length=8)
+
+
+class EmailVerificationConfirmSerializer(serializers.Serializer):
+    """POST /auth/verify-email/confirm body — `user_id`/`token` come from
+    the link emailed on signup (or re-sent via
+    POST /auth/verify-email/request)."""
+
+    user_id = serializers.UUIDField()
+    token = serializers.CharField()

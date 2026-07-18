@@ -10,21 +10,26 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from core.exceptions import BusinessRuleError
+from core.auth_tokens import email_verification_token_generator, password_reset_token_generator
+from core.exceptions import BusinessRuleError, NotificationServiceUnavailable
 from core.models import BankConnection, User
 from core.openapi import error_responses
 from core.serializers.auth import (
     BankLoginCallbackSerializer,
     BankLoginInitiateResponseSerializer,
     BankLoginInitiateSerializer,
+    EmailVerificationConfirmSerializer,
     LoginSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
     RefreshResponseSerializer,
     SignupSerializer,
     TokenPairResponseSerializer,
 )
-from services import bank_login_states
+from services import bank_login_states, notification_service
 from services.bank_connectors import BankConnectorError, get_connector
 from services.bank_connectors.sync import apply_synced_accounts
 
@@ -67,10 +72,34 @@ def _token_pair_response(user, status_code):
     return response
 
 
+def _send_verification_email(user):
+    """
+    Best-effort — same "don't fail the parent action over a notification"
+    pattern as core/tasks/bank_sync.py's "new transactions synced" email.
+    Signup succeeds (and email verification remains a no-op gate on login,
+    PLAN.md Checkpoint 5) even if this send fails.
+    """
+    token = email_verification_token_generator.make_token(user)
+    try:
+        notification_service.send_email(
+            user.email,
+            "Verify your email",
+            "Confirm your email address by providing the following to the app:\n\n"
+            f"user_id: {user.id}\n"
+            f"token: {token}\n\n"
+            "This link expires in a few days.",
+        )
+    except notification_service.NotificationServiceError:
+        pass
+
+
 class SignupView(APIView):
     """
-    Create a new end-user account and log them in immediately — there's no
-    separate email-verification step before the account is usable.
+    Create a new end-user account and log them in immediately — email
+    verification (PLAN.md Checkpoint 5) doesn't gate login or usability at
+    all today; a verification email is sent best-effort in the background,
+    and `email_verified` is purely informational until/unless a future
+    change decides to gate something on it.
 
     On success, returns an `access_token` (send it as
     `Authorization: Bearer <access_token>` on every subsequent request) and
@@ -90,6 +119,7 @@ class SignupView(APIView):
         serializer = SignupSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+        _send_verification_email(user)
         return _token_pair_response(user, status.HTTP_201_CREATED)
 
 
@@ -345,3 +375,158 @@ class BankLoginCallbackView(APIView):
             user = connection.user
 
         return _token_pair_response(user, status.HTTP_201_CREATED)
+
+
+def _blacklist_all_outstanding_tokens(user):
+    """
+    Invalidates every refresh token ever issued to this user, not just the
+    one in the current request's cookie (LogoutView only blacklists that
+    one) — a password reset should end every other session too, in case the
+    password was compromised and a stale refresh token is still live
+    somewhere.
+    """
+    for outstanding in OutstandingToken.objects.filter(user=user):
+        BlacklistedToken.objects.get_or_create(token=outstanding)
+
+
+class PasswordResetRequestView(APIView):
+    """
+    Start a password reset for a local (email+password) account. Always
+    responds 202 regardless of whether `email` matches a real account —
+    same enumeration-avoidance reasoning as LoginView's generic error
+    message. If it does match, emails a one-time reset link (best-effort;
+    see PasswordResetConfirmView for what that link contains).
+
+    Not for AdminUser or bank-linked accounts — see core/auth_tokens.py and
+    PLAN.md Checkpoint 5's scope note.
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request=PasswordResetRequestSerializer,
+        responses={202: None, **error_responses(422)},
+    )
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = User.objects.filter(email=serializer.validated_data["email"]).first()
+        if user is not None:
+            token = password_reset_token_generator.make_token(user)
+            try:
+                notification_service.send_email(
+                    user.email,
+                    "Reset your password",
+                    "Reset your password by providing the following to the app:\n\n"
+                    f"user_id: {user.id}\n"
+                    f"token: {token}\n\n"
+                    "If you didn't request this, you can ignore this email.",
+                )
+            except notification_service.NotificationServiceError:
+                # Same reasoning as every other best-effort send in this
+                # file — and doubly so here: a visible failure would also
+                # leak whether `email` matched a real account.
+                pass
+        return Response(status=status.HTTP_202_ACCEPTED)
+
+
+class PasswordResetConfirmView(APIView):
+    """
+    Complete a password reset given the `user_id`/`token` from the email
+    PasswordResetRequestView sent. The token is single-use in effect (not
+    by row-deletion): it's a hash over the user's current password, so
+    set_password() below changes the very state the token was hashed
+    against, and immediately invalidates it (and any other outstanding
+    reset token for this user) without a database row to track.
+
+    Also blacklists every outstanding refresh token for this user, on the
+    theory that a password reset is often prompted by a compromised
+    account — a stale but still-valid refresh token shouldn't survive it.
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request=PasswordResetConfirmSerializer,
+        responses={200: None, **error_responses(422)},
+    )
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        user = User.objects.filter(id=data["user_id"]).first()
+        if user is None or not password_reset_token_generator.check_token(user, data["token"]):
+            # Doesn't distinguish "no such user" from "bad/expired token" —
+            # same enumeration-avoidance reasoning as everywhere else here.
+            raise DRFValidationError({"token": "Invalid or expired token."})
+
+        user.set_password(data["new_password"])
+        user.save(update_fields=["password"])
+        _blacklist_all_outstanding_tokens(user)
+        return Response(status=status.HTTP_200_OK)
+
+
+class EmailVerificationRequestView(APIView):
+    """
+    (Re)send the verification email to the current user — unlike
+    PasswordResetRequestView, this is IsAuthenticated (you can only ever
+    resend to yourself, so there's no email-enumeration surface to protect
+    against here) and a genuine send failure is surfaced as a 502 rather
+    than swallowed, since sending the email is this endpoint's entire job
+    (same reasoning as InternalNotificationEmailView in
+    core/views/webhooks.py).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=None,
+        responses={202: None, **error_responses(401, 502)},
+    )
+    def post(self, request):
+        token = email_verification_token_generator.make_token(request.user)
+        try:
+            notification_service.send_email(
+                request.user.email,
+                "Verify your email",
+                "Confirm your email address by providing the following to the app:\n\n"
+                f"user_id: {request.user.id}\n"
+                f"token: {token}\n\n"
+                "This link expires in a few days.",
+            )
+        except notification_service.NotificationServiceError as exc:
+            raise NotificationServiceUnavailable(str(exc)) from exc
+        return Response(status=status.HTTP_202_ACCEPTED)
+
+
+class EmailVerificationConfirmView(APIView):
+    """
+    Complete email verification given the `user_id`/`token` from the
+    signup (or resend) email. Same stateless-token shape as
+    PasswordResetConfirmView, keyed on `email_verified` instead of
+    `password` (core/auth_tokens.py::EmailVerificationTokenGenerator) — so
+    the token is invalidated by this endpoint's own effect (flipping
+    email_verified to True) with no separate "used tokens" table.
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request=EmailVerificationConfirmSerializer,
+        responses={200: None, **error_responses(422)},
+    )
+    def post(self, request):
+        serializer = EmailVerificationConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        user = User.objects.filter(id=data["user_id"]).first()
+        if user is None or not email_verification_token_generator.check_token(
+            user, data["token"]
+        ):
+            raise DRFValidationError({"token": "Invalid or expired token."})
+
+        user.email_verified = True
+        user.save(update_fields=["email_verified"])
+        return Response(status=status.HTTP_200_OK)

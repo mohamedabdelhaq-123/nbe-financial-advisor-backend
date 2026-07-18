@@ -21,8 +21,12 @@ from core.views.aggregations import (
 from core.views.auth import (
     BankLoginCallbackView,
     BankLoginInitiateView,
+    EmailVerificationConfirmView,
+    EmailVerificationRequestView,
     LoginView,
     LogoutView,
+    PasswordResetConfirmView,
+    PasswordResetRequestView,
     RefreshView,
     SignupView,
 )
@@ -79,6 +83,10 @@ __all__ = [
     "LogoutView",
     "BankLoginInitiateView",
     "BankLoginCallbackView",
+    "PasswordResetRequestView",
+    "PasswordResetConfirmView",
+    "EmailVerificationRequestView",
+    "EmailVerificationConfirmView",
     "MeView",
     "MePreferencesView",
     "MeConsentView",
