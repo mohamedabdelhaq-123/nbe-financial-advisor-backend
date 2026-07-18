@@ -29,6 +29,11 @@ from core.views.budgets import (
     SavingsProgressView,
     StarterTemplatesView,
 )
+from core.views.categories import (
+    AdminCategoryDetailView,
+    AdminCategoryListCreateView,
+    CategoryListView,
+)
 from core.views.conversations import (
     ConversationAttachmentsView,
     ConversationDetailView,
@@ -92,6 +97,9 @@ __all__ = [
     "GoalView",
     "DashboardView",
     "DashboardGoalView",
+    "CategoryListView",
+    "AdminCategoryListCreateView",
+    "AdminCategoryDetailView",
     "ConversationListCreateView",
     "ConversationDetailView",
     "ConversationMessagesView",

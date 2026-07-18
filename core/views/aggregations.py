@@ -265,9 +265,9 @@ class MonthlySummariesView(APIView):
                 "t"
             ] or Decimal("0")
             category_breakdown = {
-                row["category"]: row["total"]
+                row["category__name"]: row["total"]
                 for row in month_qs.exclude(category=None)
-                .values("category")
+                .values("category__name")
                 .annotate(total=Sum("amount"))
             }
             top_merchants = [
@@ -342,7 +342,7 @@ class CategoryBreakdownView(APIView):
 
         rows = list(
             qs.exclude(category=None)
-            .values("category")
+            .values("category__name")
             .annotate(total=Sum("amount"))
             .order_by("-total")
         )
@@ -350,7 +350,7 @@ class CategoryBreakdownView(APIView):
 
         breakdown = [
             {
-                "category": row["category"],
+                "category": row["category__name"],
                 "amount": row["total"],
                 "percentage_of_total": (
                     round(float(row["total"] / grand_total * 100), 2) if grand_total else 0

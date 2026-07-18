@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from core.models import AnomalyFlag, RecurringCharge, SpendingPatternInsight, Transaction
+from core.models import AnomalyFlag, Category, RecurringCharge, SpendingPatternInsight, Transaction
 
 
 class TransactionListSerializer(serializers.ModelSerializer):
@@ -8,6 +8,10 @@ class TransactionListSerializer(serializers.ModelSerializer):
     # to the `_id`-suffixed convention used throughout the Data Shapes docs.
     account_id = serializers.PrimaryKeyRelatedField(source="account", read_only=True)
     statement_id = serializers.PrimaryKeyRelatedField(source="statement", read_only=True)
+    # category is a real FK now (core/models/categories/category.py), but the
+    # API still speaks plain category-name strings — ModelSerializer would
+    # otherwise default this to a PrimaryKeyRelatedField (a UUID).
+    category = serializers.SlugRelatedField(slug_field="name", read_only=True)
 
     class Meta:
         model = Transaction
@@ -53,6 +57,14 @@ class TransactionWriteSerializer(serializers.ModelSerializer):
     never accepted from the client.
     """
 
+    # Manual entry is held to the exact vocabulary (a 400 for an unknown name)
+    # — unlike statement approval's resolve_category(), which is lenient
+    # because it's resolving LLM-guessed text, not a human typing a category
+    # they can see the valid list for.
+    category = serializers.SlugRelatedField(
+        slug_field="name", queryset=Category.objects.all(), required=False, allow_null=True
+    )
+
     class Meta:
         model = Transaction
         fields = [
@@ -64,7 +76,6 @@ class TransactionWriteSerializer(serializers.ModelSerializer):
             "transaction_type",
         ]
         extra_kwargs = {
-            "category": {"required": False},
             "currency": {"required": False},
         }
 
@@ -87,6 +98,10 @@ class TransactionPatchSerializer(serializers.ModelSerializer):
     patchable. `account_id` and `source` are deliberately not patchable,
     since changing either would misrepresent where the transaction actually
     came from."""
+
+    category = serializers.SlugRelatedField(
+        slug_field="name", queryset=Category.objects.all(), required=False, allow_null=True
+    )
 
     class Meta:
         model = Transaction

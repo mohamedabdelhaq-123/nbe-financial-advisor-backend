@@ -84,7 +84,7 @@ def _serialize_budget(budget):
         "selected_template_key": budget.selected_template_key,
         "allocations": [
             {
-                "category": a.category,
+                "category": a.category.name,
                 "allocated_percentage": a.allocated_percentage,
                 "allocated_amount": a.allocated_amount,
                 "currency": a.currency,
@@ -112,7 +112,7 @@ def _snapshot(budget):
     return {
         "allocations": [
             {
-                "category": a.category,
+                "category": a.category.name,
                 "allocated_percentage": float(a.allocated_percentage),
                 "allocated_amount": float(a.allocated_amount),
             }
@@ -312,7 +312,7 @@ class BudgetProgressView(APIView):
 
             categories.append(
                 {
-                    "category": alloc.category,
+                    "category": alloc.category.name,
                     "allocated_amount": alloc.allocated_amount,
                     "actual_amount": actual,
                     "percentage_used": round(percentage_used, 2),
@@ -615,7 +615,7 @@ class DashboardView(APIView):
             )
             allocations_summary.append(
                 {
-                    "category": alloc.category,
+                    "category": alloc.category.name,
                     "allocated_percentage": alloc.allocated_percentage,
                     "percentage_used": round(percentage_used, 2),
                 }

@@ -11,7 +11,7 @@ reply only exists once you look at persisted Message rows afterward.
 import pytest
 from rest_framework.test import APIClient
 
-from core.models import Budget, BudgetAllocation, Conversation, Message, User
+from core.models import Budget, BudgetAllocation, Category, Conversation, Message, User
 from core.tasks.conversations import generate_chat_reply
 from services import ai_service
 
@@ -61,7 +61,7 @@ def test_post_message_mentioning_budget_produces_allocation_widget(
     budget = Budget.objects.create(user=user)
     BudgetAllocation.objects.create(
         budget=budget,
-        category="Rent",
+        category=Category.objects.get(name="housing"),
         allocated_percentage="30.00",
         allocated_amount="3000.00",
     )

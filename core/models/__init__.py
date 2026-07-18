@@ -16,6 +16,9 @@ from .budgets.budget import Budget
 from .budgets.goal import Goal
 from .budgets.history import BudgetHistory
 
+# Import Categories Domain
+from .categories.category import Category
+
 # Import Conversations Domain
 from .conversations.conversation import Conversation
 from .conversations.message import Message
@@ -71,6 +74,8 @@ __all__ = [
     "Product",
     "ProblemStatement",
     "RecommendationLog",
+    # Categories
+    "Category",
     # Aggregations
     "Transaction",
     "MonthlySummary",

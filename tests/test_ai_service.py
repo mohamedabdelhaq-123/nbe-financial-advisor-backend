@@ -19,6 +19,7 @@ from core.models import (
     BankAccount,
     Budget,
     BudgetAllocation,
+    Category,
     Product,
     StatementFile,
     StatementOcrResult,
@@ -126,7 +127,10 @@ def test_stream_chat_mock_yields_token_events_then_one_done_event(user):
 def test_stream_chat_mock_budget_keyword_produces_allocation_widget(user):
     budget = Budget.objects.create(user=user)
     BudgetAllocation.objects.create(
-        budget=budget, category="housing", allocated_percentage="30.00", allocated_amount="3000.00"
+        budget=budget,
+        category=Category.objects.get(name="housing"),
+        allocated_percentage="30.00",
+        allocated_amount="3000.00",
     )
 
     envelopes = list(ai_service.stream_chat(str(user.id), str(user.id), "show me my budget"))
@@ -197,7 +201,7 @@ def test_run_post_ingestion_analysis_mock_computes_live_summary(user, account):
             transaction_date=day,
             amount="200.00",
             transaction_type="debit",
-            category="food",
+            category=Category.objects.get(name="food"),
             merchant_raw="Carrefour",
         )
     Transaction.objects.create(
@@ -206,7 +210,7 @@ def test_run_post_ingestion_analysis_mock_computes_live_summary(user, account):
         transaction_date="2026-06-15",
         amount="900.00",
         transaction_type="debit",
-        category="lifestyle",
+        category=Category.objects.get(name="lifestyle"),
         merchant_raw="Electronics Store",
     )
 

@@ -17,6 +17,13 @@ urlpatterns = [
     path("django-admin/", admin.site.urls),
     # OpenAPI schema + docs UI (API Design Guidelines §11: generated directly
     # from the DRF serializers/viewsets, never hand-maintained separately).
+    # "api/" IS hardcoded here, unlike core.urls's routes — unlike a plain
+    # JSON endpoint, the Swagger/Redoc HTML pages embed a browser-fetchable
+    # link back to the schema (reverse()'d from this same urlconf), which the
+    # browser re-requests as a second, independent hop. That link must still
+    # resolve correctly through the deploy compose's nginx (which strips
+    # "/api/" for ordinary routes — deploy/nginx.conf), so nginx special-cases
+    # exactly these three paths to pass the prefix through unchanged instead.
     # permission_classes=[AllowAny] overrides the project-wide
     # IsAuthenticated default (config/settings.py) — these are meant to be
     # browsable without a JWT, same reasoning as the health/ping/ask dev

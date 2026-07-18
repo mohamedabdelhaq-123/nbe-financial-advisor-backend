@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from core.models import BudgetHistory
+from core.models import BudgetHistory, Category
 
 
 class GoalInputSerializer(serializers.Serializer):
@@ -35,7 +35,13 @@ class DashboardGoalRequestSerializer(serializers.Serializer):
 
 
 class AllocationInputSerializer(serializers.Serializer):
-    category = serializers.CharField(max_length=100)
+    # A budget allocates across spending buckets only (income isn't budgeted
+    # against), so this only ever resolves to an expense-type Category — an
+    # unknown name or an income category name both raise a 400 here rather
+    # than silently landing in no bucket.
+    category = serializers.SlugRelatedField(
+        slug_field="name", queryset=Category.objects.filter(category_type="expense")
+    )
     allocated_percentage = serializers.DecimalField(max_digits=5, decimal_places=2)
 
 

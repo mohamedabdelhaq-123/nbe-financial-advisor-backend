@@ -35,7 +35,7 @@ from decimal import Decimal
 import requests
 from django.conf import settings
 
-from core.constants import BUDGET_CATEGORIES
+from core.models import Category
 
 # Each Django VectorField's dimension is fixed at the column level (pgvector
 # rejects a mismatched write outright), so these mirror the actual model
@@ -170,11 +170,13 @@ def _mock_normalize_statement(ocr_result_id: str) -> dict:
     rng = random.Random(seed)
 
     merchants = ["Carrefour", "Uber", "Vodafone", "Talabat", "Fawry"]
-    # Must be drawn from BUDGET_CATEGORIES: budget progress matches a transaction
-    # to its allocation by exact category equality, so a category outside that set
-    # lands in no bucket at all — the plan then reports 0% used while the money
-    # has genuinely been spent.
-    categories = list(BUDGET_CATEGORIES)
+    # Must be drawn from the real expense category names: budget progress
+    # matches a transaction to its allocation by exact category equality, so a
+    # category outside that set lands in no bucket at all — the plan then
+    # reports 0% used while the money has genuinely been spent.
+    categories = list(
+        Category.objects.filter(category_type="expense").values_list("name", flat=True)
+    )
 
     transactions = []
     for _ in range(3):
@@ -278,7 +280,7 @@ def _mock_stream_chat(conversation_id: str, user_id: str, message: str):
             "payload": {
                 "allocations": [
                     {
-                        "category": allocation.category,
+                        "category": allocation.category.name,
                         "allocated_percentage": float(allocation.allocated_percentage),
                     }
                     for allocation in budget.allocations.all()
@@ -537,9 +539,9 @@ def _mock_run_post_ingestion_analysis(user_id: str, account_id: str, month: str)
             t=Sum("amount")
         )["t"] or Decimal("0")
         by_category = {
-            row["category"]: float(row["total"])
+            row["category__name"]: float(row["total"])
             for row in month_txns.exclude(category=None)
-            .values("category")
+            .values("category__name")
             .annotate(total=Sum("amount"))
         }
         summary = {
@@ -582,7 +584,7 @@ def _mock_run_post_ingestion_analysis(user_id: str, account_id: str, month: str)
             {
                 "user_id": user_id,
                 "account_id": account_id,
-                "category": largest_debit.category or "other",
+                "category": largest_debit.category.name if largest_debit.category else "other",
                 "month": month,
                 "amount": float(largest_debit.amount),
                 "reason": "Amount is outside the IQR-based expected range for this category.",
