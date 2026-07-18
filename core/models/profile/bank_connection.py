@@ -54,6 +54,26 @@ class BankConnection(models.Model):
         indexes = [
             models.Index(fields=["user", "provider_slug"], name="idx_bank_conn_user_provider"),
         ]
+        constraints = [
+            # At most one active connection per (user, provider) — not per
+            # user alone, so a user can hold active connections to several
+            # different providers at once. Conditional on status rather than
+            # unconditional so a future revoke-then-relink to the same bank
+            # isn't permanently blocked by an old, no-longer-active row.
+            models.UniqueConstraint(
+                fields=["user", "provider_slug"],
+                condition=models.Q(status="linked"),
+                name="unique_active_bank_connection_per_user_provider",
+            ),
+            # The real identity-resolution guarantee: every login by the
+            # same bank customer must resolve to the same user, enforced at
+            # the DB level rather than only via a lookup query.
+            models.UniqueConstraint(
+                fields=["provider_slug", "external_customer_id"],
+                condition=models.Q(external_customer_id__isnull=False),
+                name="unique_bank_customer_identity",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.provider_slug} - {self.user_id} ({self.status})"
