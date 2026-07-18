@@ -14,6 +14,9 @@ from core.views import (
     AnomalyResolveView,
     BankAccountDetailView,
     BankAccountListCreateView,
+    BankConnectionCallbackView,
+    BankConnectionListCreateView,
+    BankSyncWebhookView,
     BudgetHistoryView,
     BudgetProgressView,
     BudgetView,
@@ -28,6 +31,7 @@ from core.views import (
     EventStreamView,
     FeedbackCreateView,
     GoalView,
+    InternalNotificationEmailView,
     IssueListCreateView,
     LoginView,
     LogoutView,
@@ -79,6 +83,22 @@ urlpatterns = [
     # 3. Bank Accounts (API_Endpoints_1.md §3)
     path("accounts/", BankAccountListCreateView.as_view()),
     path("accounts/<uuid:account_id>/", BankAccountDetailView.as_view()),
+    # Bank connections — OAuth+OTP linking of integrated bank accounts
+    # (services/bank_connectors/, mock-bank-oauth/). POST initiates a link,
+    # returning an authorize_url for the frontend to send the user's browser
+    # to; the callback below is where the frontend lands the OAuth code.
+    path("bank-connections/", BankConnectionListCreateView.as_view()),
+    path(
+        "bank-connections/<uuid:connection_id>/callback/",
+        BankConnectionCallbackView.as_view(),
+    ),
+    # Inbound machine-to-machine endpoints — shared-secret authenticated,
+    # never end-user JWT (core/authentication.py's _SharedSecretAuthentication
+    # subclasses). mock-bank-sync (later: a real bank's own sync feed) pushes
+    # transaction batches to the first; mock-bank-oauth calls the second to
+    # deliver its OTP emails through the one real notification client.
+    path("webhooks/bank-sync/", BankSyncWebhookView.as_view()),
+    path("internal/notifications/email/", InternalNotificationEmailView.as_view()),
     # 4. Statements & Document Ingestion (API_Endpoints_1.md §4)
     path("statements/", StatementListCreateView.as_view()),
     path("statements/<uuid:statement_id>/", StatementDetailView.as_view()),
