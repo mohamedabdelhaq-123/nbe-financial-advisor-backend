@@ -384,3 +384,11 @@ CELERY_TASK_EAGER_PROPAGATES = True
 # access token is never cookie-based (core/authentication.py), so the stream
 # is gated by a ticket minted just-in-time via POST /events/ticket instead.
 SSE_TICKET_TTL_SECONDS = env.int("SSE_TICKET_TTL_SECONDS", 30)
+
+# Short-lived, single-use state TTL for the bank-login OAuth round trip
+# (services/bank_login_states.py, core/views/auth.py's BankLoginInitiateView/
+# BankLoginCallbackView) — there's no User yet at initiate time to persist a
+# BankConnection row against, so this covers the same "anonymous, server-
+# verified state" need SSE_TICKET_TTL_SECONDS solves for event streaming.
+# 15 minutes covers mock-bank-oauth's challenge/OTP/auth-code TTLs end to end.
+BANK_LOGIN_STATE_TTL_SECONDS = env.int("BANK_LOGIN_STATE_TTL_SECONDS", 900)

@@ -40,6 +40,7 @@ class Challenge:
     # Populated once /login/start successfully resolves the customer.
     customer_id: Optional[str] = None
     email: Optional[str] = None
+    name: Optional[str] = None
     otp: Optional[str] = None
     otp_expires_at: Optional[float] = None
 
@@ -60,6 +61,8 @@ class AuthorizationCode:
     customer_id: str
     created_at: float
     expires_at: float
+    email: Optional[str] = None
+    name: Optional[str] = None
     used: bool = False
 
     def is_expired(self, now: Optional[float] = None) -> bool:
@@ -111,7 +114,9 @@ def get_challenge(challenge_id: str) -> Optional[Challenge]:
         return challenge
 
 
-def set_challenge_otp(challenge_id: str, customer_id: str, email: str) -> str:
+def set_challenge_otp(
+    challenge_id: str, customer_id: str, email: str, name: Optional[str] = None
+) -> str:
     """Generate and attach an OTP to an existing challenge; returns the OTP."""
     otp = f"{secrets.randbelow(1_000_000):06d}"
     with _lock:
@@ -120,6 +125,7 @@ def set_challenge_otp(challenge_id: str, customer_id: str, email: str) -> str:
             raise KeyError(challenge_id)
         challenge.customer_id = customer_id
         challenge.email = email
+        challenge.name = name
         challenge.otp = otp
         challenge.otp_expires_at = time.time() + OTP_TTL_SECONDS
     return otp
@@ -138,10 +144,17 @@ def delete_challenge(challenge_id: str) -> None:
 
 
 def create_authorization_code(
-    client_id: str, redirect_uri: str, customer_id: str
+    client_id: str,
+    redirect_uri: str,
+    customer_id: str,
+    email: Optional[str] = None,
+    name: Optional[str] = None,
 ) -> AuthorizationCode:
     """Mints a short-lived, single-use OAuth2 authorization code for a
-    customer who just passed OTP verification."""
+    customer who just passed OTP verification. Carries email/name through
+    to /token's response — the challenge that resolved them is popped
+    before /token is ever called, so this is the only place they survive
+    to that point."""
     now = time.time()
     code = AuthorizationCode(
         code=generate_token(48),
@@ -150,6 +163,8 @@ def create_authorization_code(
         customer_id=customer_id,
         created_at=now,
         expires_at=now + AUTH_CODE_TTL_SECONDS,
+        email=email,
+        name=name,
     )
     with _lock:
         _auth_codes[code.code] = code

@@ -80,9 +80,12 @@ class MockBankConnector(BankConnector):
                 "client_secret": settings.MOCK_BANK_OAUTH_CLIENT_SECRET,
             },
         )
-        if not isinstance(data, dict) or not data.get("access_token"):
+        if not isinstance(data, dict) or not data.get("access_token") or not data.get("email"):
+            # No email, no way to provision a User on a first-time bank
+            # login (core/views/auth.py's BankLoginCallbackView) — treated
+            # as the same failure class as a missing access_token.
             raise BankConnectorError(
-                "mock_bank connector's /token response was missing access_token."
+                "mock_bank connector's /token response was missing access_token or email."
             )
         return {
             "access_token": data["access_token"],
@@ -93,6 +96,8 @@ class MockBankConnector(BankConnector):
             # that. The token endpoint's own response is the one place this
             # id is available to us as plain JSON.
             "external_customer_id": data.get("external_customer_id"),
+            "email": data["email"],
+            "name": data.get("name"),
         }
 
     def fetch_accounts(self, access_token: str) -> list[dict]:

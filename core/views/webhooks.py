@@ -8,6 +8,7 @@ authenticated, since these callers have no User at all (see
 _SharedSecretAuthentication's docstring).
 """
 
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import status
@@ -23,6 +24,8 @@ from core.serializers.bank_connections import BankSyncWebhookSerializer, Interna
 from core.serializers.errors import ErrorResponseSerializer
 from core.tasks.bank_sync import ingest_synced_transactions
 from services import notification_service
+from services.bank_connectors import BankConnectorError, get_connector
+from services.bank_connectors.sync import apply_synced_accounts
 
 
 class BankSyncWebhookView(APIView):
@@ -46,13 +49,39 @@ class BankSyncWebhookView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        account = get_object_or_404(
-            BankAccount,
+        account = BankAccount.objects.filter(
             connection__provider_slug=data["provider_slug"],
             connection__status=BankConnection.STATUS_LINKED,
             external_account_id=data["external_account_id"],
             link_type=BankAccount.LINK_TYPE_SYNCED,
-        )
+        ).first()
+
+        if account is None:
+            # Not yet known — most likely a new account opened at an
+            # already-linked bank since the last fetch_accounts() pull.
+            # Re-pull the connection's account list and land it via the
+            # same shared step every other sync path uses, rather than
+            # 404ing on real, legitimate data.
+            connection = get_object_or_404(
+                BankConnection,
+                provider_slug=data["provider_slug"],
+                external_customer_id=data["external_customer_id"],
+                status=BankConnection.STATUS_LINKED,
+            )
+            connector = get_connector(connection.provider_slug)
+            try:
+                accounts = connector.fetch_accounts(connection.access_token)
+            except BankConnectorError as exc:
+                raise Http404(str(exc))
+            apply_synced_accounts(connection, accounts, connector)
+            account = BankAccount.objects.filter(
+                connection=connection, external_account_id=data["external_account_id"]
+            ).first()
+            if account is None:
+                # The bank itself doesn't know this account either — a
+                # genuinely unknown id, not just one we hadn't seen yet.
+                raise Http404("Unknown external_account_id.")
+
         ingest_synced_transactions.delay(str(account.id), data["transactions"])
         return Response(status=status.HTTP_202_ACCEPTED)
 

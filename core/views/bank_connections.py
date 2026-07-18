@@ -1,7 +1,6 @@
 import secrets
 
 from django.conf import settings
-from django.db import transaction
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -11,7 +10,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.exceptions import BusinessRuleError
-from core.models import BankAccount, BankConnection
+from core.models import BankConnection
 from core.openapi import error_responses
 from core.serializers.bank_connections import (
     BankConnectionCallbackSerializer,
@@ -20,8 +19,8 @@ from core.serializers.bank_connections import (
     BankConnectionSerializer,
 )
 from core.serializers.profile import BankAccountSerializer
-from core.tasks.bank_sync import ingest_synced_transactions
 from services.bank_connectors import BankConnectorError, get_connector
+from services.bank_connectors.sync import apply_synced_accounts
 
 
 class BankConnectionListCreateView(generics.ListAPIView):
@@ -137,52 +136,22 @@ class BankConnectionCallbackView(APIView):
                 "Failed to complete the bank connection.", code="bank_connection_failed"
             ) from exc
 
-        created_accounts = []
-        with transaction.atomic():
-            connection.access_token = access_token
-            connection.refresh_token = token.get("refresh_token")
-            connection.external_customer_id = token.get("external_customer_id")
-            connection.status = BankConnection.STATUS_LINKED
-            connection.linked_at = timezone.now()
-            connection.oauth_state = None
-            connection.save(
-                update_fields=[
-                    "access_token",
-                    "refresh_token",
-                    "external_customer_id",
-                    "status",
-                    "linked_at",
-                    "oauth_state",
-                ]
-            )
+        connection.access_token = access_token
+        connection.refresh_token = token.get("refresh_token")
+        connection.external_customer_id = token.get("external_customer_id")
+        connection.status = BankConnection.STATUS_LINKED
+        connection.linked_at = timezone.now()
+        connection.oauth_state = None
+        connection.save(
+            update_fields=[
+                "access_token",
+                "refresh_token",
+                "external_customer_id",
+                "status",
+                "linked_at",
+                "oauth_state",
+            ]
+        )
 
-            for acct in accounts:
-                bank_account, _ = BankAccount.objects.update_or_create(
-                    connection=connection,
-                    external_account_id=acct["external_account_id"],
-                    defaults={
-                        "user": request.user,
-                        "link_type": BankAccount.LINK_TYPE_SYNCED,
-                        "bank_name": acct["bank_name"],
-                        "account_type": acct.get("account_type"),
-                        "masked_account_number": acct["masked_account_number"],
-                        "currency": acct.get("currency", "EGP"),
-                    },
-                )
-                created_accounts.append(bank_account)
-
-        for bank_account, acct in zip(created_accounts, accounts):
-            # Best-effort: the account is already linked and correctly
-            # persisted above regardless of whether this initial backfill
-            # succeeds — ongoing sync pushes (BankSyncWebhookView) will
-            # populate it either way.
-            try:
-                transactions = connector.fetch_transactions(
-                    access_token, acct["external_account_id"]
-                )
-            except BankConnectorError:
-                continue
-            if transactions:
-                ingest_synced_transactions.delay(str(bank_account.id), transactions)
-
+        created_accounts = apply_synced_accounts(connection, accounts, connector)
         return Response(BankAccountSerializer(created_accounts, many=True).data)

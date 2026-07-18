@@ -16,6 +16,8 @@ from core.views import (
     BankAccountListCreateView,
     BankConnectionCallbackView,
     BankConnectionListCreateView,
+    BankLoginCallbackView,
+    BankLoginInitiateView,
     BankSyncWebhookView,
     BudgetHistoryView,
     BudgetProgressView,
@@ -75,6 +77,14 @@ urlpatterns = [
     path("auth/login/", LoginView.as_view()),
     path("auth/refresh/", RefreshView.as_view()),
     path("auth/logout/", LogoutView.as_view()),
+    # Bank login — a secondary sign-in path alongside signup/login above:
+    # authenticate as a bank customer via OAuth+OTP instead of an app
+    # password (services/bank_connectors/, mock-bank-oauth/). POST initiate/
+    # returns an authorize_url for the frontend to send the user's browser
+    # to; the callback below is where the frontend lands the OAuth code and
+    # receives a normal token pair back.
+    path("auth/bank-login/initiate/", BankLoginInitiateView.as_view()),
+    path("auth/bank-login/callback/", BankLoginCallbackView.as_view()),
     # 2. Profile & Preferences (API_Endpoints_1.md §2)
     path("users/me/", MeView.as_view()),
     path("users/me/preferences/", MePreferencesView.as_view()),

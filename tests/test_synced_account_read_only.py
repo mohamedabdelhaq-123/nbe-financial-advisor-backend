@@ -112,6 +112,52 @@ def test_delete_manual_account_still_allowed(client, manual_account):
 
 
 # ============================================================================
+# BankAccountListCreateView.post / assert_bank_not_already_synced
+# ============================================================================
+
+
+def _create_account_payload(**overrides):
+    payload = {
+        "bank_name": "Mock National Bank",
+        "masked_account_number": "****5678",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_create_manual_account_shadowing_synced_bank_rejected(client, synced_account):
+    response = client.post(
+        "/accounts/", _create_account_payload(bank_name="Mock National Bank"), format="json"
+    )
+
+    assert response.status_code == 422
+    assert response.data["error"]["code"] == "bank_account_source_of_truth"
+    assert not BankAccount.objects.filter(masked_account_number="****5678").exists()
+
+
+def test_create_manual_account_different_bank_still_allowed(client, synced_account):
+    response = client.post(
+        "/accounts/", _create_account_payload(bank_name="A Totally Different Bank"), format="json"
+    )
+
+    assert response.status_code == 201
+    assert BankAccount.objects.filter(
+        bank_name="A Totally Different Bank", link_type=BankAccount.LINK_TYPE_MANUAL
+    ).exists()
+
+
+def test_patch_manual_account_bank_name_into_synced_bank_rejected(
+    client, synced_account, manual_account
+):
+    response = client.patch(f"/accounts/{manual_account.id}/", {"bank_name": "Mock National Bank"})
+
+    assert response.status_code == 422
+    assert response.data["error"]["code"] == "bank_account_source_of_truth"
+    manual_account.refresh_from_db()
+    assert manual_account.bank_name == "Manual Bank"
+
+
+# ============================================================================
 # TransactionListCreateView.post
 # ============================================================================
 

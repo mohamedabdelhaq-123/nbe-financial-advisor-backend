@@ -75,10 +75,11 @@ def login_start(challenge_id: str = Form(...), customer_bank_id: str = Form(...)
     body = lookup_response.json()
     customer_id = body.get("customer_id")
     email = body.get("email")
+    name = body.get("name")
     if not customer_id or not email:
         return _error_page("Customer directory returned an incomplete record.", status_code=502)
 
-    otp = store.set_challenge_otp(challenge_id, customer_id=customer_id, email=email)
+    otp = store.set_challenge_otp(challenge_id, customer_id=customer_id, email=email, name=name)
 
     # Send the OTP by email via the main backend. If this fails, surface it
     # explicitly rather than silently proceeding to a code the user has no
@@ -144,6 +145,8 @@ def login_verify(challenge_id: str = Form(...), otp: str = Form(...)):
         client_id=challenge.client_id,
         redirect_uri=challenge.redirect_uri,
         customer_id=challenge.customer_id,
+        email=challenge.email,
+        name=challenge.name,
     )
 
     # Single-use challenge: invalidate it now that login is complete.

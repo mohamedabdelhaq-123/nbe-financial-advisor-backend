@@ -191,6 +191,64 @@ def test_callback_rejects_state_mismatch(client, user, monkeypatch):
     assert connection.status == BankConnection.STATUS_PENDING_OTP
 
 
+def test_callback_replaces_preexisting_manual_account_under_same_bank_name(
+    client, user, monkeypatch, fake_redis
+):
+    # A manual account (and its transaction history) the user already had
+    # under the same bank_name the connector is about to sync must be
+    # replaced, not left sitting alongside the new synced one — the bank is
+    # now the source of truth for its own name (services/bank_connectors/
+    # sync.py's apply_synced_accounts, shared with the bank-login flow).
+    manual_account = BankAccount.objects.create(
+        user=user,
+        bank_name="Mock National Bank",
+        masked_account_number="****9999",
+        link_type=BankAccount.LINK_TYPE_MANUAL,
+    )
+    Transaction.objects.create(
+        user=user,
+        account=manual_account,
+        source="manual",
+        transaction_date="2026-07-01",
+        merchant_raw="Old Entry",
+        amount="10.00",
+    )
+    other_bank_account = BankAccount.objects.create(
+        user=user,
+        bank_name="Some Other Bank",
+        masked_account_number="****0001",
+        link_type=BankAccount.LINK_TYPE_MANUAL,
+    )
+
+    connector = _FakeConnector(
+        accounts=[
+            {
+                "external_account_id": "acc-1",
+                "bank_name": "Mock National Bank",
+                "account_type": "checking",
+                "masked_account_number": "****1234",
+                "currency": "EGP",
+            }
+        ]
+    )
+    _patch_connector(monkeypatch, connector)
+    initiate = client.post("/bank-connections/", {"provider_slug": "mock_bank"}).data
+    connection = BankConnection.objects.get(id=initiate["connection_id"])
+
+    response = client.post(
+        f"/bank-connections/{connection.id}/callback/",
+        {"code": "auth-code-1", "state": connection.oauth_state},
+    )
+
+    assert response.status_code == 200
+    assert not BankAccount.objects.filter(id=manual_account.id).exists()
+    assert not Transaction.objects.filter(account_id=manual_account.id).exists()
+    assert BankAccount.objects.filter(id=other_bank_account.id).exists()
+    assert BankAccount.objects.filter(
+        user=user, bank_name="Mock National Bank", link_type=BankAccount.LINK_TYPE_SYNCED
+    ).exists()
+
+
 def test_callback_marks_connection_failed_on_connector_error(client, user, monkeypatch):
     connector = _FakeConnector(exchange_error=BankConnectorError("token exchange failed"))
     _patch_connector(monkeypatch, connector)
