@@ -107,6 +107,10 @@ def simulate_transaction(body: SimulateTransactionRequest, db: Session = Depends
     webhook_payload = {
         "provider_slug": "mock_bank",
         "external_account_id": str(account.id),
+        # Lets the backend discover-and-create a not-yet-known account
+        # (opened at an already-linked bank after the initial sync) instead
+        # of 404ing — see core/views/webhooks.py's BankSyncWebhookView.
+        "external_customer_id": str(account.customer_id),
         "transactions": [transaction_payload],
     }
     webhook_delivery = _deliver_webhook(webhook_payload)

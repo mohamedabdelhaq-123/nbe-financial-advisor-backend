@@ -58,10 +58,14 @@ class BankSyncWebhookSerializer(serializers.Serializer):
     (later: a real bank's own sync feed). Identity is derived entirely from
     (provider_slug, external_account_id), matched against an existing synced
     BankAccount — never from a client-supplied user id (see
-    BankSyncServiceAuthentication's docstring)."""
+    BankSyncServiceAuthentication's docstring). external_customer_id backs a
+    fallback lookup by (provider_slug, external_customer_id) when the
+    account isn't found — a brand-new account opened at an already-linked
+    bank, not yet discovered via a fetch_accounts() pull."""
 
     provider_slug = serializers.CharField(max_length=50)
     external_account_id = serializers.CharField(max_length=255)
+    external_customer_id = serializers.CharField(max_length=255)
     transactions = BankSyncTransactionSerializer(many=True)
 
 
