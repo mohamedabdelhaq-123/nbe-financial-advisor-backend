@@ -1,10 +1,11 @@
 """
 The single multiplexed SSE connection (Data_Governance_Specs.md-adjacent
-async-infra phase) — one GET /events/stream per user, carrying both
-statement/OCR events (core/tasks/statements.py) and chat events
-(core/tasks/conversations.py), discriminated by SSE event type. Gated by a
-short-lived, single-use ticket (services/sse_tickets.py) rather than the
-normal JWT header, since a native EventSource can't set one.
+async-infra phase) — one GET /events/stream per user, carrying
+statement/OCR events (core/tasks/statements.py), chat events
+(core/tasks/conversations.py), and bank-sync events (core/tasks/bank_sync.py),
+discriminated by SSE event type. Gated by a short-lived, single-use ticket
+(services/sse_tickets.py) rather than the normal JWT header, since a native
+EventSource can't set one.
 """
 
 from django.conf import settings
@@ -49,11 +50,17 @@ class EventStreamView(APIView):
             200: OpenApiResponse(
                 description=(
                     "text/event-stream — a persistent connection relaying "
-                    "statement_status, chat_token, chat_message, and chat_error "
-                    "events (named SSE `event:` types) as they occur. chat_error "
+                    "statement_status, chat_token, chat_message, chat_error, "
+                    "transaction_synced, and anomaly_detected events (named "
+                    "SSE `event:` types) as they occur. chat_error "
                     "(core.serializers.conversations.ChatErrorEventSerializer) "
                     "fires instead of chat_message when the AI service's reply "
-                    "fails — no assistant message is persisted in that case."
+                    "fails — no assistant message is persisted in that case. "
+                    "transaction_synced ({account_id, count, transaction_ids}) "
+                    "fires whenever a synced bank account receives new "
+                    "transactions (core/tasks/bank_sync.py); anomaly_detected "
+                    "({account_id, anomaly_ids}) fires alongside it only when "
+                    "the post-ingestion analysis pass flagged something."
                 )
             )
         }

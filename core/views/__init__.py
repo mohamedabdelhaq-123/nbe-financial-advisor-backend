@@ -19,6 +19,7 @@ from core.views.aggregations import (
     TransactionListCreateView,
 )
 from core.views.auth import LoginView, LogoutView, RefreshView, SignupView
+from core.views.bank_connections import BankConnectionCallbackView, BankConnectionListCreateView
 from core.views.budgets import (
     BudgetHistoryView,
     BudgetProgressView,
@@ -59,6 +60,7 @@ from core.views.statements import (
     StatementOcrResultView,
     StatementTransactionApprovalView,
 )
+from core.views.webhooks import BankSyncWebhookView, InternalNotificationEmailView
 
 __all__ = [
     "health",
@@ -74,6 +76,10 @@ __all__ = [
     "MeConsentRevokeView",
     "BankAccountListCreateView",
     "BankAccountDetailView",
+    "BankConnectionListCreateView",
+    "BankConnectionCallbackView",
+    "BankSyncWebhookView",
+    "InternalNotificationEmailView",
     "StatementListCreateView",
     "StatementDetailView",
     "StatementOcrResultView",

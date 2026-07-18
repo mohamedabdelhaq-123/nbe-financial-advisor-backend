@@ -7,7 +7,7 @@ Specifies the different domains of data in the project, how each domain's entiti
 
 ## Overview
 
-The platform operates strictly on data the user supplies directly — uploaded statements, chat input, manual dashboard entry. No internal bank systems, account-verification services, or real-time bank data feeds are accessed at any point. Every balance, category, and recommendation is derived exclusively from user-supplied documents and their extracted contents, or from values the user typed in themselves.
+The platform's data has two origins. Manual/user-managed accounts stay exactly as before — uploaded statements, chat input, manual dashboard entry; no internal bank systems, account-verification services, or real-time bank data feeds are ever accessed for these. Bank-integrated accounts are the one exception: an account the user explicitly links via a bank-like OAuth+OTP consent flow, after which its transactions arrive through an authenticated sync feed rather than being uploaded or typed — still nothing fabricated or accessed without consent, just a second, explicitly-authorized origin for the same ledger. Every balance, category, and recommendation is derived exclusively from user-supplied documents and their extracted contents, values the user typed in themselves, or transactions synced from an account the user explicitly linked.
 
 Data is organised into eight domains: **Profile, Statements, Conversations, Budgets, Feedback, Recommendation, Aggregations,** and **Administration.**
 
@@ -19,15 +19,17 @@ Data is organised into eight domains: **Profile, Statements, Conversations, Budg
 Single source of truth for user identity, linked bank accounts, and behavioural/display preferences. Every other domain scopes its data back to a user (and, where relevant, a specific bank account) defined here.
 
 ### Rules & Guidelines
-- Holds only user-declared or safely-derived data — no bank-verified identity or balance data.
-- A user may link zero or more bank accounts, across different, unrelated banks.
-- Push/email/SMS notifications and real-time alerts are out of scope — the system has no internet-dependent delivery mechanism in its offline deployment.
+- Holds only user-declared or safely-derived data — no bank-verified identity or balance data, except what a bank-integrated account's own sync feed supplies once explicitly linked.
+- A user may link zero or more bank accounts, across different, unrelated banks — as plain manual accounts, or as bank-integrated accounts via the OAuth+OTP flow, freely mixed. Each bank-integration attempt is its own independent record, so linking a second, third, etc. bank never disturbs an already-linked one.
+- Bank-integrated accounts are read-only to the end user once linked — their metadata and their transactions can only change via the sync feed, never a manual edit.
+- Email notifications are narrowly in scope for two purposes only — OTP delivery during bank-account linking, and a sync-event notice once new transactions land — via a real (not internet-independent-mocked) email gateway. No other push/SMS/real-time alerting exists.
 - Consent records are append-only; consent history is never overwritten, so a full grant/revoke timeline is always reconstructable.
 - Income, employment status, and household signals collected here (or refined via onboarding/chat) are the inputs the Budgets domain uses to select a starting template — Profile does not itself decide budget allocations.
 
 ### Contained Information
 - User identity attributes (name, contact info, employment status, income bracket, monthly income, onboarding date, status)
-- Linked bank accounts (bank name, account type, masked account number, currency, active status)
+- Linked bank accounts (bank name, account type, masked account number, currency, active status, link type — manual/synced, and, for synced accounts, which bank connection produced them)
+- Bank connections (provider, status — pending OTP/linked/revoked/failed, external customer reference, linked/revoked timestamps) — one row per (user, bank), not per user
 - Consent history (consent type, granted/revoked timestamps, policy version)
 - User preferences (language, currency display format, date format, budget cycle start day, default view, raw-document retention choice)
 
@@ -151,16 +153,16 @@ The single source of truth for the normalised **transaction ledger** and everyth
 
 ### Rules & Guidelines
 - **Transactions are the single source of truth for every monetary fact in the system.** No other domain is allowed to keep its own copy of a transaction or derive a figure independently of this ledger; monthly summaries, recurring-charge detection, anomaly flags, and pattern insights are all *computed from* the ledger, never stored as an independent parallel record of it.
-- A transaction may originate from a processed statement, from direct manual entry on the dashboard, or from manual entry via chat — all three land in the same table through the same write path and are subject to the same rules.
+- A transaction may originate from a processed statement, from direct manual entry on the dashboard, from manual entry via chat, or from an automated sync push for a bank account the user has explicitly linked via OAuth+OTP consent — all four land in the same table through the same write path and are subject to the same rules. Synced-origin transactions are additionally read-only after landing (see Profile §1) — none of the other origins are.
 - **Duplicate prevention is enforced at the transaction level**, regardless of origin: a composite check (user, account, transaction date, amount, raw merchant text) runs before any insert — whether from a bulk statement import or a single manual entry — so re-uploading an overlapping statement period, or re-entering the same manual transaction, cannot create duplicate ledger rows.
 - Aggregated insights are best-effort, not guaranteed-complete: a given computed insight (e.g. income stability) may not be derivable for every user or period due to insufficient or inconsistent statement data. The structure must tolerate partial or missing aggregation results without breaking downstream consumers.
 - Designed for easy extension: new categories of computed insight should be addable without requiring a new dedicated table each time, favouring a generic, typed insight structure where practical.
 
 ### Contained Information
-- Transaction ledger (date, merchant raw/normalised name, category, amount, currency, recurrence flag, extraction confidence, source — statement/manual)
+- Transaction ledger (date, merchant raw/normalised name, category, amount, currency, recurrence flag, extraction confidence, source — statement/manual/synced)
 - Monthly summaries (total spend, total inflow, category breakdown, top merchants)
 - Recurring charge detection (merchant, frequency, average amount, last/next expected occurrence)
-- Anomaly flags tied to specific transactions (reason, severity, resolution status)
+- Anomaly flags (reason, severity, resolution status) — tied to a specific transaction when one is identifiable, or scoped to a user/account/category/month when the detection is aggregate rather than per-transaction
 - Generic spending-pattern insights (extensible type/value structure), covering patterns such as: cash flow (inflow vs. outflow), merchant frequency ranking, day-of-week/time-of-month spending patterns, category volatility, income stability, and debt-service ratio proxy
 - Net worth snapshots aggregated across all of a user's linked bank accounts
 - Goal progress (computed monthly against the active `budgets` goal fields — feeds the dashboard progress bar)

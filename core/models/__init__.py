@@ -31,6 +31,7 @@ from .feedback.reported_issue import ReportedIssue
 # Import Test model
 from .ping import Ping
 from .profile.bank_account import BankAccount
+from .profile.bank_connection import BankConnection
 from .profile.consent_record import ConsentRecord
 from .profile.user import User
 from .profile.user_preference import UserPreference
@@ -51,6 +52,7 @@ __all__ = [
     # Profile
     "User",
     "BankAccount",
+    "BankConnection",
     "ConsentRecord",
     "UserPreference",
     # Statements

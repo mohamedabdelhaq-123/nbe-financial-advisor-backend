@@ -44,6 +44,7 @@ from core.serializers.aggregations import (
     TransactionPatchSerializer,
     TransactionWriteSerializer,
 )
+from core.views.profile import assert_account_mutable
 
 # ============================================================================
 # Transactions — the real, fully CRUD-able ledger.
@@ -109,6 +110,7 @@ class TransactionListCreateView(ListAPIView):
         # or nonexistent account_id 404s (API Design Guidelines §10) rather
         # than surfacing as an ordinary field-validation 422.
         account = get_object_or_404(BankAccount, id=account_id, user=request.user)
+        assert_account_mutable(account)
 
         serializer = TransactionWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -163,7 +165,10 @@ class TransactionDetailView(mixins.RetrieveModelMixin, mixins.DestroyModelMixin,
     lookup_url_kwarg = "transaction_id"
 
     def get_queryset(self):
-        return Transaction.objects.filter(user=self.request.user)
+        # select_related("account"): patch/delete both call
+        # assert_account_mutable(instance.account), which would otherwise be one
+        # extra query per request.
+        return Transaction.objects.filter(user=self.request.user).select_related("account")
 
     @extend_schema(responses={200: TransactionDetailSerializer, **error_responses(404)})
     def get(self, request, *args, **kwargs):
@@ -175,19 +180,25 @@ class TransactionDetailView(mixins.RetrieveModelMixin, mixins.DestroyModelMixin,
     )
     def patch(self, request, *args, **kwargs):
         instance = self.get_object()
+        assert_account_mutable(instance.account)
         serializer = TransactionPatchSerializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(TransactionDetailSerializer(instance).data)
 
-    @extend_schema(responses={204: None, **error_responses(404)})
+    @extend_schema(responses={204: None, **error_responses(404, 422)})
     def delete(self, request, *args, **kwargs):
+        # Fetched once (not via self.destroy(), which would re-fetch) so the
+        # assert_account_mutable() check and the delete itself see the same instance.
+        instance = self.get_object()
+        assert_account_mutable(instance.account)
+        self.perform_destroy(instance)
         # Editing/deleting a transaction would ideally trigger the same
         # re-aggregation background tasks as any other ledger change, but
         # there's no Celery worker wired up yet — the analytics endpoints
         # already compute live from the ledger on every read instead, so
         # there's nothing stale left to re-trigger in the meantime.
-        return self.destroy(request, *args, **kwargs)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # ============================================================================
@@ -391,9 +402,11 @@ class RecurringChargesView(ListAPIView):
 class AnomaliesView(ListAPIView):
     """
     List flagged anomalous transactions for the current user (unusually
-    large charges, duplicate-looking entries, etc.), scoped via the
-    underlying transaction's ownership rather than a direct user field on
-    the anomaly row itself.
+    large charges, duplicate-looking entries, etc.), scoped directly by
+    `user` — not every anomaly has a `transaction` to derive ownership from
+    (see AnomalyFlag's docstring: post-ingestion-analysis anomalies are
+    aggregated at user+account+category+month grain, with no single
+    transaction to point at).
 
     Read-only over whatever's already been flagged — the same detection-job
     gap as `RecurringChargesView` above applies here too. Returns a plain
@@ -409,23 +422,23 @@ class AnomaliesView(ListAPIView):
         # swagger_fake_view: see TransactionListCreateView's get_queryset().
         if getattr(self, "swagger_fake_view", False):
             return AnomalyFlag.objects.none()
-        return AnomalyFlag.objects.filter(transaction__user=self.request.user)
+        return AnomalyFlag.objects.filter(user=self.request.user)
 
 
 class AnomalyResolveView(APIView):
     """Mark a flagged anomaly as resolved (or un-resolved) — the only field
     this endpoint accepts is `resolved`; everything else about an anomaly
     (its reason, severity, when it was detected) is backend-computed and
-    not editable. Scoped via the underlying transaction's ownership, not a
-    direct field on the anomaly row itself, so an anomaly on another
-    user's transaction 404s rather than being reachable at all."""
+    not editable. Scoped directly by `user` (see AnomaliesView.get_queryset's
+    docstring for why), so an anomaly belonging to another user 404s rather
+    than being reachable at all."""
 
     @extend_schema(
         request=AnomalyResolveSerializer,
         responses={200: AnomalyFlagSerializer, **error_responses(404, 422)},
     )
     def patch(self, request, anomaly_id):
-        anomaly = get_object_or_404(AnomalyFlag, id=anomaly_id, transaction__user=request.user)
+        anomaly = get_object_or_404(AnomalyFlag, id=anomaly_id, user=request.user)
         serializer = AnomalyResolveSerializer(anomaly, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()

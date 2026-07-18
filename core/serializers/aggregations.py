@@ -110,11 +110,37 @@ class TransactionPatchSerializer(serializers.ModelSerializer):
 
 class AnomalyFlagSerializer(serializers.ModelSerializer):
     transaction_id = serializers.PrimaryKeyRelatedField(source="transaction", read_only=True)
+    account_id = serializers.PrimaryKeyRelatedField(source="account", read_only=True)
 
     class Meta:
         model = AnomalyFlag
-        fields = ["id", "transaction_id", "reason", "severity", "resolved", "detected_at"]
-        read_only_fields = ["id", "transaction_id", "reason", "severity", "detected_at"]
+        # transaction_id is null for anomalies detected by the post-ingestion
+        # analysis pipeline (aggregated at user+account+category+month, no
+        # single transaction to point at) — category/month/amount are what
+        # make those rows meaningful instead.
+        fields = [
+            "id",
+            "transaction_id",
+            "account_id",
+            "category",
+            "month",
+            "amount",
+            "reason",
+            "severity",
+            "resolved",
+            "detected_at",
+        ]
+        read_only_fields = [
+            "id",
+            "transaction_id",
+            "account_id",
+            "category",
+            "month",
+            "amount",
+            "reason",
+            "severity",
+            "detected_at",
+        ]
 
 
 class AnomalyResolveSerializer(serializers.ModelSerializer):

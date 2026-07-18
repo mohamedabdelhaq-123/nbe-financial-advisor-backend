@@ -36,6 +36,11 @@ jobs:
           SEAWEED_S3_ENDPOINT: http://ci-placeholder:8333
           SEAWEED_ACCESS_KEY: ci-placeholder
           SEAWEED_SECRET_KEY: ci-placeholder
+          MOCK_BANK_OAUTH_CLIENT_SECRET: ci-placeholder-not-a-real-secret
+          MOCK_BANK_SERVICE_TOKEN: ci-placeholder-not-a-real-secret
+          BANK_SYNC_WEBHOOK_SECRET: ci-placeholder-not-a-real-secret
+          GMAIL_ADDRESS: ci-placeholder@example.com
+          GMAIL_APP_PASSWORD: ci-placeholder-not-a-real-secret
 
       - name: OpenAPI schema generates
         run: python manage.py spectacular --file openapi.yaml
@@ -47,6 +52,11 @@ jobs:
           SEAWEED_S3_ENDPOINT: http://ci-placeholder:8333
           SEAWEED_ACCESS_KEY: ci-placeholder
           SEAWEED_SECRET_KEY: ci-placeholder
+          MOCK_BANK_OAUTH_CLIENT_SECRET: ci-placeholder-not-a-real-secret
+          MOCK_BANK_SERVICE_TOKEN: ci-placeholder-not-a-real-secret
+          BANK_SYNC_WEBHOOK_SECRET: ci-placeholder-not-a-real-secret
+          GMAIL_ADDRESS: ci-placeholder@example.com
+          GMAIL_APP_PASSWORD: ci-placeholder-not-a-real-secret
 
       - name: Secret scan (TruffleHog)
         uses: trufflesecurity/trufflehog@main

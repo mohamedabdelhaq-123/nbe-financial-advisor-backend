@@ -26,10 +26,11 @@ def _celery_eager_mode(monkeypatch):
     pytest_load_initial_conftests hook) runs before any conftest.py module
     code gets a chance to execute.
     """
+    from core.tasks.bank_sync import ingest_synced_transactions
     from core.tasks.conversations import generate_chat_reply
     from core.tasks.statements import process_statement_pipeline
 
-    for task in (process_statement_pipeline, generate_chat_reply):
+    for task in (process_statement_pipeline, generate_chat_reply, ingest_synced_transactions):
         monkeypatch.setattr(task, "delay", lambda *a, _task=task, **kw: _task(*a, **kw))
 
 

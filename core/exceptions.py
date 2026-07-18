@@ -50,6 +50,20 @@ class AIServiceUnavailable(APIException):
     default_code = "ai_service_unavailable"
 
 
+class NotificationServiceUnavailable(APIException):
+    """
+    502 — for endpoints that call services/notification_service.py
+    synchronously (e.g. InternalNotificationEmailView, core/views/webhooks.py)
+    and have no buffering task to instead record the failure on. Same
+    reasoning as AIServiceUnavailable above, for the notification gateway
+    instead of ai-service.
+    """
+
+    status_code = 502
+    default_detail = "The notification service failed or is unreachable."
+    default_code = "notification_service_unavailable"
+
+
 class BusinessRuleError(DRFValidationError):
     """
     Raise this instead of a plain DRFValidationError when a business-rule
