@@ -16,6 +16,22 @@ class TransactionFilterSet(filters.FilterSet):
     # value, not a real field name Meta.fields' auto-generation can resolve
     # by introspection, so it has to be declared explicitly like this.
     account_id = filters.UUIDFilter(field_name="account_id")
+    # Same reasoning as account_id, for the same structural reason:
+    # `category` is a ForeignKey(Category) now (fix/category-table), so
+    # Meta.fields' auto-generation would build a ModelChoiceFilter expecting
+    # a Category **pk**. The API/frontend both send the category **name**
+    # (TransactionListSerializer exposes it via
+    # SlugRelatedField(slug_field="name")) — declaring it explicitly here
+    # matches by name instead.
+    category = filters.CharFilter(field_name="category__name", lookup_expr="iexact")
+    # Not a real model field — the frontend's UI concept of "income"/"expense"
+    # doesn't map 1:1 onto transaction_type (a single-value exact filter):
+    # "expense" covers debit, fee, AND transfer rows, not just debit.
+    # Sending transaction_type=debit directly would silently hide real fee
+    # rows from an "expenses" view.
+    type = filters.ChoiceFilter(
+        choices=[("income", "income"), ("expense", "expense")], method="filter_type"
+    )
     search = filters.CharFilter(method="filter_search")
     min_amount = filters.NumberFilter(field_name="amount", lookup_expr="gte")
     max_amount = filters.NumberFilter(field_name="amount", lookup_expr="lte")
@@ -32,7 +48,6 @@ class TransactionFilterSet(filters.FilterSet):
     class Meta:
         model = Transaction
         fields = {
-            "category": ["exact"],
             "source": ["exact"],
             "is_recurring": ["exact"],
             "transaction_type": ["exact"],
@@ -42,6 +57,11 @@ class TransactionFilterSet(filters.FilterSet):
         return queryset.filter(
             Q(merchant_raw__icontains=value) | Q(merchant_normalized__icontains=value)
         )
+
+    def filter_type(self, queryset, name, value):
+        if value == "income":
+            return queryset.filter(transaction_type="credit")
+        return queryset.filter(transaction_type__in=["debit", "fee", "transfer"])
 
 
 # `from`/`to` are the documented query-param names (Data_Shapes_Aggregations.md)
