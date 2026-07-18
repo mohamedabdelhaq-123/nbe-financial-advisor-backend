@@ -126,19 +126,14 @@ def mock_customer():
         ).raise_for_status()
 
 
-def test_full_link_flow_against_real_running_services(client, mock_customer):
-    # 1. Initiate — real Django view; get_authorize_url() is pure
-    # URL-building, no network call yet.
-    initiate = client.post("/bank-connections/", {"provider_slug": "mock_bank"})
-    assert initiate.status_code == 201
-    connection_id = initiate.data["connection_id"]
-    connection = BankConnection.objects.get(id=connection_id)
-    state = connection.oauth_state
-
+def _complete_oauth_otp_dance(authorize_url: str, customer_bank_id: str) -> str:
+    """Steps 2-5 of the OAuth+OTP round trip against the real, already-
+    running mock-bank-oauth container — shared by both the authenticated
+    link flow and the unauthenticated bank-login flow below, since both
+    hand off to the exact same provider-hosted login page. Returns the
+    single-use authorization code the provider's redirect hands back."""
     # 2. Real GET /authorize against the live mock-bank-oauth container.
-    authorize_response = requests.get(
-        initiate.data["authorize_url"], timeout=_REQUEST_TIMEOUT_SECONDS
-    )
+    authorize_response = requests.get(authorize_url, timeout=_REQUEST_TIMEOUT_SECONDS)
     assert authorize_response.status_code == 200
     challenge_id = re.search(r'name="challenge_id" value="([^"]+)"', authorize_response.text).group(
         1
@@ -150,10 +145,7 @@ def test_full_link_flow_against_real_running_services(client, mock_customer):
     # module docstring: the 502 here is the expected, correct outcome.
     login_start_response = requests.post(
         f"{settings.MOCK_BANK_OAUTH_SERVICE_URL}/login/start",
-        data={
-            "challenge_id": challenge_id,
-            "customer_bank_id": mock_customer["customer_bank_id"],
-        },
+        data={"challenge_id": challenge_id, "customer_bank_id": customer_bank_id},
         timeout=_REQUEST_TIMEOUT_SECONDS,
     )
     # 502 is what this dev stack's placeholder Gmail credentials produce
@@ -182,7 +174,21 @@ def test_full_link_flow_against_real_running_services(client, mock_customer):
         allow_redirects=False,
     )
     assert verify_response.status_code == 302
-    code = re.search(r"code=([^&]+)", verify_response.headers["Location"]).group(1)
+    return re.search(r"code=([^&]+)", verify_response.headers["Location"]).group(1)
+
+
+def test_full_link_flow_against_real_running_services(client, mock_customer):
+    # 1. Initiate — real Django view; get_authorize_url() is pure
+    # URL-building, no network call yet.
+    initiate = client.post("/bank-connections/", {"provider_slug": "mock_bank"})
+    assert initiate.status_code == 201
+    connection_id = initiate.data["connection_id"]
+    connection = BankConnection.objects.get(id=connection_id)
+    state = connection.oauth_state
+
+    code = _complete_oauth_otp_dance(
+        initiate.data["authorize_url"], mock_customer["customer_bank_id"]
+    )
 
     # 6. Real callback — Django exchanges the code for a token against the
     # live mock-bank-oauth, then pulls accounts/transactions from the live
@@ -214,6 +220,7 @@ def test_full_link_flow_against_real_running_services(client, mock_customer):
     unknown_payload = {
         "provider_slug": "mock_bank",
         "external_account_id": f"integration-test-unknown-{uuid.uuid4()}",
+        "external_customer_id": f"integration-test-unknown-{uuid.uuid4()}",
         "transactions": [],
     }
     wrong_secret_response = requests.post(
@@ -231,3 +238,69 @@ def test_full_link_flow_against_real_running_services(client, mock_customer):
         timeout=_REQUEST_TIMEOUT_SECONDS,
     )
     assert correct_secret_response.status_code == 404
+
+
+def test_bank_login_flow_against_real_running_services(mock_customer, db):
+    """
+    Same real cross-container OAuth+OTP round trip as the link flow above,
+    but through the unauthenticated bank-login entry point (no pre-existing
+    User, no force_authenticate) — and run twice with the same mock
+    customer, to prove the one property most worth checking against real
+    containers rather than a mocked connector: a repeat login resolves to
+    the same user_id, not a second one.
+    """
+    anonymous_client = APIClient()
+    created_user_id = None
+    try:
+        # First login: no app account exists yet for this bank customer.
+        initiate = anonymous_client.post(
+            "/auth/bank-login/initiate/", {"provider_slug": "mock_bank"}
+        )
+        assert initiate.status_code == 201
+        code = _complete_oauth_otp_dance(
+            initiate.data["authorize_url"], mock_customer["customer_bank_id"]
+        )
+
+        first_callback = anonymous_client.post(
+            "/auth/bank-login/callback/", {"code": code, "state": initiate.data["state"]}
+        )
+        assert first_callback.status_code == 201
+        assert "access_token" in first_callback.data
+        created_user_id = first_callback.data["user_id"]
+
+        user = User.objects.get(id=created_user_id)
+        assert user.email == mock_customer["email"]
+        assert not user.has_usable_password()
+
+        connection = BankConnection.objects.get(
+            user=user, provider_slug="mock_bank", status=BankConnection.STATUS_LINKED
+        )
+        account = BankAccount.objects.get(connection=connection)
+        assert account.link_type == BankAccount.LINK_TYPE_SYNCED
+
+        # Second login, same mock customer: a fresh, real OAuth+OTP round
+        # trip (a genuinely new authorization code, not a replay), but the
+        # same underlying bank customer — must resolve to the same user.
+        second_initiate = anonymous_client.post(
+            "/auth/bank-login/initiate/", {"provider_slug": "mock_bank"}
+        )
+        assert second_initiate.status_code == 201
+        second_code = _complete_oauth_otp_dance(
+            second_initiate.data["authorize_url"], mock_customer["customer_bank_id"]
+        )
+
+        second_callback = anonymous_client.post(
+            "/auth/bank-login/callback/",
+            {"code": second_code, "state": second_initiate.data["state"]},
+        )
+        assert second_callback.status_code == 200
+        assert second_callback.data["user_id"] == created_user_id
+        assert User.objects.filter(email=mock_customer["email"]).count() == 1
+    finally:
+        # Unlike the link flow's `client`/`user` fixtures, no User exists
+        # until the callback above creates one — clean it up by hand,
+        # mirroring this module's own mock_customer fixture's reasoning for
+        # why cleanup can't be skipped just because the callback might have
+        # failed before creating anything.
+        if created_user_id is not None:
+            User.objects.filter(id=created_user_id).delete()
