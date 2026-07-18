@@ -76,5 +76,11 @@ def token(
             # but still needs this id for BankConnection.external_customer_id
             # bookkeeping. See services/bank_connectors/mock_bank.py.
             "external_customer_id": record.customer_id,
+            # For provisioning a Django User on a first-time bank login
+            # (services/bank_connectors/mock_bank.py) — this service has no
+            # concept of a Django user itself, it just forwards what
+            # mock-bank-sync's customer directory already resolved.
+            "email": record.email,
+            "name": record.name,
         }
     )
