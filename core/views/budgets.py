@@ -238,7 +238,7 @@ class BudgetHistoryView(ListAPIView):
     List every recorded change to the user's budget plan, newest first —
     each row's `previous_values` is a snapshot of the plan's state
     immediately before that change was applied, and `changed_via` records
-    what triggered it (`dashboard`, `chat_hitl`, or `onboarding`). 404 if
+    what triggered it (`dashboard`, `chat`, or `onboarding`). 404 if
     the user has no budget plan at all yet (there's nothing to have a
     history of).
     """
