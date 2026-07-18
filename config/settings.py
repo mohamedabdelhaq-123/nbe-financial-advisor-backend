@@ -47,6 +47,51 @@ AI_SERVICE_URL = env.str("AI_SERVICE_URL", "http://ai-service:8001")
 # never need a live ai-service; flip to 0 once one is reachable.
 USE_MOCK_AI_SERVICE = env.bool("USE_MOCK_AI_SERVICE", True)
 
+# ── Mock Bank OAuth+OTP service (mock-bank-oauth/, in-repo) ───────────────────
+# services/bank_connectors/mock_bank.py's client. No USE_MOCK_*/real toggle —
+# this connector *is* the mock for now; a real bank later is a second
+# BankConnector subclass under a new slug (services/bank_connectors/__init__.py).
+MOCK_BANK_OAUTH_SERVICE_URL = env.str("MOCK_BANK_OAUTH_SERVICE_URL", "http://mock-bank-oauth:8002")
+MOCK_BANK_OAUTH_CLIENT_ID = env.str("MOCK_BANK_OAUTH_CLIENT_ID", "nbe-backend")
+MOCK_BANK_OAUTH_CLIENT_SECRET = env.str("MOCK_BANK_OAUTH_CLIENT_SECRET")
+# Where mock-bank-oauth redirects the browser after login+OTP — a frontend
+# route, not a backend one (BankConnectionCallbackView is called BY the
+# frontend once it reads ?code&state off this URL, not by the redirect itself).
+MOCK_BANK_OAUTH_REDIRECT_URI = env.str(
+    "MOCK_BANK_OAUTH_REDIRECT_URI", "http://localhost:5173/bank-connect/callback"
+)
+# Shared secret mock-bank-oauth presents when it calls this backend's
+# POST /internal/notifications/email/ to deliver an OTP (core/authentication.py's
+# MockBankServiceAuthentication).
+MOCK_BANK_SERVICE_TOKEN = env.str("MOCK_BANK_SERVICE_TOKEN")
+
+# ── Mock Bank Sync service (mock-bank-sync/, in-repo) ──────────────────────────
+# The ledger owner — services/bank_connectors/mock_bank.py's fetch_accounts()/
+# fetch_transactions() pull from here.
+MOCK_BANK_SYNC_SERVICE_URL = env.str("MOCK_BANK_SYNC_SERVICE_URL", "http://mock-bank-sync:8003")
+# Shared secret mock-bank-sync presents when it pushes to this backend's
+# POST /webhooks/bank-sync/ (core/authentication.py's BankSyncServiceAuthentication).
+BANK_SYNC_WEBHOOK_SECRET = env.str("BANK_SYNC_WEBHOOK_SECRET")
+# NOT read here: MOCK_BANK_JWT_SECRET and MOCK_BANK_INTERNAL_SECRET are shared
+# only between mock-bank-oauth and mock-bank-sync — this backend never sees
+# either, since it treats the access token they exchange as fully opaque.
+
+# ── Notification (Gmail SMTP — see services/notification_service.py) ──────────
+# A demo-appropriate choice: an existing Gmail/Workspace account + an App
+# Password has effectively zero signup friction compared to a dedicated
+# transactional-email provider (sender/domain verification, often a card
+# even for a free tier). services/notification_service.send_email()'s
+# signature stays stable either way, so swapping providers later is a
+# settings change, not a rewrite.
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = "smtp.gmail.com"
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+_GMAIL_ADDRESS = env.str("GMAIL_ADDRESS")
+EMAIL_HOST_USER = _GMAIL_ADDRESS
+EMAIL_HOST_PASSWORD = env.str("GMAIL_APP_PASSWORD")
+DEFAULT_FROM_EMAIL = _GMAIL_ADDRESS
+
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
