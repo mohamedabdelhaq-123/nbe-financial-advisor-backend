@@ -7,7 +7,10 @@ Clarifies the major components of the system at a high level: how the system is 
 
 ## 1. System Purpose
 
-The platform ingests a user's own bank statements (multiple banks, multiple accounts) — via upload or manual entry — and turns them into a single unified ledger, from which it derives budgeting, spending insights, and light product recommendations. It operates **strictly on user-supplied data**. No internal bank systems, core-banking APIs, or real-time account feeds are ever accessed; every balance, category, and recommendation traces back to something the user uploaded, typed, or confirmed.
+The platform turns a user's transaction history — from multiple banks, multiple accounts — into a single unified ledger, from which it derives budgeting, spending insights, and light product recommendations. Every account is one of two kinds:
+
+- **Manual/user-managed accounts** — statement upload or direct manual entry, exactly as before. The user assumes liability for accuracy; every balance and category traces back to something they uploaded, typed, or confirmed.
+- **Bank-integrated accounts** — explicitly linked by the user via a bank-like OAuth+OTP consent flow (see §5b), after which the account auto-syncs and is read-only to the end user. No internal bank systems or core-banking APIs are ever accessed without that explicit, per-account consent step — this isn't a background integration the user didn't opt into.
 
 The system has two primary surfaces, and they are **not equals**:
 
@@ -28,6 +31,8 @@ The system has two primary surfaces, and they are **not equals**:
 | **MinerU** | Deterministic OCR/layout extraction (not an agent — no reasoning) | AI Service, own container |
 | **vLLM** | Model serving in staging/production (GPU) | AI Specialist |
 | **Reverse proxy (Nginx)** | Single public entry point | DevOps |
+| **Mock Bank OAuth+OTP service** (FastAPI) | Simulates a bank's identity/consent step for linking a bank-integrated account — login/OTP verification, standard OAuth2 authorization-code protocol on the outside. Owns no customer data itself (see §5b) | Backend, in-repo (`mock-bank-oauth/`) |
+| **Mock Bank Sync service** (FastAPI) | Owns the mock bank's ledger (fake customers/accounts/transactions); the source of "a bank transaction happened" for the real-time sync demo | Backend, in-repo (`mock-bank-sync/`) |
 
 \* The AI service keeps no in-memory state between requests, but it does own and write to its own database tables (embeddings, problem statements, recommendation logs) — "stateless" describes request handling, not data ownership.
 
@@ -72,6 +77,34 @@ User uploads PDF/image (dashboard or chat shortcut — same endpoint either way)
 ```
 
 Once transactions are in the ledger, the statement's job is done — Statements/OCR data is not queried again for analytics; everything downstream reads from the transaction ledger.
+
+---
+
+## 5b. Data Flow — Bank-Integrated Sync
+
+A second, parallel ingestion path for accounts the user has explicitly linked, standing in for what a real bank integration would look like — the mock services exist so this can be built and demoed without any real bank or external OAuth provider.
+
+**Linking a new account:**
+```
+User initiates a link (dashboard) → Django creates a BankConnection(status=pending_otp)
+   → Django returns an authorize_url; frontend sends the browser there
+   → Mock Bank OAuth+OTP service: user enters a bank-assigned customer id
+     → resolves it against Mock Bank Sync's customer directory
+     → emails a one-time code (via Django's own notification client — the
+       mock never sends email itself)
+     → user enters the code, OAuth+OTP service issues a short-lived
+       authorization code, redirects back to the frontend
+   → frontend hands the code to Django, which exchanges it for an access
+     token, marks the connection linked, and pulls the account list + an
+     initial transaction backfill from Mock Bank Sync
+   → new BankAccount rows are created read-only (see below)
+```
+
+**Ongoing sync (real-time pipeline):** Mock Bank Sync's `/simulate/transaction` endpoint (the demo's "a bank transaction just happened" trigger) pushes a webhook to Django, which lands the transaction in the ledger, triggers the same post-ingestion analysis pass documents get, and pushes an SSE event to the frontend — the same "one way to change data, one place data lands" rule from §4 applies here too: the sync webhook and the initial backfill both land through the identical ingestion path, never a separate one each.
+
+**Read-only enforcement:** once an account is bank-integrated, its metadata and its transactions are immutable via every existing manual-edit path (account edit/delete, manual transaction entry, transaction edit/delete) — enforced at the point each write would otherwise happen, not by hiding the controls client-side.
+
+**Notifications:** this is also the one place the platform sends anything outside itself — an OTP delivery during linking, and a sync-event notification — via a real (not mocked) email gateway. See §11 for how this interacts with the offline-deployment constraint.
 
 ---
 
@@ -134,8 +167,9 @@ A lightweight admin surface (Django admin, extended as needed) exists primarily 
 
 | Limitation | Handling |
 |---|---|
-| No real-time bank connectivity | By design — all data is user-supplied; recommendations are explicitly framed as soft suggestions, never verified eligibility |
+| No real-time bank connectivity for manual accounts | By design — manually-managed accounts stay user-supplied; recommendations are explicitly framed as soft suggestions, never verified eligibility. Bank-integrated accounts (§5b), linked via explicit OAuth+OTP consent, do receive a real-time sync feed — currently a mock standing in for an actual bank's |
 | AI output is non-deterministic | Testing splits into blocking deterministic checks (boot/shape/retrieval) and non-blocking golden-dataset quality scoring |
 | Production is fully offline | CI runs online; built images are exported, carried across the air-gap, and deployed via a human-gated step against an on-prem registry |
+| Transactional notifications need internet | Deliberate, narrow exception to the offline-only rule: OTP delivery (§5b) and sync-event notifications go out via a real email gateway. Nothing else in the system makes an outbound call past the local deployment |
 | Aggregated insights may be incomplete for a given user/period | The insight structure tolerates partial results — a missing insight does not break downstream consumers |
 | Product recommendation catalog is small/hand-authored | Kept as flat, display-ready records rather than an over-normalized schema, since it is not the system's primary data domain |
