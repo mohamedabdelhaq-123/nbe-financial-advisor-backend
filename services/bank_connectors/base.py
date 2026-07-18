@@ -34,7 +34,9 @@ class BankConnector(ABC):
     def exchange_code_for_token(self, code: str) -> dict:
         """Redeem an authorization code for an access token, after the
         provider's own redirect has handed one back to us. Returns
-        {"access_token", "refresh_token", "expires_in", "external_customer_id"}."""
+        {"access_token", "refresh_token", "expires_in", "external_customer_id",
+        "email", "name"} — email/name back a first-time bank login's User
+        provisioning (core/views/auth.py's BankLoginCallbackView)."""
 
     @abstractmethod
     def fetch_accounts(self, access_token: str) -> list[dict]:
