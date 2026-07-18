@@ -168,6 +168,7 @@ class BankAccountListCreateView(generics.ListCreateAPIView):
         return BankAccount.objects.filter(user=self.request.user).order_by("-created_at")
 
     def perform_create(self, serializer):
+        assert_bank_not_already_synced(self.request.user, serializer.validated_data["bank_name"])
         serializer.save(user=self.request.user)
 
 
@@ -197,6 +198,9 @@ class BankAccountDetailView(
     @extend_schema(responses={200: BankAccountSerializer, **error_responses(404, 422)})
     def patch(self, request, *args, **kwargs):
         assert_account_mutable(self.get_object())
+        new_bank_name = request.data.get("bank_name")
+        if new_bank_name:
+            assert_bank_not_already_synced(request.user, new_bank_name)
         return self.partial_update(request, *args, **kwargs)
 
     @extend_schema(responses={204: None, **error_responses(404, 422)})
@@ -220,4 +224,22 @@ def assert_account_mutable(account: BankAccount) -> None:
             "This account is bank-integrated and syncs automatically; "
             "it can't be edited or deleted manually.",
             code="synced_account_read_only",
+        )
+
+
+def assert_bank_not_already_synced(user, bank_name: str) -> None:
+    """
+    Raise if `bank_name` matches a bank the user already has synced
+    accounts for — that bank alone is the source of truth for its own
+    accounts once connected (services/bank_connectors/sync.py's
+    apply_synced_accounts), so a manual account can't shadow or duplicate
+    one under the same name. Accounts at any other bank are unaffected —
+    this is scoped per-bank, not a blanket restriction on the user.
+    """
+    if BankAccount.objects.filter(
+        user=user, link_type=BankAccount.LINK_TYPE_SYNCED, bank_name__iexact=bank_name
+    ).exists():
+        raise BusinessRuleError(
+            "This bank is already connected; its accounts can only arrive through sync.",
+            code="bank_account_source_of_truth",
         )

@@ -28,6 +28,7 @@ from core.serializers.statements import (
     TransactionApprovalResponseSerializer,
 )
 from core.tasks.statements import process_statement_pipeline, validate_advance
+from core.views.profile import assert_account_mutable
 from services import file_storage
 
 
@@ -390,6 +391,12 @@ class StatementTransactionApprovalView(APIView):
         if account_id:
             statement.account = get_object_or_404(BankAccount, id=account_id, user=request.user)
             statement.save(update_fields=["account"])
+
+        # Covers both the override just above and whatever normalization
+        # already inferred — a statement can't be approved onto a
+        # bank-integrated account, same rule as manual account/transaction
+        # writes (BankAccountDetailView, TransactionListCreateView).
+        assert_account_mutable(statement.account)
 
         resolved = []
         with db_transaction.atomic():
