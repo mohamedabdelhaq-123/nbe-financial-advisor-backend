@@ -13,6 +13,7 @@ blocking outbound calls via `requests`; FastAPI runs sync path operations in
 a thread pool so this doesn't block the event loop.
 """
 
+import html
 from urllib.parse import urlencode
 
 import requests
@@ -34,7 +35,7 @@ _OUTBOUND_TIMEOUT_SECONDS = 10
 
 def _error_page(message: str, status_code: int = 400) -> HTMLResponse:
     return HTMLResponse(
-        f"<html><body><h1>Error</h1><p>{message}</p></body></html>",
+        f"<html><body><h1>Error</h1><p>{html.escape(message)}</p></body></html>",
         status_code=status_code,
     )
 

@@ -12,6 +12,9 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 COPY --from=builder /install /usr/local
 COPY . .
+RUN useradd --system --no-create-home --shell /usr/sbin/nologin appuser \
+    && chown -R appuser:appuser /app
+USER appuser
 EXPOSE 8002
 
 HEALTHCHECK --interval=10s --timeout=3s --retries=5 \

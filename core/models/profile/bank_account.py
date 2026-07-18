@@ -39,6 +39,18 @@ class BankAccount(models.Model):
 
     class Meta:
         db_table = "bank_accounts"
+        constraints = [
+            # Scoped to `connection` (one per user+provider) rather than
+            # provider_slug directly: BankSyncWebhookView's lookup
+            # (connection__provider_slug, external_account_id) can only ever
+            # match one row once this holds, since a connection pins down
+            # both the user and the provider.
+            models.UniqueConstraint(
+                fields=["connection", "external_account_id"],
+                condition=models.Q(connection__isnull=False),
+                name="unique_external_account_per_connection",
+            )
+        ]
 
     def __str__(self):
         return f"{self.bank_name} - {self.masked_account_number}"

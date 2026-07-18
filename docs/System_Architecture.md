@@ -167,7 +167,7 @@ A lightweight admin surface (Django admin, extended as needed) exists primarily 
 
 | Limitation | Handling |
 |---|---|
-| No real-time bank connectivity for manual accounts | By design — manually-managed accounts stay user-supplied; recommendations are explicitly framed as soft suggestions, never verified eligibility. Bank-integrated accounts (§5b), linked via explicit OAuth+OTP consent, do receive a real-time sync feed — currently a mock standing in for an actual bank's |
+| No real-time bank connectivity for manual accounts | By design — manually-managed accounts stay user-supplied; recommendations are explicitly framed as soft suggestions, never verified eligibility. Bank-integrated accounts (§5b), linked via explicit OAuth+OTP consent, do receive a real-time sync feed — currently a mock standing in for an actual bank's own push feed |
 | AI output is non-deterministic | Testing splits into blocking deterministic checks (boot/shape/retrieval) and non-blocking golden-dataset quality scoring |
 | Production is fully offline | CI runs online; built images are exported, carried across the air-gap, and deployed via a human-gated step against an on-prem registry |
 | Transactional notifications need internet | Deliberate, narrow exception to the offline-only rule: OTP delivery (§5b) and sync-event notifications go out via a real email gateway. Nothing else in the system makes an outbound call past the local deployment |

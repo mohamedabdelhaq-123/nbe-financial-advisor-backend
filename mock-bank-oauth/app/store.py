@@ -156,24 +156,18 @@ def create_authorization_code(
     return code
 
 
-def get_valid_authorization_code(code: str) -> Optional[AuthorizationCode]:
-    """Return the code record only if it exists, is unused, and unexpired."""
+def consume_authorization_code(code: str) -> Optional[AuthorizationCode]:
+    """Validates and marks a code used atomically under one lock, returning
+    the record only on success. A separate check-then-mark (two lock
+    acquisitions) would leave a window where two concurrent /token requests
+    for the same code could both see it as unused and each mint a token —
+    defeating the single-use guarantee this is meant to enforce."""
     with _lock:
         record = _auth_codes.get(code)
-        if record is None:
+        if record is None or record.used or record.is_expired():
             return None
-        if record.used or record.is_expired():
-            return None
+        record.used = True
         return record
-
-
-def mark_authorization_code_used(code: str) -> None:
-    """Flags a code as consumed so a replay is rejected by
-    get_valid_authorization_code()."""
-    with _lock:
-        record = _auth_codes.get(code)
-        if record is not None:
-            record.used = True
 
 
 def create_refresh_token(client_id: str, customer_id: str) -> str:

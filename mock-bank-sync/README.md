@@ -14,7 +14,7 @@ update.
 
 ## How it fits with the other services
 
-```
+```text
                  login/OTP flow                 pull accounts/transactions
                  ─────────────────►             ◄───────────────────────────
    end user  ──► mock-bank-oauth                        Django backend

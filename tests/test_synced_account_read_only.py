@@ -62,6 +62,19 @@ def synced_transaction(user, synced_account):
     )
 
 
+@pytest.fixture
+def manual_transaction(user, manual_account):
+    return Transaction.objects.create(
+        user=user,
+        account=manual_account,
+        source="manual",
+        transaction_date="2026-07-01",
+        merchant_raw="Carrefour",
+        amount="150.00",
+        transaction_type="debit",
+    )
+
+
 def _assert_read_only_422(response):
     assert response.status_code == 422
     assert response.data["error"]["code"] == "synced_account_read_only"
@@ -149,3 +162,16 @@ def test_delete_transaction_on_synced_account_rejected(client, synced_transactio
     response = client.delete(f"/transactions/{synced_transaction.id}/")
     _assert_read_only_422(response)
     assert Transaction.objects.filter(id=synced_transaction.id).exists()
+
+
+def test_patch_transaction_on_manual_account_still_allowed(client, manual_transaction):
+    response = client.patch(f"/transactions/{manual_transaction.id}/", {"category": "food"})
+    assert response.status_code == 200
+    manual_transaction.refresh_from_db()
+    assert manual_transaction.category is not None
+
+
+def test_delete_transaction_on_manual_account_still_allowed(client, manual_transaction):
+    response = client.delete(f"/transactions/{manual_transaction.id}/")
+    assert response.status_code == 204
+    assert not Transaction.objects.filter(id=manual_transaction.id).exists()

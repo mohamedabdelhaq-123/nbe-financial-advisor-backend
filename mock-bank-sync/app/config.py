@@ -10,6 +10,8 @@ deploy/initdb/20-mock-bank-roles.sh.
 
 import os
 
+from sqlalchemy.engine import URL
+
 
 def _required(name: str) -> str:
     """Reads an env var, raising if it's unset — used for secrets that
@@ -63,8 +65,16 @@ def webhook_secret() -> str:
 
 
 def database_url() -> str:
-    """SQLAlchemy connection URL for this service's own mock_bank_db."""
-    return (
-        f"postgresql+psycopg2://{MOCK_BANK_DB_USER}:{mock_bank_db_password()}"
-        f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{MOCK_BANK_DB_NAME}"
+    """SQLAlchemy connection URL for this service's own mock_bank_db. Built
+    via URL.create() rather than string interpolation so a password
+    containing URL-special characters (@, :, /, #, ...) round-trips
+    correctly for both create_engine() and Alembic."""
+    url = URL.create(
+        drivername="postgresql+psycopg2",
+        username=MOCK_BANK_DB_USER,
+        password=mock_bank_db_password(),
+        host=POSTGRES_HOST,
+        port=int(POSTGRES_PORT),
+        database=MOCK_BANK_DB_NAME,
     )
+    return url.render_as_string(hide_password=False)

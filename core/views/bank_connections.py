@@ -1,6 +1,7 @@
 import secrets
 
 from django.conf import settings
+from django.db import transaction
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -108,54 +109,79 @@ class BankConnectionCallbackView(APIView):
             raise BusinessRuleError("OAuth state mismatch.", code="invalid_oauth_state")
 
         connector = get_connector(connection.provider_slug)
-        try:
-            token = connector.exchange_code_for_token(code)
-        except BankConnectorError as exc:
+
+        def _mark_failed(exc: BankConnectorError) -> None:
             connection.status = BankConnection.STATUS_FAILED
             connection.error_reason = str(exc)
             connection.oauth_state = None
             connection.save(update_fields=["status", "error_reason", "oauth_state"])
+
+        try:
+            token = connector.exchange_code_for_token(code)
+        except BankConnectorError as exc:
+            _mark_failed(exc)
             raise BusinessRuleError(
                 "Failed to complete the bank connection.", code="bank_connection_failed"
             ) from exc
 
-        connection.access_token = token["access_token"]
-        connection.refresh_token = token.get("refresh_token")
-        connection.external_customer_id = token.get("external_customer_id")
-        connection.status = BankConnection.STATUS_LINKED
-        connection.linked_at = timezone.now()
-        connection.oauth_state = None
-        connection.save(
-            update_fields=[
-                "access_token",
-                "refresh_token",
-                "external_customer_id",
-                "status",
-                "linked_at",
-                "oauth_state",
-            ]
-        )
+        access_token = token["access_token"]
+        try:
+            accounts = connector.fetch_accounts(access_token)
+        except BankConnectorError as exc:
+            # Don't persist the token/STATUS_LINKED at all if we can't even
+            # fetch the account list — a connection stuck "linked" with zero
+            # accounts, from a transient mock-bank-sync outage, is worse
+            # than surfacing the failure and letting the user retry linking.
+            _mark_failed(exc)
+            raise BusinessRuleError(
+                "Failed to complete the bank connection.", code="bank_connection_failed"
+            ) from exc
 
-        accounts = connector.fetch_accounts(connection.access_token)
         created_accounts = []
-        for acct in accounts:
-            bank_account, _ = BankAccount.objects.update_or_create(
-                connection=connection,
-                external_account_id=acct["external_account_id"],
-                defaults={
-                    "user": request.user,
-                    "link_type": BankAccount.LINK_TYPE_SYNCED,
-                    "bank_name": acct["bank_name"],
-                    "account_type": acct.get("account_type"),
-                    "masked_account_number": acct["masked_account_number"],
-                    "currency": acct.get("currency", "EGP"),
-                },
+        with transaction.atomic():
+            connection.access_token = access_token
+            connection.refresh_token = token.get("refresh_token")
+            connection.external_customer_id = token.get("external_customer_id")
+            connection.status = BankConnection.STATUS_LINKED
+            connection.linked_at = timezone.now()
+            connection.oauth_state = None
+            connection.save(
+                update_fields=[
+                    "access_token",
+                    "refresh_token",
+                    "external_customer_id",
+                    "status",
+                    "linked_at",
+                    "oauth_state",
+                ]
             )
-            created_accounts.append(bank_account)
 
-            transactions = connector.fetch_transactions(
-                connection.access_token, acct["external_account_id"]
-            )
+            for acct in accounts:
+                bank_account, _ = BankAccount.objects.update_or_create(
+                    connection=connection,
+                    external_account_id=acct["external_account_id"],
+                    defaults={
+                        "user": request.user,
+                        "link_type": BankAccount.LINK_TYPE_SYNCED,
+                        "bank_name": acct["bank_name"],
+                        "account_type": acct.get("account_type"),
+                        "masked_account_number": acct["masked_account_number"],
+                        "currency": acct.get("currency", "EGP"),
+                    },
+                )
+                created_accounts.append(bank_account)
+
+        for bank_account, acct in zip(created_accounts, accounts):
+            # Best-effort: the account is already linked and correctly
+            # persisted above regardless of whether this initial backfill
+            # succeeds — ongoing sync pushes (BankSyncWebhookView) will
+            # populate it either way.
+            try:
+                transactions = connector.fetch_transactions(
+                    access_token, acct["external_account_id"]
+                )
+            except BankConnectorError:
+                continue
             if transactions:
                 ingest_synced_transactions.delay(str(bank_account.id), transactions)
 

@@ -102,22 +102,28 @@ def mock_customer():
     customer_response.raise_for_status()
     customer = customer_response.json()
 
-    # No Django BankAccount exists yet at this point, so the webhook this
-    # triggers is expected to 404 on the backend side — only the mock
-    # ledger's own write (the transaction history itself) matters here.
-    transaction_response = requests.post(
-        f"{settings.MOCK_BANK_SYNC_SERVICE_URL}/simulate/transaction",
-        json={"account_id": customer["accounts"][0]["external_account_id"]},
-        timeout=_REQUEST_TIMEOUT_SECONDS,
-    )
-    transaction_response.raise_for_status()
+    try:
+        # No Django BankAccount exists yet at this point, so the webhook
+        # this triggers is expected to 404 on the backend side — only the
+        # mock ledger's own write (the transaction history itself) matters
+        # here.
+        transaction_response = requests.post(
+            f"{settings.MOCK_BANK_SYNC_SERVICE_URL}/simulate/transaction",
+            json={"account_id": customer["accounts"][0]["external_account_id"]},
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+        )
+        transaction_response.raise_for_status()
 
-    yield customer
-
-    requests.delete(
-        f"{settings.MOCK_BANK_SYNC_SERVICE_URL}/simulate/customer/{customer_bank_id}",
-        timeout=_REQUEST_TIMEOUT_SECONDS,
-    ).raise_for_status()
+        yield customer
+    finally:
+        # Reached even if the transaction seed above raises — otherwise a
+        # failure here would leave the customer permanently in
+        # mock-bank-sync's shared ledger (see this fixture's own docstring
+        # on why that pollution matters).
+        requests.delete(
+            f"{settings.MOCK_BANK_SYNC_SERVICE_URL}/simulate/customer/{customer_bank_id}",
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+        ).raise_for_status()
 
 
 def test_full_link_flow_against_real_running_services(client, mock_customer):
@@ -150,7 +156,13 @@ def test_full_link_flow_against_real_running_services(client, mock_customer):
         },
         timeout=_REQUEST_TIMEOUT_SECONDS,
     )
-    assert login_start_response.status_code == 502
+    # 502 is what this dev stack's placeholder Gmail credentials produce
+    # (see module docstring) and is the deterministic case unit-tested
+    # elsewhere; 200 is accepted too so this doesn't spuriously fail in an
+    # environment where real Gmail credentials happen to be configured —
+    # either way, the OTP was already generated and stored (see
+    # mock-bank-oauth/app/routes_login.py) before the email attempt below.
+    assert login_start_response.status_code in (200, 502)
 
     # 4. Bypass: read the OTP mock-bank-oauth already generated (before the
     # email attempt failed) via the debug-only endpoint.

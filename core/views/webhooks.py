@@ -17,7 +17,7 @@ from rest_framework.views import APIView
 
 from core.authentication import BankSyncServiceAuthentication, MockBankServiceAuthentication
 from core.exceptions import NotificationServiceUnavailable
-from core.models import BankAccount
+from core.models import BankAccount, BankConnection
 from core.openapi import error_responses
 from core.serializers.bank_connections import BankSyncWebhookSerializer, InternalEmailSerializer
 from core.serializers.errors import ErrorResponseSerializer
@@ -49,6 +49,7 @@ class BankSyncWebhookView(APIView):
         account = get_object_or_404(
             BankAccount,
             connection__provider_slug=data["provider_slug"],
+            connection__status=BankConnection.STATUS_LINKED,
             external_account_id=data["external_account_id"],
             link_type=BankAccount.LINK_TYPE_SYNCED,
         )

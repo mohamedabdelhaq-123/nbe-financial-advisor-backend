@@ -5,10 +5,27 @@ see conftest.py) mock_bank_db. requests.post to the Django backend's webhook
 don't depend on the backend actually running.
 """
 
+import base64
+import json
+import time
 from unittest.mock import patch
 
 from app import config
 from authlib.jose import jwt
+
+
+def _unsigned_none_alg_token(payload: dict) -> str:
+    """Hand-built {"alg": "none"} JWT (no signature segment) — authlib's own
+    high-level jwt.encode() now refuses to produce one (UnsupportedAlgorithmError),
+    so this constructs the raw compact-serialization bytes directly to
+    simulate what an attacker would actually send."""
+
+    def b64url(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    header = b64url(json.dumps({"alg": "none", "typ": "JWT"}).encode())
+    body = b64url(json.dumps(payload).encode())
+    return f"{header}.{body}."
 
 
 class _FakeWebhookResponse:
@@ -27,8 +44,11 @@ def _seed_customer(client, customer_bank_id="cust-001", email="customer@example.
 
 
 def _bearer_token(customer_id: str) -> str:
+    # exp is required: app.auth's decode enforces it as an essential claim,
+    # so a token shaped like this must match what mock-bank-oauth actually
+    # issues (always has exp) rather than the bare-minimum JWT this used to be.
     header = {"alg": "HS256"}
-    payload = {"sub": customer_id, "provider": "mock_bank"}
+    payload = {"sub": customer_id, "provider": "mock_bank", "exp": int(time.time()) + 3600}
     return jwt.encode(header, payload, config.jwt_secret()).decode("utf-8")
 
 
@@ -159,6 +179,31 @@ def test_list_accounts_missing_token_401s(client):
 
 def test_list_accounts_invalid_token_401s(client):
     response = client.get("/accounts", headers={"Authorization": "Bearer not-a-real-jwt"})
+    assert response.status_code == 401
+
+
+def test_list_accounts_token_missing_exp_401s(client):
+    # app.auth requires exp as an essential claim — a token that omits it
+    # entirely must not be treated as "never expires".
+    header = {"alg": "HS256"}
+    payload = {"sub": "any-customer-id", "provider": "mock_bank"}
+    token = jwt.encode(header, payload, config.jwt_secret()).decode("utf-8")
+
+    response = client.get("/accounts", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 401
+
+
+def test_list_accounts_alg_none_token_401s(client):
+    # app.auth restricts decoding to HS256 explicitly — authlib.jose's own
+    # default `jwt` singleton would otherwise accept an unsigned {"alg":
+    # "none"} token with an arbitrary sub claim.
+    token = _unsigned_none_alg_token(
+        {"sub": "any-customer-id", "provider": "mock_bank", "exp": 9999999999}
+    )
+
+    response = client.get("/accounts", headers={"Authorization": f"Bearer {token}"})
+
     assert response.status_code == 401
 
 

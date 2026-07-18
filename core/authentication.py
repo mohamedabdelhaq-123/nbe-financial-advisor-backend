@@ -113,7 +113,10 @@ class _SharedSecretAuthentication(BaseAuthentication):
         # matching types/lengths, so it just returns False rather than
         # raising, and either way this must actively reject, not return None
         # (see class docstring on why "not applicable" isn't safe here).
-        if not provided or not hmac.compare_digest(provided, expected):
+        # Compared as bytes, not str: hmac.compare_digest() raises TypeError
+        # on a non-ASCII str, which would otherwise turn a crafted header
+        # value into an unhandled 500 instead of a clean 401.
+        if not provided or not hmac.compare_digest(provided.encode(), expected.encode()):
             raise DRFAuthenticationFailed(
                 "Invalid service credential.", code="invalid_service_token"
             )

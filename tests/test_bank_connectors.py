@@ -124,6 +124,15 @@ def test_exchange_code_for_token_raises_on_http_failure(connector_settings, monk
         connector.exchange_code_for_token("bad-code")
 
 
+def test_exchange_code_for_token_raises_on_malformed_response(connector_settings, monkeypatch):
+    fake = _FakeSession(_FakeResponse({"token_type": "bearer"}))  # no access_token
+    monkeypatch.setattr("services.bank_connectors.mock_bank._session", fake)
+
+    connector = MockBankConnector()
+    with pytest.raises(BankConnectorError):
+        connector.exchange_code_for_token("some-code")
+
+
 # ============================================================================
 # fetch_accounts / fetch_transactions
 # ============================================================================

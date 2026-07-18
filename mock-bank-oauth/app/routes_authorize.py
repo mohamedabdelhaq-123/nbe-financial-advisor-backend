@@ -5,6 +5,8 @@ Serves the mock bank's "login" page: a single field for an opaque
 actual identity check happens over in mock-bank-sync via /login/start.
 """
 
+import html
+
 from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse
 
@@ -16,7 +18,7 @@ router = APIRouter()
 
 def _error_page(message: str, status_code: int = 400) -> HTMLResponse:
     return HTMLResponse(
-        f"<html><body><h1>Error</h1><p>{message}</p></body></html>",
+        f"<html><body><h1>Error</h1><p>{html.escape(message)}</p></body></html>",
         status_code=status_code,
     )
 

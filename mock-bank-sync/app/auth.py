@@ -11,10 +11,18 @@
 
 import time
 
-from authlib.jose import JoseError, jwt
+from authlib.jose import JoseError, JsonWebToken
 from fastapi import Header, HTTPException, status
 
 from app import config
+
+# authlib.jose's module-level `jwt` singleton is constructed to accept every
+# registered JWS algorithm, including "none" (see authlib.jose.rfc7519,
+# `jwt = JsonWebToken(list(JsonWebSignature.ALGORITHMS_REGISTRY.keys()))`) —
+# using it directly would let a caller present an unsigned {"alg": "none"}
+# token with an arbitrary `sub` claim and have it accepted. This service
+# only ever issues/verifies HS256, so restrict decoding to that explicitly.
+_jwt = JsonWebToken(["HS256"])
 
 
 def require_internal_secret(x_internal_secret: str | None = Header(default=None)) -> None:
@@ -43,9 +51,13 @@ def require_customer(authorization: str | None = Header(default=None)) -> str:
     token = authorization.split(" ", 1)[1].strip()
 
     try:
-        claims = jwt.decode(token, config.jwt_secret())
+        claims = _jwt.decode(
+            token, config.jwt_secret(), claims_options={"exp": {"essential": True}}
+        )
         # jwt.decode() only verifies the signature; validate() is what
-        # actually checks registered claims (exp/nbf/iat) against now.
+        # actually checks registered claims (exp/nbf/iat) against now, and
+        # (with essential=True above) rejects a token that omits exp
+        # entirely rather than treating a missing claim as "never expires".
         claims.validate()
     except JoseError as exc:
         raise HTTPException(

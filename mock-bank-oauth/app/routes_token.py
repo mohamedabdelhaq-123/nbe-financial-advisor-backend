@@ -44,7 +44,7 @@ def token(
     except OAuthError as exc:
         return _oauth_error_response(exc.error, exc.description)
 
-    record = store.get_valid_authorization_code(code)
+    record = store.consume_authorization_code(code)
     if record is None:
         return _oauth_error_response(
             "invalid_grant", "The authorization code is invalid, expired, or already used."
@@ -52,13 +52,13 @@ def token(
 
     # Binding the code to the redirect_uri it was issued with guards
     # against authorization-code-interception attacks (RFC 6749 §4.1.3).
+    # The code is already consumed at this point (single-use, checked above)
+    # even if this specific check then fails — a mismatched redirect_uri/
+    # client_id is still a legitimate reason to burn the code, not retry it.
     if record.redirect_uri != redirect_uri or record.client_id != client_id:
         return _oauth_error_response(
             "invalid_grant", "redirect_uri or client_id does not match the authorization request."
         )
-
-    # Single-use: mark consumed before issuing tokens.
-    store.mark_authorization_code_used(code)
 
     access_token = issue_access_token(record.customer_id)
     refresh_token = store.create_refresh_token(client_id, record.customer_id)

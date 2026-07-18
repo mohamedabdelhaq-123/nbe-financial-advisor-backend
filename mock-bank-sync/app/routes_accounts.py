@@ -14,14 +14,13 @@ from app.models import MockAccount, MockTransaction
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
 
-def _parse_uuid(value: str, *, field: str) -> uuid.UUID:
+def _parse_uuid(
+    value: str, *, field: str, status_code: int = status.HTTP_401_UNAUTHORIZED
+) -> uuid.UUID:
     try:
         return uuid.UUID(str(value))
     except (ValueError, AttributeError, TypeError):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid {field}",
-        )
+        raise HTTPException(status_code=status_code, detail=f"Invalid {field}")
 
 
 def _serialize_account(account: MockAccount) -> dict:
@@ -64,7 +63,12 @@ def list_transactions(
     """Lists an account's transactions, optionally filtered to since a given
     date. 404s if the account doesn't belong to the Bearer token's customer."""
     customer_uuid = _parse_uuid(customer_id, field="token subject")
-    account_uuid = _parse_uuid(account_id, field="account_id")
+    # 404, not 401: a malformed account_id is a bad request about a resource,
+    # not an authentication problem — and matches the "no existence leak"
+    # 404 already returned below for an account belonging to someone else.
+    account_uuid = _parse_uuid(
+        account_id, field="account_id", status_code=status.HTTP_404_NOT_FOUND
+    )
 
     # Scope the lookup to the JWT's customer_id so an account belonging to a
     # different customer 404s exactly like a nonexistent account — no

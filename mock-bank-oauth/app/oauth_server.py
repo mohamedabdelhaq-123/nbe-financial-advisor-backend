@@ -11,6 +11,7 @@ using Authlib's primitives for the security-sensitive bits: token generation
 (`authlib.jose.jwt`, used below).
 """
 
+import secrets
 import time
 from typing import Optional
 
@@ -35,8 +36,13 @@ class OAuthError(Exception):
 
 def validate_client(client_id: str, client_secret: str, expected_secret: str) -> None:
     """Raises OAuthError("invalid_client", ...) unless both the client_id
-    and client_secret match the configured values."""
-    if client_id != OAUTH_CLIENT_ID or client_secret != expected_secret:
+    and client_secret match the configured values. Compared as bytes via
+    compare_digest: client_secret is a static shared secret (worth a
+    constant-time compare), and comparing bytes rather than str sidesteps
+    compare_digest's TypeError on non-ASCII str input."""
+    client_id_ok = secrets.compare_digest(client_id.encode(), OAUTH_CLIENT_ID.encode())
+    secret_ok = secrets.compare_digest(client_secret.encode(), expected_secret.encode())
+    if not client_id_ok or not secret_ok:
         raise OAuthError("invalid_client", "client_id or client_secret is incorrect")
 
 

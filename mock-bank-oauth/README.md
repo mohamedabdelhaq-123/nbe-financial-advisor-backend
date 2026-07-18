@@ -26,7 +26,7 @@ fine, they're all short-lived by design).
   verify an OTP as a stand-in for a real bank login, and issue a signed JWT
   access token (plus opaque refresh token) once verified.
 
-```
+```text
                          ┌───────────────────┐
   backend  ──authorize──▶│  mock-bank-oauth   │
                          │  (this service)    │
@@ -213,7 +213,7 @@ uvicorn app.main:app --reload --port 8002
 
 Then visit, e.g.:
 
-```
+```text
 http://localhost:8002/authorize?client_id=nbe-backend&redirect_uri=http://localhost:3000/callback&response_type=code&state=xyz
 ```
 

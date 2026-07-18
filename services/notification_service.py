@@ -27,5 +27,8 @@ def send_email(to: str, subject: str, body: str) -> None:
     try:
         # from_email=None -> settings.DEFAULT_FROM_EMAIL.
         send_mail(subject, body, None, [to], fail_silently=False)
-    except SMTPException as exc:
+    except (SMTPException, OSError) as exc:
+        # OSError, not just SMTPException: a connection failure (SMTP host
+        # unreachable, DNS failure, connection refused/reset) surfaces as a
+        # socket-level OSError, not smtplib's own exception hierarchy.
         raise NotificationServiceError(f"Failed to send email to {to}: {exc}") from exc

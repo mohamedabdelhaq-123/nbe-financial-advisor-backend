@@ -80,6 +80,10 @@ class MockBankConnector(BankConnector):
                 "client_secret": settings.MOCK_BANK_OAUTH_CLIENT_SECRET,
             },
         )
+        if not isinstance(data, dict) or not data.get("access_token"):
+            raise BankConnectorError(
+                "mock_bank connector's /token response was missing access_token."
+            )
         return {
             "access_token": data["access_token"],
             "refresh_token": data.get("refresh_token"),
