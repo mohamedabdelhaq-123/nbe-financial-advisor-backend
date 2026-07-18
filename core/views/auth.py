@@ -522,9 +522,7 @@ class EmailVerificationConfirmView(APIView):
         data = serializer.validated_data
 
         user = User.objects.filter(id=data["user_id"]).first()
-        if user is None or not email_verification_token_generator.check_token(
-            user, data["token"]
-        ):
+        if user is None or not email_verification_token_generator.check_token(user, data["token"]):
             raise DRFValidationError({"token": "Invalid or expired token."})
 
         user.email_verified = True

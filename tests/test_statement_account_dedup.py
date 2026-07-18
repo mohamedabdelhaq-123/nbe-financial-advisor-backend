@@ -74,9 +74,7 @@ def test_two_uploads_same_bank_reuse_the_same_account(monkeypatch, user):
     stmt1.refresh_from_db()
     stmt2.refresh_from_db()
     assert stmt1.account_id == stmt2.account_id
-    assert (
-        BankAccount.objects.filter(user=user, bank_name="National Bank of Egypt").count() == 1
-    )
+    assert BankAccount.objects.filter(user=user, bank_name="National Bank of Egypt").count() == 1
 
 
 def test_different_bank_name_still_creates_a_distinct_account(monkeypatch, user):

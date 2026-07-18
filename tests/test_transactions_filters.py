@@ -32,16 +32,12 @@ def client(user):
 
 @pytest.fixture
 def account(user):
-    return BankAccount.objects.create(
-        user=user, bank_name="NBE", masked_account_number="1234"
-    )
+    return BankAccount.objects.create(user=user, bank_name="NBE", masked_account_number="1234")
 
 
 @pytest.fixture
 def other_account(user):
-    return BankAccount.objects.create(
-        user=user, bank_name="CIB", masked_account_number="5678"
-    )
+    return BankAccount.objects.create(user=user, bank_name="CIB", masked_account_number="5678")
 
 
 @pytest.fixture

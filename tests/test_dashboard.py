@@ -47,16 +47,12 @@ def category(db):
 
 @pytest.fixture
 def account(user):
-    return BankAccount.objects.create(
-        user=user, bank_name="NBE", masked_account_number="1234"
-    )
+    return BankAccount.objects.create(user=user, bank_name="NBE", masked_account_number="1234")
 
 
 @pytest.fixture
 def other_account(user):
-    return BankAccount.objects.create(
-        user=user, bank_name="CIB", masked_account_number="5678"
-    )
+    return BankAccount.objects.create(user=user, bank_name="CIB", masked_account_number="5678")
 
 
 def _make_txn(user, account, category, *, txn_date, amount, merchant, txn_type="debit"):
@@ -113,9 +109,7 @@ class TestDashboardPeriodWindow:
         resp = client.get("/dashboard/", {"period": "bogus"})
         assert resp.status_code == 422
 
-    @pytest.mark.parametrize(
-        "period", ["this_month", "last_month", "last_3_months", "this_year"]
-    )
+    @pytest.mark.parametrize("period", ["this_month", "last_month", "last_3_months", "this_year"])
     def test_each_period_value_is_accepted(self, client, budget, period):
         resp = client.get("/dashboard/", {"period": period})
         assert resp.status_code == 200
@@ -155,9 +149,7 @@ class TestDashboardAccountFilter:
     ):
         today = date.today()
         _make_txn(user, account, category, txn_date=today, amount="30.00", merchant="a1")
-        _make_txn(
-            user, other_account, category, txn_date=today, amount="999.00", merchant="a2"
-        )
+        _make_txn(user, other_account, category, txn_date=today, amount="999.00", merchant="a2")
 
         resp = client.get("/dashboard/", {"account_id": str(account.id)})
         assert resp.status_code == 200
@@ -168,11 +160,21 @@ class TestDashboardAccountFilter:
     ):
         today = date.today()
         _make_txn(
-            user, account, category, txn_date=today, amount="15.00", merchant="bal-a",
+            user,
+            account,
+            category,
+            txn_date=today,
+            amount="15.00",
+            merchant="bal-a",
             txn_type="credit",
         )
         _make_txn(
-            user, other_account, category, txn_date=today, amount="500.00", merchant="bal-b",
+            user,
+            other_account,
+            category,
+            txn_date=today,
+            amount="500.00",
+            merchant="bal-b",
             txn_type="credit",
         )
         # current_balance is read from the latest transaction's `balance`
@@ -203,9 +205,7 @@ class TestDashboardAccountFilter:
     ):
         today = date.today()
         _make_txn(user, account, category, txn_date=today, amount="100.00", merchant="c1")
-        _make_txn(
-            user, other_account, category, txn_date=today, amount="900.00", merchant="c2"
-        )
+        _make_txn(user, other_account, category, txn_date=today, amount="900.00", merchant="c2")
 
         resp = client.get("/dashboard/", {"account_id": str(account.id)})
         assert resp.status_code == 200

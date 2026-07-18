@@ -682,7 +682,9 @@ class DashboardView(APIView):
             request.user, prev_start, prev_end, account
         )
 
-        window_txns = Transaction.objects.filter(user=request.user, transaction_date__range=(start, end))
+        window_txns = Transaction.objects.filter(
+            user=request.user, transaction_date__range=(start, end)
+        )
         if account is not None:
             window_txns = window_txns.filter(account=account)
 
@@ -714,9 +716,7 @@ class DashboardView(APIView):
                     "previous_month_spend": previous_spend,
                     "previous_month_inflow": previous_inflow,
                     "spend_change_percentage": _percentage_change(current_spend, previous_spend),
-                    "inflow_change_percentage": _percentage_change(
-                        current_inflow, previous_inflow
-                    ),
+                    "inflow_change_percentage": _percentage_change(current_inflow, previous_inflow),
                 },
                 "net_worth": {"total_across_accounts": total_net_worth, "as_of_date": end},
                 "has_plan": True,
