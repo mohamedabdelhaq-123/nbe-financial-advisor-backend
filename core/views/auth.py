@@ -1,4 +1,7 @@
 from django.conf import settings
+from django.db import IntegrityError, transaction
+from django.http import Http404
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -9,13 +12,21 @@ from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from core.exceptions import BusinessRuleError
+from core.models import BankConnection, User
 from core.openapi import error_responses
 from core.serializers.auth import (
+    BankLoginCallbackSerializer,
+    BankLoginInitiateResponseSerializer,
+    BankLoginInitiateSerializer,
     LoginSerializer,
     RefreshResponseSerializer,
     SignupSerializer,
     TokenPairResponseSerializer,
 )
+from services import bank_login_states
+from services.bank_connectors import BankConnectorError, get_connector
+from services.bank_connectors.sync import apply_synced_accounts
 
 
 def _set_refresh_cookie(response, refresh_token: str) -> None:
@@ -187,3 +198,150 @@ class LogoutView(APIView):
         response = Response(status=status.HTTP_204_NO_CONTENT)
         response.delete_cookie(settings.REFRESH_TOKEN_COOKIE_NAME, path="/")
         return response
+
+
+class BankLoginInitiateView(APIView):
+    """
+    POST /auth/bank-login/initiate/ — starts signing in as a bank customer
+    rather than with an app email/password. A secondary entry point
+    alongside SignupView/LoginView, not a replacement for either: a bank
+    customer with no prior app account authenticates entirely through their
+    bank's own OAuth+OTP flow and comes back from the callback below with a
+    normal app session, same as signup/login.
+
+    There's no app user yet at this point (that's resolved in the
+    callback), so unlike the authenticated "link a bank" flow
+    (BankConnectionListCreateView, core/views/bank_connections.py) there's
+    no BankConnection row to persist `state` against — it's minted via
+    services/bank_login_states.py (Redis-backed) instead.
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request=BankLoginInitiateSerializer,
+        responses={201: BankLoginInitiateResponseSerializer, **error_responses(404, 422)},
+    )
+    def post(self, request):
+        serializer = BankLoginInitiateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        provider_slug = serializer.validated_data["provider_slug"]
+
+        try:
+            connector = get_connector(provider_slug)
+        except BankConnectorError:
+            # Unknown provider — existence-leak-avoidance style (API Design
+            # Guidelines §10), same reasoning as an unowned resource id 404ing
+            # rather than 403ing.
+            raise Http404("Unknown bank provider.")
+
+        state = bank_login_states.mint_state(provider_slug)
+        authorize_url = connector.get_authorize_url(
+            state=state, redirect_uri=settings.MOCK_BANK_OAUTH_REDIRECT_URI
+        )
+        return Response(
+            {"state": state, "authorize_url": authorize_url}, status=status.HTTP_201_CREATED
+        )
+
+
+class BankLoginCallbackView(APIView):
+    """
+    POST /auth/bank-login/callback/ — called by the frontend once the
+    provider's OAuth redirect has landed back on it with ?code&state.
+    Exchanges the code for a token, resolves which app user this bank
+    customer is (or provisions one, on a first-ever login), and returns a
+    normal token pair — the same shape SignupView/LoginView return.
+
+    Identity is resolved by (provider_slug, external_customer_id): a
+    repeat login for the same bank customer always logs into the same app
+    user. On a first-ever login, if the bank's email matches an existing
+    app user, that user is reused (their manual data under this same
+    bank's name is replaced by the real, synced data — see
+    services/bank_connectors/sync.py's apply_synced_accounts) rather than
+    creating a duplicate account.
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request=BankLoginCallbackSerializer,
+        responses={200: TokenPairResponseSerializer, **error_responses(422)},
+    )
+    def post(self, request):
+        serializer = BankLoginCallbackSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        code = serializer.validated_data["code"]
+        state = serializer.validated_data["state"]
+
+        provider_slug = bank_login_states.redeem_state(state)
+        if provider_slug is None:
+            raise BusinessRuleError("OAuth state mismatch.", code="invalid_oauth_state")
+
+        connector = get_connector(provider_slug)
+        try:
+            token = connector.exchange_code_for_token(code)
+        except BankConnectorError as exc:
+            raise BusinessRuleError(
+                "Failed to complete the bank login.", code="bank_login_failed"
+            ) from exc
+
+        connection = (
+            BankConnection.objects.select_related("user")
+            .filter(provider_slug=provider_slug, external_customer_id=token["external_customer_id"])
+            .first()
+        )
+
+        if connection is not None:
+            # Repeat login: this bank customer already has an app user and
+            # real synced data. A sync hiccup here must not lock them out —
+            # there's no other way in for a bank-provisioned user — so this
+            # is best-effort, same tolerance the ongoing webhook push has.
+            user = connection.user
+            connection.access_token = token["access_token"]
+            connection.refresh_token = token.get("refresh_token")
+            connection.save(update_fields=["access_token", "refresh_token"])
+            try:
+                accounts = connector.fetch_accounts(connection.access_token)
+                apply_synced_accounts(connection, accounts, connector)
+            except BankConnectorError:
+                pass
+            return _token_pair_response(user, status.HTTP_200_OK)
+
+        # First time this bank customer has ever logged in. Fetch accounts
+        # before writing anything — if the bank can't be reached, nothing
+        # should be persisted at all (no half-provisioned user).
+        try:
+            accounts = connector.fetch_accounts(token["access_token"])
+        except BankConnectorError as exc:
+            raise BusinessRuleError(
+                "Failed to complete the bank login.", code="bank_login_failed"
+            ) from exc
+
+        user = User.objects.filter(email=token["email"]).first()
+        try:
+            with transaction.atomic():
+                if user is None:
+                    user = User.objects.create_user(
+                        email=token["email"],
+                        name=token.get("name") or "Bank Customer",
+                        password=None,
+                    )
+                connection = BankConnection.objects.create(
+                    user=user,
+                    provider_slug=provider_slug,
+                    external_customer_id=token["external_customer_id"],
+                    status=BankConnection.STATUS_LINKED,
+                    linked_at=timezone.now(),
+                    access_token=token["access_token"],
+                    refresh_token=token.get("refresh_token"),
+                )
+                apply_synced_accounts(connection, accounts, connector)
+        except IntegrityError:
+            # A concurrent callback for the same bank customer won the
+            # race — log into the winner's user rather than erroring.
+            connection = BankConnection.objects.select_related("user").get(
+                provider_slug=provider_slug, external_customer_id=token["external_customer_id"]
+            )
+            user = connection.user
+
+        return _token_pair_response(user, status.HTTP_201_CREATED)

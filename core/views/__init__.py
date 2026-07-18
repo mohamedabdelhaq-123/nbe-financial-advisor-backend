@@ -18,7 +18,14 @@ from core.views.aggregations import (
     TransactionDetailView,
     TransactionListCreateView,
 )
-from core.views.auth import LoginView, LogoutView, RefreshView, SignupView
+from core.views.auth import (
+    BankLoginCallbackView,
+    BankLoginInitiateView,
+    LoginView,
+    LogoutView,
+    RefreshView,
+    SignupView,
+)
 from core.views.bank_connections import BankConnectionCallbackView, BankConnectionListCreateView
 from core.views.budgets import (
     BudgetHistoryView,
@@ -70,6 +77,8 @@ __all__ = [
     "LoginView",
     "RefreshView",
     "LogoutView",
+    "BankLoginInitiateView",
+    "BankLoginCallbackView",
     "MeView",
     "MePreferencesView",
     "MeConsentView",

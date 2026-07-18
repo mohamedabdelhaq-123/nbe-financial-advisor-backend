@@ -57,3 +57,27 @@ class RefreshResponseSerializer(serializers.Serializer):
     the refresh token it rotates comes from the httpOnly cookie."""
 
     access_token = serializers.CharField()
+
+
+class BankLoginInitiateSerializer(serializers.Serializer):
+    """POST /auth/bank-login/initiate/ request body."""
+
+    provider_slug = serializers.CharField(max_length=50)
+
+
+class BankLoginInitiateResponseSerializer(serializers.Serializer):
+    """POST /auth/bank-login/initiate/ response body — the frontend
+    redirects the user's browser to authorize_url to continue the bank's
+    OAuth+OTP flow, then submits state (unchanged) alongside the code the
+    provider's redirect hands back to POST /auth/bank-login/callback/."""
+
+    state = serializers.CharField()
+    authorize_url = serializers.URLField()
+
+
+class BankLoginCallbackSerializer(serializers.Serializer):
+    """POST /auth/bank-login/callback/ request body — the `code`/`state`
+    the frontend read off the provider's OAuth redirect."""
+
+    code = serializers.CharField()
+    state = serializers.CharField()
