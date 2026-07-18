@@ -6,6 +6,7 @@ from rest_framework import generics, mixins, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.exceptions import BusinessRuleError
 from core.filters.profile import BankAccountFilterSet
 from core.models import BankAccount, ConsentRecord, UserPreference
 from core.openapi import error_responses
@@ -195,8 +196,28 @@ class BankAccountDetailView(
 
     @extend_schema(responses={200: BankAccountSerializer, **error_responses(404, 422)})
     def patch(self, request, *args, **kwargs):
+        assert_account_mutable(self.get_object())
         return self.partial_update(request, *args, **kwargs)
 
-    @extend_schema(responses={204: None, **error_responses(404)})
+    @extend_schema(responses={204: None, **error_responses(404, 422)})
     def delete(self, request, *args, **kwargs):
+        assert_account_mutable(self.get_object())
         return self.destroy(request, *args, **kwargs)
+
+
+def assert_account_mutable(account: BankAccount) -> None:
+    """
+    Raise if `account` is bank-integrated and therefore read-only to the end
+    user. The one shared call every write path that touches a BankAccount or
+    its transactions goes through — BankAccountDetailView above, and
+    core.views.aggregations's TransactionListCreateView/TransactionDetailView
+    (imported from there). Lives at the view layer (not on the model itself)
+    because BusinessRuleError is a DRF/HTTP concern, not a domain one — see
+    BankAccount.is_synced's docstring.
+    """
+    if account.is_synced:
+        raise BusinessRuleError(
+            "This account is bank-integrated and syncs automatically; "
+            "it can't be edited or deleted manually.",
+            code="synced_account_read_only",
+        )

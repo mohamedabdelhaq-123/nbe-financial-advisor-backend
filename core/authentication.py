@@ -13,6 +13,9 @@ coincidence, admin tokens carry an explicit `is_admin` claim at issuance
 enforces the boundary in its own direction.
 """
 
+import hmac
+
+from django.conf import settings
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed as DRFAuthenticationFailed
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -72,3 +75,71 @@ class SSETicketAuthentication(BaseAuthentication):
         # this keeps ticket failures consistent with the 401s
         # UserJWTAuthentication/AdminJWTAuthentication already return elsewhere.
         return "Ticket"
+
+
+class _SharedSecretAuthentication(BaseAuthentication):
+    """
+    Base for the machine-to-machine credential space: no User/AdminUser at
+    all backs these calls (there's no human on the other end), just a
+    static shared secret each caller was configured with out-of-band. Every
+    subclass enforces its own boundary via its own env-var-backed secret and
+    header name, matching this module's own stated rule — "an admin token
+    and a user token are never interchangeable" — extended here to non-JWT
+    service callers the same way SSETicketAuthentication already extends it
+    to ticket-based ones.
+
+    Unlike SSETicketAuthentication (which returns None — "not applicable" —
+    on a missing ticket and relies on its view's default IsAuthenticated
+    permission class to still reject the request), this raises on a missing
+    header too, not just a wrong one. These views use AllowAny (there's no
+    User for IsAuthenticated to check), so authentication itself has to be
+    the sole gatekeeper here or a missing header would silently pass through.
+
+    authenticate() returning (None, token) leaves request.user literally
+    None, not AnonymousUser — callers on these endpoints never read
+    request.user, only the request body (see BankSyncWebhookView,
+    InternalNotificationEmailView), so this is never observed.
+    """
+
+    header_name = None
+    settings_attr = None
+
+    def authenticate(self, request):
+        provided = request.META.get(self.header_name)
+        expected = getattr(settings, self.settings_attr)
+        # constant-time compare: a static shared secret is exactly the kind
+        # of value a timing side-channel could otherwise leak byte-by-byte.
+        # Also covers "missing" (provided=None) — compare_digest requires
+        # matching types/lengths, so it just returns False rather than
+        # raising, and either way this must actively reject, not return None
+        # (see class docstring on why "not applicable" isn't safe here).
+        if not provided or not hmac.compare_digest(provided, expected):
+            raise DRFAuthenticationFailed(
+                "Invalid service credential.", code="invalid_service_token"
+            )
+        return (None, provided)
+
+    def authenticate_header(self, request):
+        return "Shared-Secret"
+
+
+class BankSyncServiceAuthentication(_SharedSecretAuthentication):
+    """Used only by POST /webhooks/bank-sync/ (core/views/webhooks.py) —
+    mock-bank-sync (later: a real bank's own sync feed) pushes transaction
+    batches here with no end-user JWT to present. Identity of which account
+    the payload belongs to is derived entirely from the payload's
+    (provider_slug, external_account_id) pair, never trusted from a
+    client-supplied user id."""
+
+    header_name = "HTTP_X_WEBHOOK_SECRET"
+    settings_attr = "BANK_SYNC_WEBHOOK_SECRET"
+
+
+class MockBankServiceAuthentication(_SharedSecretAuthentication):
+    """Used only by POST /internal/notifications/email/ (core/views/webhooks.py)
+    — called exclusively by mock-bank-oauth to deliver an OTP email through
+    the one real notification client (services/notification_service.py)
+    instead of reimplementing SMTP itself."""
+
+    header_name = "HTTP_X_SERVICE_TOKEN"
+    settings_attr = "MOCK_BANK_SERVICE_TOKEN"

@@ -70,6 +70,12 @@ class RecurringChargeFilterSet(filters.FilterSet):
 class AnomalyFilterSet(filters.FilterSet):
     """GET /analytics/anomalies"""
 
+    # See TransactionFilterSet's comment on why this can't use Meta.fields
+    # shorthand. Anomalies detected by the post-ingestion analysis pipeline
+    # (no single transaction) are still scoped to an account, so this is the
+    # only way to filter those down to one account's anomalies.
+    account_id = filters.UUIDFilter(field_name="account_id")
+
     class Meta:
         model = AnomalyFlag
         fields = {"severity": ["exact"], "resolved": ["exact"]}

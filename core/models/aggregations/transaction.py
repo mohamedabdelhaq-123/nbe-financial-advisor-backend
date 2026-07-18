@@ -3,6 +3,8 @@ import uuid
 from django.db import models
 from pgvector.django import HnswIndex, VectorField
 
+from core.constants import TRANSACTION_SOURCES
+
 
 class Transaction(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -31,7 +33,9 @@ class Transaction(models.Model):
     currency = models.CharField(max_length=10, default="EGP")
     is_recurring = models.BooleanField(default=False)
     confidence_score = models.DecimalField(max_digits=4, decimal_places=3, blank=True, null=True)
-    source = models.CharField(max_length=20, default="statement")  # statement / manual
+    source = models.CharField(
+        max_length=20, default="statement", choices=[(s, s) for s in TRANSACTION_SOURCES]
+    )
     balance = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
     transaction_type = models.CharField(max_length=20, blank=True, null=True)
     extra_fields = models.JSONField(blank=True, null=True)

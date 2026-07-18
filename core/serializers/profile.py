@@ -56,10 +56,15 @@ class BankAccountSerializer(serializers.ModelSerializer):
             "masked_account_number",
             "currency",
             "is_active",
+            "link_type",
+            "external_account_id",
             "current_balance",
             "created_at",
         ]
-        read_only_fields = ["id", "created_at"]
+        # link_type/external_account_id are backend-set (see BankConnectionCallbackView)
+        # and never client-writable — a synced account's link_type also can't
+        # be spoofed away from the client side to bypass assert_account_mutable().
+        read_only_fields = ["id", "link_type", "external_account_id", "created_at"]
 
 
 class ConsentGrantSerializer(serializers.Serializer):
