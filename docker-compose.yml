@@ -10,10 +10,14 @@ services:
       # core/migrations/0009_grant_ai_readonly_role.py), which reads
       # AI_READONLY_PASSWORD from the backend service's own environment below.
       AI_DB_PASSWORD: ${AI_DB_PASSWORD:-ai_db_pass}
+      # Consumed by deploy/initdb/20-mock-bank-roles.sh to provision
+      # mock_bank_user + mock_bank_db (mock-bank-sync's own database).
+      MOCK_BANK_DB_PASSWORD: ${MOCK_BANK_DB_PASSWORD:-mock_bank_db_pass}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # Runs ONCE on first cluster init: creates ai_user + ai_appdb so an AI
-      # service run separately against this DB can connect.
+      # Runs ONCE on first cluster init: creates ai_user + ai_appdb (and, via
+      # 20-mock-bank-roles.sh, mock_bank_user + mock_bank_db) so those
+      # services can connect.
       - ./deploy/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-appuser} -d ${POSTGRES_DB:-appdb}"]
@@ -52,6 +56,25 @@ services:
       SEAWEED_SECRET_KEY: ${SEAWEED_SECRET_KEY:-dev-seaweed-secret}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
+      # mock-bank-oauth/mock-bank-sync are real sibling containers (unlike
+      # ai-service, which stays host-run in dev) — reached by service name,
+      # no host.docker.internal needed for these.
+      MOCK_BANK_OAUTH_SERVICE_URL: http://mock-bank-oauth:8002
+      MOCK_BANK_OAUTH_CLIENT_ID: ${MOCK_BANK_OAUTH_CLIENT_ID:-nbe-backend}
+      MOCK_BANK_OAUTH_CLIENT_SECRET: ${MOCK_BANK_OAUTH_CLIENT_SECRET}
+      MOCK_BANK_OAUTH_REDIRECT_URI: ${MOCK_BANK_OAUTH_REDIRECT_URI:-http://localhost:5173/bank-connect/callback}
+      # Checked against mock-bank-oauth's X-Service-Token when it calls this
+      # backend's POST /internal/notifications/email/ (core/authentication.py's
+      # MockBankServiceAuthentication).
+      MOCK_BANK_SERVICE_TOKEN: ${MOCK_BANK_SERVICE_TOKEN}
+      MOCK_BANK_SYNC_SERVICE_URL: http://mock-bank-sync:8003
+      # Checked against mock-bank-sync's X-Webhook-Secret when it pushes to
+      # this backend's POST /webhooks/bank-sync/ (BankSyncServiceAuthentication).
+      BANK_SYNC_WEBHOOK_SECRET: ${BANK_SYNC_WEBHOOK_SECRET}
+      # Gmail SMTP (services/notification_service.py) — an existing
+      # Gmail/Workspace account + an App Password, not a real user password.
+      GMAIL_ADDRESS: ${GMAIL_ADDRESS}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD}
     volumes:
       - .:/app
       - /app/.venv  # or wherever your venv/site-packages live, see note below
@@ -92,6 +115,19 @@ services:
       SEAWEED_SECRET_KEY: ${SEAWEED_SECRET_KEY:-dev-seaweed-secret}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
+      # See backend's block above for all of these — required because this
+      # process also loads config.settings (core/tasks/bank_sync.py runs
+      # here), even though only the backend's HTTP views actually call the
+      # mock-bank-oauth/mock-bank-sync URLs directly.
+      MOCK_BANK_OAUTH_SERVICE_URL: http://mock-bank-oauth:8002
+      MOCK_BANK_OAUTH_CLIENT_ID: ${MOCK_BANK_OAUTH_CLIENT_ID:-nbe-backend}
+      MOCK_BANK_OAUTH_CLIENT_SECRET: ${MOCK_BANK_OAUTH_CLIENT_SECRET}
+      MOCK_BANK_OAUTH_REDIRECT_URI: ${MOCK_BANK_OAUTH_REDIRECT_URI:-http://localhost:5173/bank-connect/callback}
+      MOCK_BANK_SERVICE_TOKEN: ${MOCK_BANK_SERVICE_TOKEN}
+      MOCK_BANK_SYNC_SERVICE_URL: http://mock-bank-sync:8003
+      BANK_SYNC_WEBHOOK_SECRET: ${BANK_SYNC_WEBHOOK_SECRET}
+      GMAIL_ADDRESS: ${GMAIL_ADDRESS}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD}
     volumes:
       - .:/app
       - /app/.venv
@@ -112,6 +148,61 @@ services:
       seaweedfs:
         condition: service_healthy
       redis:
+        condition: service_healthy
+
+  # Mock bank identity provider — login/OTP/token issuance (services/bank_connectors/,
+  # docs: mock-bank-oauth/README.md). A real sibling container, in-repo, unlike
+  # the host-run ai-service — reached at mock-bank-oauth:8002 from backend/celery-worker.
+  mock-bank-oauth:
+    build:
+      context: ./mock-bank-oauth
+    environment:
+      MOCK_BANK_OAUTH_CLIENT_ID: ${MOCK_BANK_OAUTH_CLIENT_ID:-nbe-backend}
+      MOCK_BANK_OAUTH_CLIENT_SECRET: ${MOCK_BANK_OAUTH_CLIENT_SECRET}
+      BACKEND_INTERNAL_URL: http://backend:8000
+      MOCK_BANK_SERVICE_TOKEN: ${MOCK_BANK_SERVICE_TOKEN}
+      MOCK_BANK_SYNC_SERVICE_URL: http://mock-bank-sync:8003
+      MOCK_BANK_INTERNAL_SECRET: ${MOCK_BANK_INTERNAL_SECRET}
+      MOCK_BANK_JWT_SECRET: ${MOCK_BANK_JWT_SECRET}
+      # Lets the frontend iframe/embed this service's login page — reuses
+      # the same allow-list Django's own CORS setting already tracks, rather
+      # than keeping a second origin list in sync by hand.
+      FRONTEND_ALLOWED_ORIGINS: ${DJANGO_CORS_ALLOWED_ORIGINS:-}
+      # GET /debug/challenges/{id} (app/routes_debug.py) — lets integration
+      # tests read a generated OTP without a real email gateway. On in dev;
+      # the app itself defaults this off, so it only applies here.
+      MOCK_BANK_OAUTH_ENABLE_DEBUG_ENDPOINTS: ${MOCK_BANK_OAUTH_ENABLE_DEBUG_ENDPOINTS:-1}
+    ports:
+      - "8002:8002"  # dev convenience, same rationale as seaweedfs's published ports
+    # No healthcheck: override here — mock-bank-oauth/Dockerfile already
+    # bakes in a working one (python -c "import urllib.request...", since
+    # python:3.12-slim has no wget), same as `backend` relying on its own
+    # Dockerfile HEALTHCHECK rather than redefining one in this file.
+
+  # Mock bank ledger + real-time-event simulator (mock-bank-sync/README.md) —
+  # owns its own logical database (mock_bank_db) on the SAME shared postgres
+  # container below, provisioned by deploy/initdb/20-mock-bank-roles.sh.
+  mock-bank-sync:
+    build:
+      context: ./mock-bank-sync
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      MOCK_BANK_DB_NAME: ${MOCK_BANK_DB_NAME:-mock_bank_db}
+      MOCK_BANK_DB_USER: ${MOCK_BANK_DB_USER:-mock_bank_user}
+      MOCK_BANK_DB_PASSWORD: ${MOCK_BANK_DB_PASSWORD:-mock_bank_db_pass}
+      MOCK_BANK_INTERNAL_SECRET: ${MOCK_BANK_INTERNAL_SECRET}
+      # Must match mock-bank-oauth's value above — this service verifies the
+      # JWTs mock-bank-oauth signs, independently, with no network round trip.
+      MOCK_BANK_JWT_SECRET: ${MOCK_BANK_JWT_SECRET}
+      BACKEND_WEBHOOK_URL: http://backend:8000/webhooks/bank-sync/
+      BANK_SYNC_WEBHOOK_SECRET: ${BANK_SYNC_WEBHOOK_SECRET}
+    ports:
+      - "8003:8003"  # dev convenience, same rationale as seaweedfs's published ports
+    # No healthcheck: override here — same reasoning as mock-bank-oauth
+    # above, its own Dockerfile HEALTHCHECK already works.
+    depends_on:
+      postgres:
         condition: service_healthy
 
   redis:
