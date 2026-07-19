@@ -180,6 +180,20 @@ class ConversationAttachmentsView(APIView):
         if not file_obj:
             raise ValidationError({"file": "This field is required."})
 
+        # Record the upload as the user's own message so the thread shows what
+        # they did — always the file name (Message has no attachment field, so
+        # this is the only durable way to show the file), with the typed caption
+        # above it when present. Created before the assistant announcement so it
+        # sorts first by created_at. `file_obj.name` is read here before
+        # create_statement_from_upload() consumes the file stream.
+        caption = (request.data.get("text") or "").strip()
+        file_line = f"📎 {file_obj.name}"
+        Message.objects.create(
+            conversation=conversation,
+            sender="user",
+            content=f"{file_line}\n{caption}" if caption else file_line,
+        )
+
         statement = create_statement_from_upload(request.user, file_obj)
 
         message = Message.objects.create(

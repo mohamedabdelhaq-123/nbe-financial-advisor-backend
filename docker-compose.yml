@@ -41,12 +41,9 @@ services:
       POSTGRES_PORT: 5432
       DJANGO_DEBUG: ${DJANGO_DEBUG:-1}
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
-      # ai-service stays host-run in dev (not a compose service) — this
-      # points the container at it via Docker's host gateway, since
-      # "localhost" from inside a container means the container itself, not
-      # the host. Set USE_MOCK_AI_SERVICE=0 once ai-service is actually up
-      # on the host at :8001; it defaults on otherwise.
-      AI_SERVICE_URL: http://host.docker.internal:8001
+      # ai-service runs as a container on the nbe-dev network (make dev-up
+      # in nbe-financial-advisor-ai-service). Reach it by container name.
+      AI_SERVICE_URL: http://ai-service:8001
       USE_MOCK_AI_SERVICE: ${USE_MOCK_AI_SERVICE:-1}
       # Consumed by core/migrations/0009_grant_ai_readonly_role.py to
       # provision/refresh the ai_readonly role's password.
@@ -107,7 +104,7 @@ services:
       DJANGO_DEBUG: ${DJANGO_DEBUG:-1}
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
       # See backend's AI_SERVICE_URL/USE_MOCK_AI_SERVICE above — same reasoning.
-      AI_SERVICE_URL: http://host.docker.internal:8001
+      AI_SERVICE_URL: http://ai-service:8001
       USE_MOCK_AI_SERVICE: ${USE_MOCK_AI_SERVICE:-1}
       AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-ai_readonly_pass}
       SEAWEED_S3_ENDPOINT: ${SEAWEED_S3_ENDPOINT:-http://seaweedfs:8333}

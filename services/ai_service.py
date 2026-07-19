@@ -54,7 +54,14 @@ class AIServiceError(Exception):
 # convention — this is what tests monkeypatch in place of a live network call.
 _session = requests.Session()
 
-_REQUEST_TIMEOUT_SECONDS = 30
+# Split timeout: (connect_seconds, read_seconds).
+# The read must cover the entire AI service pipeline:
+#   - MinerU OCR: up to 600 s (ai-service's own mineru_client timeout)
+#   - LLM normalization: multiple chunks, each taking up to 600 s on a slow/queued free-tier model
+#   - Processing overhead: buffer on top
+# 3600 s gives comfortable headroom for large PDF statements in sequence.
+# Connect stays short (10 s) so genuine network failures still fail fast.
+_REQUEST_TIMEOUT_SECONDS = (10, 3600)
 
 
 def _auth_headers():

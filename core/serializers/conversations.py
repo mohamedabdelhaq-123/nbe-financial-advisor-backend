@@ -105,3 +105,6 @@ class ConversationAttachmentRequestSerializer(serializers.Serializer):
     the view reads request.FILES directly (see create_statement_from_upload())."""
 
     file = serializers.FileField()
+    # Optional caption typed alongside the file; becomes the user's message
+    # content (falls back to the file name when absent).
+    text = serializers.CharField(required=False, allow_blank=True)
