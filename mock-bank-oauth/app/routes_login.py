@@ -13,7 +13,6 @@ blocking outbound calls via `requests` and smtplib; FastAPI runs sync path
 operations in a thread pool so this doesn't block the event loop.
 """
 
-import html
 from urllib.parse import urlencode
 
 import requests
@@ -22,6 +21,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app import notification, store
 from app.config import MOCK_BANK_INTERNAL_SECRET, MOCK_BANK_SYNC_SERVICE_URL
+from app.page import render_error_page, render_page
 
 router = APIRouter()
 
@@ -29,10 +29,7 @@ _OUTBOUND_TIMEOUT_SECONDS = 10
 
 
 def _error_page(message: str, status_code: int = 400) -> HTMLResponse:
-    return HTMLResponse(
-        f"<html><body><h1>Error</h1><p>{html.escape(message)}</p></body></html>",
-        status_code=status_code,
-    )
+    return HTMLResponse(render_error_page(message), status_code=status_code)
 
 
 @router.post("/login/start")
@@ -87,10 +84,7 @@ def login_start(challenge_id: str = Form(...), customer_bank_id: str = Form(...)
     except notification.NotificationError as exc:
         return _error_page(f"Could not send the verification email: {exc}", status_code=502)
 
-    html = f"""
-    <html>
-    <head><title>Mock Bank Login - Verify</title></head>
-    <body>
+    body = f"""
         <h1>Enter verification code</h1>
         <p>We sent a 6-digit code to your email on file.</p>
         <form method="post" action="/login/verify">
@@ -99,10 +93,8 @@ def login_start(challenge_id: str = Form(...), customer_bank_id: str = Form(...)
             <input type="text" id="otp" name="otp" maxlength="6" required />
             <button type="submit">Verify</button>
         </form>
-    </body>
-    </html>
     """
-    return HTMLResponse(html)
+    return HTMLResponse(render_page("Mock Bank Login - Verify", body))
 
 
 @router.post("/login/verify")
