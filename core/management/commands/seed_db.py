@@ -627,6 +627,8 @@ class Command(BaseCommand):
         for txn in outliers:
             AnomalyFlag.objects.create(
                 transaction=txn,
+                user=txn.user,
+                account=txn.account,
                 reason=(
                     f"Amount of {txn.amount} {txn.currency} at "
                     f"{txn.merchant_normalized or txn.merchant_raw} is well above this "
