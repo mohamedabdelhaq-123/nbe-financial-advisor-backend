@@ -490,10 +490,7 @@ class PasswordResetConfirmView(APIView):
 
         redeemed = link_tickets.redeem_link_ticket(data["t"])
         user = User.objects.filter(id=redeemed["user_id"]).first() if redeemed else None
-        if (
-            user is None
-            or not password_reset_token_generator.check_token(user, redeemed["token"])
-        ):
+        if user is None or not password_reset_token_generator.check_token(user, redeemed["token"]):
             # Doesn't distinguish "no such ticket"/"no such user"/"bad or
             # expired token" — same enumeration-avoidance reasoning as
             # everywhere else here.
@@ -564,9 +561,8 @@ class EmailVerificationConfirmView(APIView):
 
         redeemed = link_tickets.redeem_link_ticket(data["t"])
         user = User.objects.filter(id=redeemed["user_id"]).first() if redeemed else None
-        if (
-            user is None
-            or not email_verification_token_generator.check_token(user, redeemed["token"])
+        if user is None or not email_verification_token_generator.check_token(
+            user, redeemed["token"]
         ):
             raise DRFValidationError({"t": "Invalid or expired link."})
 
