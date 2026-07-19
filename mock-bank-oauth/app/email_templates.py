@@ -15,7 +15,8 @@ _BASE = """\
     <title>{title}</title>
   </head>
   <body
-    style="margin:0;padding:0;background-color:#F3F5F4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+    style="margin:0;padding:0;background-color:#F3F5F4;
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
   >
     <table
       role="presentation"
@@ -31,7 +32,8 @@ _BASE = """\
             width="480"
             cellpadding="0"
             cellspacing="0"
-            style="max-width:480px;width:100%;background-color:#FFFFFF;border-radius:12px;overflow:hidden;border:1px solid #E5E9E7;"
+            style="max-width:480px;width:100%;background-color:#FFFFFF;
+              border-radius:12px;overflow:hidden;border:1px solid #E5E9E7;"
           >
             <tr>
               <td style="background-color:#2E6350;padding:24px 32px;">
