@@ -91,10 +91,15 @@ def run_normalization_phase(statement: StatementFile) -> None:
         # When the client didn't supply account_id upfront, the Normalization
         # Agent may resolve or create one — keyed on the bank_name +
         # account_hint the AI service found.
+        # Real MinerU may return null for either field when the PDF doesn't
+        # clearly show them — fall back to safe placeholders so the NOT NULL
+        # constraints are satisfied and the account is still created.
+        bank_name = normalized.get("bank_name") or "Unknown Bank"
+        account_hint = normalized.get("account_hint") or "****unknown"
         statement.account, _ = BankAccount.objects.get_or_create(
             user=statement.user,
-            bank_name=normalized["bank_name"],
-            masked_account_number=normalized["account_hint"],
+            bank_name=bank_name,
+            masked_account_number=account_hint,
         )
 
     transaction_dates = [
