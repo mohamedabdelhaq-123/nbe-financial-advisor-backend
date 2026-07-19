@@ -47,6 +47,11 @@ AI_SERVICE_URL = env.str("AI_SERVICE_URL", "http://ai-service:8001")
 # never need a live ai-service; flip to 0 once one is reachable.
 USE_MOCK_AI_SERVICE = env.bool("USE_MOCK_AI_SERVICE", True)
 
+# Gates the MX/DNS deliverability lookup core/validators.py runs on signup
+# emails. On by default; flip off for offline dev/CI environments without
+# egress (tests do this themselves — see tests/conftest.py).
+SIGNUP_EMAIL_DNS_CHECK = env.bool("SIGNUP_EMAIL_DNS_CHECK", True)
+
 # ── Mock Bank OAuth+OTP service (mock-bank-oauth/, in-repo) ───────────────────
 # services/bank_connectors/mock_bank.py's client. No USE_MOCK_*/real toggle —
 # this connector *is* the mock for now; a real bank later is a second
@@ -258,6 +263,17 @@ CORS_ALLOWED_ORIGINS = [
     )
     if o.strip()
 ]
+
+# ── Frontend base URL (email links) ────────────────────────────────────────────
+# Used to build clickable verify-email/reset-password links in the emails
+# core/views/auth.py sends — the frontend team owns building an actual page
+# at these paths; the backend just needs a stable contract: FRONTEND_URL +
+# "/verify-email" or "/reset-password", each with ?user_id=<uuid>&token=<str>
+# query params matching EmailVerificationConfirmSerializer's/
+# PasswordResetConfirmSerializer's body fields exactly, so the page can
+# forward them straight through with no translation. See
+# Frontend-Email-Handoff.md (repo root, one level up) for the full contract.
+FRONTEND_URL = env.str("FRONTEND_URL", default="http://localhost:5173")
 CORS_ALLOW_CREDENTIALS = True
 
 ROOT_URLCONF = "config.urls"

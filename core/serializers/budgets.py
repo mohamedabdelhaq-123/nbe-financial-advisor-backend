@@ -75,8 +75,12 @@ class BudgetUpdateSerializer(serializers.Serializer):
 
     name = serializers.CharField(max_length=255, required=False)
     allocations = AllocationInputSerializer(many=True, required=False)
+    # "chat", not "chat_hitl" — the chat allocation-confirmation widget
+    # (AllocationSliderTool on the frontend) sends changed_via: "chat"; that
+    # was previously rejected here since "chat_hitl" (never sent by any real
+    # caller) was the only chat-flavored choice accepted.
     changed_via = serializers.ChoiceField(
-        choices=["dashboard", "chat_hitl", "onboarding"], required=False, default="dashboard"
+        choices=["dashboard", "chat", "onboarding"], required=False, default="dashboard"
     )
 
     def validate_allocations(self, allocations):

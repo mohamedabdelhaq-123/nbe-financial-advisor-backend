@@ -145,9 +145,46 @@ def test_credit_only_transaction_creates_no_anomaly(account):
 
 
 def test_sends_notification_email(account):
+    # This debit payload is also the largest (only) debit/fee transaction in
+    # its month, so USE_MOCK_AI_SERVICE's heuristic flags it as an anomaly
+    # too (see test_anomaly_also_sends_a_notification_email below) — that
+    # fires its own "Unusual activity detected" email alongside this one, so
+    # this asserts on the sync-completed email specifically rather than
+    # assuming it's the only thing in the outbox.
     ingest_synced_transactions(str(account.id), [_debit_payload()])
 
-    assert len(mail.outbox) == 1
-    sent = mail.outbox[0]
+    sync_emails = [m for m in mail.outbox if m.subject == "New transactions synced"]
+    assert len(sync_emails) == 1
+    sent = sync_emails[0]
     assert sent.to == [account.user.email]
     assert "1" in sent.body  # count of new transactions
+
+
+def test_anomaly_also_sends_a_notification_email(account, fake_redis, monkeypatch):
+    # ai_service.run_post_ingestion_analysis mocked directly (rather than
+    # relying on USE_MOCK_AI_SERVICE's own "largest debit/fee transaction in
+    # the month" heuristic, which is sensitive to what "today" is relative
+    # to the fixed 2026-07-01 transaction date above) so this test exercises
+    # exactly the AnomalyFlag-creation -> notify() path added in this
+    # checkpoint, independent of that heuristic.
+    import core.tasks.bank_sync as bank_sync_module
+
+    def _fake_analysis(user_id, account_id, month):
+        return {
+            "anomalies": [
+                {
+                    "category": "food",
+                    "month": month,
+                    "amount": "500.00",
+                    "reason": "unusually large charge",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(bank_sync_module.ai_service, "run_post_ingestion_analysis", _fake_analysis)
+
+    ingest_synced_transactions(str(account.id), [_debit_payload()])
+
+    anomaly_emails = [m for m in mail.outbox if m.subject == "Unusual activity detected"]
+    assert len(anomaly_emails) == 1
+    assert anomaly_emails[0].to == [account.user.email]

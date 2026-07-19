@@ -30,6 +30,8 @@ from core.views import (
     ConversationMessagesView,
     DashboardGoalView,
     DashboardView,
+    EmailVerificationConfirmView,
+    EmailVerificationRequestView,
     EventStreamView,
     FeedbackCreateView,
     GoalView,
@@ -43,6 +45,8 @@ from core.views import (
     MeView,
     MonthlySummariesView,
     NetWorthView,
+    PasswordResetConfirmView,
+    PasswordResetRequestView,
     RecommendationFeedbackView,
     RecommendationsView,
     RecurringChargesView,
@@ -85,6 +89,10 @@ urlpatterns = [
     # receives a normal token pair back.
     path("auth/bank-login/initiate/", BankLoginInitiateView.as_view()),
     path("auth/bank-login/callback/", BankLoginCallbackView.as_view()),
+    path("auth/password-reset/request/", PasswordResetRequestView.as_view()),
+    path("auth/password-reset/confirm/", PasswordResetConfirmView.as_view()),
+    path("auth/verify-email/request/", EmailVerificationRequestView.as_view()),
+    path("auth/verify-email/confirm/", EmailVerificationConfirmView.as_view()),
     # 2. Profile & Preferences (API_Endpoints_1.md §2)
     path("users/me/", MeView.as_view()),
     path("users/me/preferences/", MePreferencesView.as_view()),

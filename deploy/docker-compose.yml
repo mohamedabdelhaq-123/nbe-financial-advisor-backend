@@ -39,6 +39,11 @@ services:
       # Redoc's "Try it out" requests the same way, or they 404/hit the
       # frontend's catch-all instead of this service.
       API_URL_PREFIX: /api
+      # Deploy's own root .env gets baked into this image at build time
+      # (Dockerfile's COPY . .), which would otherwise silently leak in the
+      # dev value (:5173) — explicit override here to the address nginx
+      # actually serves the frontend on in this stack.
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
       AI_SERVICE_URL: http://ai-service:8001
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
       # Consumed by core/migrations/0009_grant_ai_readonly_role.py to

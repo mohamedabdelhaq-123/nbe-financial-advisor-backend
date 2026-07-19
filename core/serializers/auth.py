@@ -2,6 +2,7 @@ from django.contrib.auth import authenticate
 from rest_framework import serializers
 
 from core.models import User
+from core.validators import validate_signup_email
 
 
 class SignupSerializer(serializers.ModelSerializer):
@@ -15,6 +16,11 @@ class SignupSerializer(serializers.ModelSerializer):
         # unique=True constraint, so a duplicate signup surfaces as a normal
         # 422 validation error (via core/exceptions.py) rather than an
         # unhandled IntegrityError.
+
+    def validate_email(self, value):
+        # Syntax (RFC-grounded, stricter than Django's built-in EmailField
+        # regex) + MX/DNS deliverability check — see core/validators.py.
+        return validate_signup_email(value)
 
     def create(self, validated_data):
         # UserManager.create_user() calls set_password() internally — never
@@ -81,3 +87,29 @@ class BankLoginCallbackSerializer(serializers.Serializer):
 
     code = serializers.CharField()
     state = serializers.CharField()
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """POST /auth/password-reset/request body. Always answered with a
+    generic 202 regardless of whether `email` matches a real account (same
+    enumeration-avoidance reasoning as LoginSerializer's generic error)."""
+
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """POST /auth/password-reset/confirm body — `user_id`/`token` come from
+    the link emailed by the request step above."""
+
+    user_id = serializers.UUIDField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, min_length=8)
+
+
+class EmailVerificationConfirmSerializer(serializers.Serializer):
+    """POST /auth/verify-email/confirm body — `user_id`/`token` come from
+    the link emailed on signup (or re-sent via
+    POST /auth/verify-email/request)."""
+
+    user_id = serializers.UUIDField()
+    token = serializers.CharField()

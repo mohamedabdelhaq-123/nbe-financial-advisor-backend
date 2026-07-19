@@ -81,32 +81,33 @@ def ingest_synced_transactions(bank_account_id: str, transactions: list[dict]) -
                 # committed; this is best-effort enrichment on top.
                 continue
             for anomaly in result.get("anomalies", []):
-                anomalies_found.append(
-                    AnomalyFlag.objects.create(
-                        user=account.user,
-                        account=account,
-                        category=anomaly.get("category"),
-                        month=f"{anomaly['month']}-01",
-                        amount=anomaly.get("amount"),
-                        reason=anomaly.get("reason", ""),
-                        # The AI service's anomaly shape has no severity field
-                        # (services/ai_service.py's mock doesn't return one) —
-                        # "medium" is a placeholder default, not a real
-                        # heuristic. Revisit once the real service defines one.
-                        severity="medium",
-                    )
+                anomaly_flag = AnomalyFlag.objects.create(
+                    user=account.user,
+                    account=account,
+                    category=anomaly.get("category"),
+                    month=f"{anomaly['month']}-01",
+                    amount=anomaly.get("amount"),
+                    reason=anomaly.get("reason", ""),
+                    # The AI service's anomaly shape has no severity field
+                    # (services/ai_service.py's mock doesn't return one) —
+                    # "medium" is a placeholder default, not a real
+                    # heuristic. Revisit once the real service defines one.
+                    severity="medium",
+                )
+                anomalies_found.append(anomaly_flag)
+                notification_service.notify(
+                    account.user,
+                    "Unusual activity detected",
+                    f"We noticed unusual activity in '{anomaly_flag.category}' "
+                    f"({anomaly_flag.amount} {account.currency}) on {account.bank_name}: "
+                    f"{anomaly_flag.reason}",
                 )
 
-        try:
-            notification_service.send_email(
-                account.user.email,
-                "New transactions synced",
-                f"{len(created)} new transaction(s) were synced from {account.bank_name}.",
-            )
-        except notification_service.NotificationServiceError:
-            # Same reasoning as the AI-service call above — don't fail
-            # ingestion over a notification that couldn't be sent.
-            pass
+        notification_service.notify(
+            account.user,
+            "New transactions synced",
+            f"{len(created)} new transaction(s) were synced from {account.bank_name}.",
+        )
     finally:
         event_bus.publish_user_event(
             account.user_id,
