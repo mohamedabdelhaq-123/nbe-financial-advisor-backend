@@ -50,7 +50,7 @@ services:
       # provision/refresh the ai_readonly role's password.
       AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-ai_readonly_pass}
       SEAWEED_S3_ENDPOINT: http://seaweedfs:8333
-      SEAWEED_ACCESS_KEY: ${SEAWEED_ACCESS_KEY}
+      SEAWEED_ACCESS_KEY: ${SEAWEED_ACCESS_KEY:-dev-seaweed-key}
       SEAWEED_SECRET_KEY: ${SEAWEED_SECRET_KEY}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0

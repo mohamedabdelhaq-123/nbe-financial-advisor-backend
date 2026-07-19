@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}Financial Advisor{% endblock %}</title>
+  </head>
+  <body
+    style="margin:0;padding:0;background-color:#F3F5F4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+  >
+    <table
+      role="presentation"
+      width="100%"
+      cellpadding="0"
+      cellspacing="0"
+      style="background-color:#F3F5F4;padding:32px 16px;"
+    >
+      <tr>
+        <td align="center">
+          <table
+            role="presentation"
+            width="480"
+            cellpadding="0"
+            cellspacing="0"
+            style="max-width:480px;width:100%;background-color:#FFFFFF;border-radius:12px;overflow:hidden;border:1px solid #E5E9E7;"
+          >
+            <tr>
+              <td style="background-color:#2E6350;padding:24px 32px;">
+                <span style="color:#FFFFFF;font-size:18px;font-weight:600;letter-spacing:-0.01em;">
+                  Financial Advisor
+                </span>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px;">{% block content %}{% endblock %}</td>
+            </tr>
+            <tr>
+              <td style="padding:20px 32px;border-top:1px solid #E5E9E7;">
+                <p style="margin:0;color:#8A938F;font-size:12px;line-height:1.5;">
+                  National Bank of Egypt · If you didn't expect this email, you can
+                  safely ignore it.
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

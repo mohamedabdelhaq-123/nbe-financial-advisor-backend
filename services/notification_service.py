@@ -13,7 +13,7 @@ reason to take on a paid provider's setup cost before it's actually needed.
 
 from smtplib import SMTPException
 
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives, send_mail
 
 
 class NotificationServiceError(Exception):
@@ -21,12 +21,23 @@ class NotificationServiceError(Exception):
     instead of smtplib's own exception hierarchy."""
 
 
-def send_email(to: str, subject: str, body: str) -> None:
-    """Sends a plain-text email via the configured Gmail SMTP account.
-    Raises NotificationServiceError on any send failure."""
+def send_email(to: str, subject: str, body: str, html_body: str | None = None) -> None:
+    """
+    Sends an email via the configured Gmail SMTP account. `body` is always
+    sent (either as the whole plain-text email, or as the plain-text
+    fallback part of a multipart message when `html_body` is given — every
+    client that can't/won't render HTML, plus spam filters that weigh a
+    missing text part negatively, still gets a readable message).
+    Raises NotificationServiceError on any send failure.
+    """
     try:
-        # from_email=None -> settings.DEFAULT_FROM_EMAIL.
-        send_mail(subject, body, None, [to], fail_silently=False)
+        if html_body is not None:
+            # from_email=None -> settings.DEFAULT_FROM_EMAIL.
+            message = EmailMultiAlternatives(subject, body, None, [to])
+            message.attach_alternative(html_body, "text/html")
+            message.send(fail_silently=False)
+        else:
+            send_mail(subject, body, None, [to], fail_silently=False)
     except (SMTPException, OSError) as exc:
         # OSError, not just SMTPException: a connection failure (SMTP host
         # unreachable, DNS failure, connection refused/reset) surfaces as a

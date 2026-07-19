@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app import notification, store
 from app.config import MOCK_BANK_INTERNAL_SECRET, MOCK_BANK_SYNC_SERVICE_URL
+from app.email_templates import render_otp_email
 from app.page import render_error_page, render_page
 
 router = APIRouter()
@@ -79,7 +80,10 @@ def login_start(challenge_id: str = Form(...), customer_bank_id: str = Form(...)
     # loud, clear failure here.
     try:
         notification.send_email(
-            email, "Your bank verification code", f"Your verification code is {otp}"
+            email,
+            "Your bank verification code",
+            f"Your verification code is {otp}",
+            html_body=render_otp_email(otp),
         )
     except notification.NotificationError as exc:
         return _error_page(f"Could not send the verification email: {exc}", status_code=502)

@@ -36,7 +36,11 @@ def _serialize_account(account: MockAccount) -> dict:
 def _serialize_transaction(transaction: MockTransaction, currency: str) -> dict:
     return {
         "external_transaction_id": str(transaction.id),
-        "transaction_date": transaction.transaction_date.isoformat(),
+        # Date-only: the Django side's Transaction.transaction_date is a
+        # DateField (no time component), and its webhook serializer
+        # rejects a full datetime string — this mock ledger tracks a full
+        # timestamp internally, but only the date crosses the wire.
+        "transaction_date": transaction.transaction_date.date().isoformat(),
         "merchant_raw": transaction.merchant,
         "amount": str(transaction.amount),
         "transaction_type": transaction.transaction_type,
