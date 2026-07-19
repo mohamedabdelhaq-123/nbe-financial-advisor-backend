@@ -8,6 +8,7 @@ Django's test environment already swaps EMAIL_BACKEND for the locmem backend
 asserted against django.core.mail.outbox directly.
 """
 
+from django.conf import settings
 from django.core import mail
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
@@ -34,11 +35,16 @@ class TestSignupSendsVerificationEmail:
 
         user = User.objects.get(email="new-signup@example.com")
         assert user.email_verified is False
+        assert f"{settings.FRONTEND_URL}/verify-email?user_id={user.id}&token=" in (
+            mail.outbox[0].body
+        )
 
 
 class TestPasswordResetRequest:
     def test_existing_email_gets_a_reset_email_and_a_202(self, db):
-        User.objects.create_user(email="reset-me@example.com", password="old-password", name="X")
+        user = User.objects.create_user(
+            email="reset-me@example.com", password="old-password", name="X"
+        )
 
         resp = _client().post(
             "/auth/password-reset/request/", {"email": "reset-me@example.com"}, format="json"
@@ -46,6 +52,9 @@ class TestPasswordResetRequest:
         assert resp.status_code == 202
         assert len(mail.outbox) == 1
         assert mail.outbox[0].to == ["reset-me@example.com"]
+        assert f"{settings.FRONTEND_URL}/reset-password?user_id={user.id}&token=" in (
+            mail.outbox[0].body
+        )
 
     def test_nonexistent_email_still_returns_202_but_sends_nothing(self, db):
         resp = _client().post(
@@ -150,6 +159,9 @@ class TestEmailVerificationRequest:
         assert resp.status_code == 202
         assert len(mail.outbox) == 1
         assert mail.outbox[0].to == ["verify-me@example.com"]
+        assert f"{settings.FRONTEND_URL}/verify-email?user_id={user.id}&token=" in (
+            mail.outbox[0].body
+        )
 
     def test_requires_authentication(self, db):
         resp = _client().post("/auth/verify-email/request/")

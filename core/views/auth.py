@@ -72,6 +72,21 @@ def _token_pair_response(user, status_code):
     return response
 
 
+def _verify_email_link(user, token):
+    """The frontend page these links point at doesn't exist yet — see
+    Frontend-Email-Handoff.md (repo root) for the exact contract: query
+    param names are deliberately identical to
+    EmailVerificationConfirmSerializer's body fields, so the page can
+    forward them straight through with no translation."""
+    return f"{settings.FRONTEND_URL}/verify-email?user_id={user.id}&token={token}"
+
+
+def _reset_password_link(user, token):
+    """Same reasoning as _verify_email_link, for
+    PasswordResetConfirmSerializer's body fields."""
+    return f"{settings.FRONTEND_URL}/reset-password?user_id={user.id}&token={token}"
+
+
 def _send_verification_email(user):
     """
     Best-effort — same "don't fail the parent action over a notification"
@@ -84,9 +99,8 @@ def _send_verification_email(user):
         notification_service.send_email(
             user.email,
             "Verify your email",
-            "Confirm your email address by providing the following to the app:\n\n"
-            f"user_id: {user.id}\n"
-            f"token: {token}\n\n"
+            "Confirm your email address by visiting the link below:\n\n"
+            f"{_verify_email_link(user, token)}\n\n"
             "This link expires in a few days.",
         )
     except notification_service.NotificationServiceError:
@@ -417,9 +431,8 @@ class PasswordResetRequestView(APIView):
                 notification_service.send_email(
                     user.email,
                     "Reset your password",
-                    "Reset your password by providing the following to the app:\n\n"
-                    f"user_id: {user.id}\n"
-                    f"token: {token}\n\n"
+                    "Reset your password by visiting the link below:\n\n"
+                    f"{_reset_password_link(user, token)}\n\n"
                     "If you didn't request this, you can ignore this email.",
                 )
             except notification_service.NotificationServiceError:
@@ -490,9 +503,8 @@ class EmailVerificationRequestView(APIView):
             notification_service.send_email(
                 request.user.email,
                 "Verify your email",
-                "Confirm your email address by providing the following to the app:\n\n"
-                f"user_id: {request.user.id}\n"
-                f"token: {token}\n\n"
+                "Confirm your email address by visiting the link below:\n\n"
+                f"{_verify_email_link(request.user, token)}\n\n"
                 "This link expires in a few days.",
             )
         except notification_service.NotificationServiceError as exc:

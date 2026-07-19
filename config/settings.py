@@ -258,6 +258,17 @@ CORS_ALLOWED_ORIGINS = [
     )
     if o.strip()
 ]
+
+# ── Frontend base URL (email links) ────────────────────────────────────────────
+# Used to build clickable verify-email/reset-password links in the emails
+# core/views/auth.py sends — the frontend team owns building an actual page
+# at these paths; the backend just needs a stable contract: FRONTEND_URL +
+# "/verify-email" or "/reset-password", each with ?user_id=<uuid>&token=<str>
+# query params matching EmailVerificationConfirmSerializer's/
+# PasswordResetConfirmSerializer's body fields exactly, so the page can
+# forward them straight through with no translation. See
+# Frontend-Email-Handoff.md (repo root, one level up) for the full contract.
+FRONTEND_URL = env.str("FRONTEND_URL", default="http://localhost:5173")
 CORS_ALLOW_CREDENTIALS = True
 
 ROOT_URLCONF = "config.urls"
