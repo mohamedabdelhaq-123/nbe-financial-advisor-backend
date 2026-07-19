@@ -56,6 +56,23 @@ class BankConnectionListCreateView(generics.ListAPIView):
             # rather than 403ing.
             raise Http404("Unknown bank provider.")
 
+        # Already linked to this provider: update_or_create below matches on
+        # (user, provider_slug) alone, with no way to tell "no connection
+        # yet" apart from "already linked" — without this guard, initiating
+        # again would silently downgrade a working linked connection back to
+        # pending_otp (breaking its ongoing webhook sync) until the OTP
+        # dance is redone, even though nothing about the existing link
+        # actually failed.
+        existing = BankConnection.objects.filter(
+            user=request.user, provider_slug=provider_slug
+        ).first()
+        if existing is not None and existing.status == BankConnection.STATUS_LINKED:
+            raise BusinessRuleError(
+                "This bank is already linked.",
+                code="bank_already_linked",
+                fields={"connection_id": str(existing.id)},
+            )
+
         # update_or_create rather than a plain create: relinking after a
         # revoke (or retrying a stalled pending_otp) reuses the same row
         # instead of accumulating dead ones. No DB-level uniqueness
