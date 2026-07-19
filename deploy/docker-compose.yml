@@ -54,6 +54,22 @@ services:
       SEAWEED_SECRET_KEY: ${SEAWEED_SECRET_KEY}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
+      # Mock bank OAuth+OTP identity provider + ledger (mock-bank-oauth/,
+      # mock-bank-sync/, in-repo) — reached by service name inside this
+      # compose network, same as ai-service above.
+      MOCK_BANK_OAUTH_SERVICE_URL: http://mock-bank-oauth:8002
+      MOCK_BANK_OAUTH_CLIENT_ID: ${MOCK_BANK_OAUTH_CLIENT_ID:-nbe-backend}
+      MOCK_BANK_OAUTH_CLIENT_SECRET: ${MOCK_BANK_OAUTH_CLIENT_SECRET}
+      MOCK_BANK_OAUTH_REDIRECT_URI: ${MOCK_BANK_OAUTH_REDIRECT_URI:-http://localhost:8080/bank-connect/callback}
+      # Browser-facing address for the authorize_url handed to the frontend
+      # (services/bank_connectors/mock_bank.py's get_authorize_url()) — NOT
+      # yet routed through nginx in this stack (no /bank-oauth/-style location
+      # in nginx.conf and no published port on mock-bank-oauth below), so
+      # this needs a real reachable value before the bank-login flow works
+      # end-to-end here. Left as a placeholder for whoever wires that up.
+      MOCK_BANK_OAUTH_PUBLIC_URL: ${MOCK_BANK_OAUTH_PUBLIC_URL:-http://localhost:8002}
+      MOCK_BANK_SYNC_SERVICE_URL: http://mock-bank-sync:8003
+      BANK_SYNC_WEBHOOK_SECRET: ${BANK_SYNC_WEBHOOK_SECRET}
     expose: ["8000"]                  # internal only — reached via nginx /api/
     depends_on:
       postgres:
@@ -83,6 +99,16 @@ services:
       SEAWEED_SECRET_KEY: ${SEAWEED_SECRET_KEY}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
+      # See backend's mock-bank-oauth/mock-bank-sync block above — same
+      # reasoning as AI_SERVICE_URL above (this process also loads
+      # config.settings, core/tasks/bank_sync.py runs here).
+      MOCK_BANK_OAUTH_SERVICE_URL: http://mock-bank-oauth:8002
+      MOCK_BANK_OAUTH_CLIENT_ID: ${MOCK_BANK_OAUTH_CLIENT_ID:-nbe-backend}
+      MOCK_BANK_OAUTH_CLIENT_SECRET: ${MOCK_BANK_OAUTH_CLIENT_SECRET}
+      MOCK_BANK_OAUTH_REDIRECT_URI: ${MOCK_BANK_OAUTH_REDIRECT_URI:-http://localhost:8080/bank-connect/callback}
+      MOCK_BANK_OAUTH_PUBLIC_URL: ${MOCK_BANK_OAUTH_PUBLIC_URL:-http://localhost:8002}
+      MOCK_BANK_SYNC_SERVICE_URL: http://mock-bank-sync:8003
+      BANK_SYNC_WEBHOOK_SECRET: ${BANK_SYNC_WEBHOOK_SECRET}
     # Overrides the image's baked-in HEALTHCHECK (Dockerfile hits
     # localhost:8000/health/, which nothing serves here) with a
     # Celery-native worker ping — same fix as docker-compose.yml's
@@ -99,6 +125,61 @@ services:
       seaweedfs:
         condition: service_healthy
       redis:
+        condition: service_healthy
+
+  # Mock bank OAuth+OTP identity provider (mock-bank-oauth/README.md) — a
+  # real sibling container, same as in docker-compose.yml. No build args:
+  # this service's Dockerfile has no dev/prod variant.
+  #
+  # NOT YET publicly reachable in this stack: /authorize is a browser-facing
+  # page (the frontend redirects the user's browser here directly), but
+  # there's no nginx location routing to it below and no port published on
+  # this service — nginx.conf and MOCK_BANK_OAUTH_PUBLIC_URL above both need
+  # updating together once the team decides how this should be exposed
+  # (a dedicated nginx location, e.g. same shape as /api/, is the likely
+  # answer). Added here so the container/env wiring exists to build on.
+  mock-bank-oauth:
+    build:
+      context: ../mock-bank-oauth
+    environment:
+      MOCK_BANK_OAUTH_CLIENT_ID: ${MOCK_BANK_OAUTH_CLIENT_ID:-nbe-backend}
+      MOCK_BANK_OAUTH_CLIENT_SECRET: ${MOCK_BANK_OAUTH_CLIENT_SECRET}
+      MOCK_BANK_OAUTH_GMAIL_ADDRESS: ${MOCK_BANK_OAUTH_GMAIL_ADDRESS}
+      MOCK_BANK_OAUTH_GMAIL_APP_PASSWORD: ${MOCK_BANK_OAUTH_GMAIL_APP_PASSWORD}
+      MOCK_BANK_SYNC_SERVICE_URL: http://mock-bank-sync:8003
+      MOCK_BANK_INTERNAL_SECRET: ${MOCK_BANK_INTERNAL_SECRET}
+      MOCK_BANK_JWT_SECRET: ${MOCK_BANK_JWT_SECRET}
+      FRONTEND_ALLOWED_ORIGINS: ${FRONTEND_URL:-http://localhost:8080}
+      # Debug-only OTP reader — off by default (unlike the dev stack's
+      # docker-compose.yml, which turns it on). Leave off here; flip on only
+      # for a deliberate, temporary debugging session.
+      MOCK_BANK_OAUTH_ENABLE_DEBUG_ENDPOINTS: ${MOCK_BANK_OAUTH_ENABLE_DEBUG_ENDPOINTS:-0}
+    expose: ["8002"]                  # internal only for now — see note above
+
+  # Mock bank ledger (mock-bank-sync/README.md) — owns its own logical
+  # database (mock_bank_db) on the SAME shared postgres service above,
+  # provisioned by initdb/20-mock-bank-roles.sh. Purely server-to-server
+  # (webhook target + JWT-verified account/transaction reads), so unlike
+  # mock-bank-oauth this one has no public-reachability gap: internal-only
+  # is correct as-is.
+  mock-bank-sync:
+    build:
+      context: ../mock-bank-sync
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      MOCK_BANK_DB_NAME: ${MOCK_BANK_DB_NAME:-mock_bank_db}
+      MOCK_BANK_DB_USER: ${MOCK_BANK_DB_USER:-mock_bank_user}
+      MOCK_BANK_DB_PASSWORD: ${MOCK_BANK_DB_PASSWORD:-mock_bank_db_pass}
+      MOCK_BANK_INTERNAL_SECRET: ${MOCK_BANK_INTERNAL_SECRET}
+      # Must match mock-bank-oauth's value above — this service verifies the
+      # JWTs mock-bank-oauth signs, independently, with no network round trip.
+      MOCK_BANK_JWT_SECRET: ${MOCK_BANK_JWT_SECRET}
+      BACKEND_WEBHOOK_URL: http://backend:8000/webhooks/bank-sync/
+      BANK_SYNC_WEBHOOK_SECRET: ${BANK_SYNC_WEBHOOK_SECRET}
+    expose: ["8003"]                  # internal only — Pattern A
+    depends_on:
+      postgres:
         condition: service_healthy
 
   redis:
@@ -178,9 +259,13 @@ services:
       # core/migrations/0009_grant_ai_readonly_role.py), which reads
       # AI_READONLY_PASSWORD from the backend service's own environment above.
       AI_DB_PASSWORD: ${AI_DB_PASSWORD:-ai_db_pass}
+      # Consumed by initdb/20-mock-bank-roles.sh to provision
+      # mock_bank_user + mock_bank_db (mock-bank-sync's own database).
+      MOCK_BANK_DB_PASSWORD: ${MOCK_BANK_DB_PASSWORD:-mock_bank_db_pass}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # Runs ONCE on first cluster init: creates ai_user + ai_appdb.
+      # Runs ONCE on first cluster init: creates ai_user + ai_appdb (and, via
+      # 20-mock-bank-roles.sh, mock_bank_user + mock_bank_db).
       - ./initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-appuser} -d ${POSTGRES_DB:-appdb}"]

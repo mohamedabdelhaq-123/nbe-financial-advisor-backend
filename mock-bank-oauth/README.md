@@ -19,30 +19,25 @@ fine, they're all short-lived by design).
   transaction database. This service calls its
   `GET /internal/customers/lookup` endpoint to resolve the opaque
   `customer_bank_id` a user types in to a real `customer_id`/`email`.
-- **The main Django backend** owns email delivery. This service calls its
-  `POST /internal/notifications/email/` endpoint to send the OTP — it does
-  **not** send email itself.
+- **This service** owns OTP email delivery itself, via its own Gmail SMTP
+  account (`app/notification.py`) — the same way a real bank's identity
+  provider owns its entire customer authentication channel end-to-end,
+  independently of any relying party. It never calls back into the main
+  Django backend for anything.
 - This service's only job is: run the OAuth2 authorization-code dance,
   verify an OTP as a stand-in for a real bank login, and issue a signed JWT
   access token (plus opaque refresh token) once verified.
 
 ```text
                          ┌───────────────────┐
-  backend  ──authorize──▶│  mock-bank-oauth   │
-                         │  (this service)    │
-                         └─────────┬──────────┘
-                                   │ lookup customer_bank_id
+  backend  ──authorize──▶│  mock-bank-oauth   │──── OTP email (Gmail SMTP)
+                         │  (this service)    │            │
+                         └─────────┬──────────┘            ▼
+                                   │ lookup customer_bank_id  customer's inbox
                                    ▼
                          ┌───────────────────┐
                          │   mock-bank-sync   │  (owns customer directory,
                          │                    │   accounts, transactions)
-                         └───────────────────┘
-
-                         ┌───────────────────┐
-  mock-bank-oauth ──────▶│  Django backend    │  (owns email delivery)
-  POST /internal/        │  /internal/        │
-  notifications/email/   │  notifications/    │
-                         │  email/             │
                          └───────────────────┘
 ```
 
@@ -109,12 +104,12 @@ Form/body: `challenge_id`, `customer_bank_id`.
 3. On success, generates a cryptographically random 6-digit OTP
    (`secrets.randbelow`), stores it against the challenge with a 5-minute
    expiry, and attaches the resolved `customer_id`/`email`.
-4. Calls `POST {BACKEND_INTERNAL_URL}/internal/notifications/email/` with
-   header `X-Service-Token: <MOCK_BANK_SERVICE_TOKEN>` and JSON body
-   `{"to": email, "subject": "Your bank verification code", "body": "Your verification code is <otp>"}`.
-   A failure here (network error or non-2xx) is surfaced as an explicit
-   `502` error page — it is not swallowed, since a demo where the OTP
-   silently never arrives is worse than a loud failure.
+4. Emails the OTP directly via this service's own Gmail SMTP account
+   (`app/notification.py`, `MOCK_BANK_OAUTH_GMAIL_ADDRESS`/
+   `MOCK_BANK_OAUTH_GMAIL_APP_PASSWORD`). A failure here (SMTP auth,
+   connection, or any other send error) is surfaced as an explicit `502`
+   error page — it is not swallowed, since a demo where the OTP silently
+   never arrives is worse than a loud failure.
 5. Serves an HTML form collecting `otp`, POSTing to `/login/verify` with
    the same `challenge_id`.
 
@@ -185,8 +180,8 @@ ever forget this flag on in production, but it costs nothing to default safe.
 | `MOCK_BANK_OAUTH_CLIENT_ID` | no | `nbe-backend` | Expected `client_id` on `/authorize` and `/token`. |
 | `MOCK_BANK_OAUTH_CLIENT_SECRET` | **yes** | — | Expected `client_secret` on `/token`. |
 | `MOCK_BANK_OAUTH_ALLOWED_REDIRECT_URIS` | no | (empty = any non-empty `redirect_uri` accepted) | Comma-separated allow-list. If set, `/authorize` rejects any `redirect_uri` not on the list. |
-| `BACKEND_INTERNAL_URL` | no | `http://backend:8000` | Main Django backend, for the OTP email call. |
-| `MOCK_BANK_SERVICE_TOKEN` | **yes** | — | Sent as `X-Service-Token` when calling the backend's `/internal/notifications/email/`. |
+| `MOCK_BANK_OAUTH_GMAIL_ADDRESS` | **yes** | — | This service's own Gmail account, for sending OTP emails directly. |
+| `MOCK_BANK_OAUTH_GMAIL_APP_PASSWORD` | **yes** | — | App Password for `MOCK_BANK_OAUTH_GMAIL_ADDRESS` (requires 2-Step Verification on the Gmail account). |
 | `MOCK_BANK_SYNC_SERVICE_URL` | no | `http://mock-bank-sync:8003` | Sibling ledger service, for customer lookup. |
 | `MOCK_BANK_INTERNAL_SECRET` | **yes** | — | Sent as `X-Internal-Secret` when calling mock-bank-sync's `/internal/customers/lookup`. |
 | `MOCK_BANK_JWT_SECRET` | **yes** | — | HS256 key used to sign access tokens. Shared only with mock-bank-sync, which verifies tokens independently. |
@@ -201,8 +196,8 @@ pip install -r requirements.txt
 
 export MOCK_BANK_OAUTH_CLIENT_ID=nbe-backend
 export MOCK_BANK_OAUTH_CLIENT_SECRET=dev-client-secret
-export BACKEND_INTERNAL_URL=http://localhost:8000
-export MOCK_BANK_SERVICE_TOKEN=dev-service-token
+export MOCK_BANK_OAUTH_GMAIL_ADDRESS=your-demo-account@gmail.com
+export MOCK_BANK_OAUTH_GMAIL_APP_PASSWORD=dummy-app-password
 export MOCK_BANK_SYNC_SERVICE_URL=http://localhost:8003
 export MOCK_BANK_INTERNAL_SECRET=dev-internal-secret
 export MOCK_BANK_JWT_SECRET=dev-jwt-secret-change-me
@@ -217,10 +212,11 @@ Then visit, e.g.:
 http://localhost:8002/authorize?client_id=nbe-backend&redirect_uri=http://localhost:3000/callback&response_type=code&state=xyz
 ```
 
-Note: `/login/start` and `/login/verify` call out to `mock-bank-sync` and
-the main backend respectively. Without those running, `/login/start` will
-return a `502` (customer directory unreachable) — that's expected until
-those services exist / are running alongside this one.
+Note: `/login/start` calls out to `mock-bank-sync` for the customer lookup
+and then sends the OTP email directly via Gmail SMTP. Without
+`mock-bank-sync` running, `/login/start` will return a `502` (customer
+directory unreachable) — that's expected until it's running alongside this
+one.
 
 ## Building the container
 

@@ -496,9 +496,7 @@ class EmailVerificationRequestView(APIView):
     PasswordResetRequestView, this is IsAuthenticated (you can only ever
     resend to yourself, so there's no email-enumeration surface to protect
     against here) and a genuine send failure is surfaced as a 502 rather
-    than swallowed, since sending the email is this endpoint's entire job
-    (same reasoning as InternalNotificationEmailView in
-    core/views/webhooks.py).
+    than swallowed, since sending the email is this endpoint's entire job.
     """
 
     permission_classes = [IsAuthenticated]

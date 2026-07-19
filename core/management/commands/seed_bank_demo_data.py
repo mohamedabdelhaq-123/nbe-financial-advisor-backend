@@ -255,9 +255,18 @@ class Command(BaseCommand):
         tests/integration/test_bank_integration_live.py exercises, reused
         here so a demo user is produced by the real flow rather than direct
         DB writes."""
-        authorize_response = requests.get(authorize_url, timeout=self._TIMEOUT_SECONDS)
+        # authorize_url uses MOCK_BANK_OAUTH_PUBLIC_URL — the browser-facing
+        # address — but this command runs inside the backend container, which
+        # can't reach a host-facing address. Swap in the server-to-server
+        # address for this process's own network vantage point.
+        internal_authorize_url = authorize_url.replace(
+            settings.MOCK_BANK_OAUTH_PUBLIC_URL, settings.MOCK_BANK_OAUTH_SERVICE_URL
+        )
+        authorize_response = requests.get(internal_authorize_url, timeout=self._TIMEOUT_SECONDS)
         if authorize_response.status_code != 200:
-            raise CommandError(f"GET {authorize_url} returned {authorize_response.status_code}")
+            raise CommandError(
+                f"GET {internal_authorize_url} returned {authorize_response.status_code}"
+            )
         challenge_match = re.search(r'name="challenge_id" value="([^"]+)"', authorize_response.text)
         if not challenge_match:
             raise CommandError(

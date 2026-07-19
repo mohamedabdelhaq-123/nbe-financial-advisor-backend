@@ -71,7 +71,7 @@ from core.views.statements import (
     StatementOcrResultView,
     StatementTransactionApprovalView,
 )
-from core.views.webhooks import BankSyncWebhookView, InternalNotificationEmailView
+from core.views.webhooks import BankSyncWebhookView
 
 __all__ = [
     "health",
@@ -96,7 +96,6 @@ __all__ = [
     "BankConnectionListCreateView",
     "BankConnectionCallbackView",
     "BankSyncWebhookView",
-    "InternalNotificationEmailView",
     "StatementListCreateView",
     "StatementDetailView",
     "StatementOcrResultView",

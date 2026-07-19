@@ -1,9 +1,9 @@
 """
 End-to-end-ish tests for the OAuth2 authorization-code flow this service
 implements by hand (see app/oauth_server.py's module docstring for why).
-requests.get/requests.post calls out to the sibling services (mock-bank-sync's
-customer lookup, the Django backend's notification endpoint) are monkeypatched
-— these tests exercise this service's own logic, not the network.
+The requests.get call out to mock-bank-sync's customer lookup and the
+notification.send_email call for OTP delivery are both monkeypatched —
+these tests exercise this service's own logic, not the network.
 """
 
 import re
@@ -127,11 +127,10 @@ def test_login_start_generates_otp_and_sends_email(client):
     lookup_response = _FakeResponse(
         json_data={"customer_id": "cust-uuid-1", "email": "customer@example.com"}
     )
-    notify_response = _FakeResponse(status_code=202)
 
     with patch("app.routes_login.requests.get", return_value=lookup_response) as mock_get, patch(
-        "app.routes_login.requests.post", return_value=notify_response
-    ) as mock_post:
+        "app.routes_login.notification.send_email"
+    ) as mock_send_email:
         response = client.post(
             "/login/start", data={"challenge_id": challenge_id, "customer_bank_id": "cust-001"}
         )
@@ -140,8 +139,7 @@ def test_login_start_generates_otp_and_sends_email(client):
     assert "otp" in response.text.lower()
     assert mock_get.call_args.kwargs["params"] == {"customer_bank_id": "cust-001"}
     assert mock_get.call_args.kwargs["headers"]["X-Internal-Secret"] == "test-internal-secret"
-    assert mock_post.call_args.kwargs["headers"]["X-Service-Token"] == "test-service-token"
-    assert mock_post.call_args.kwargs["json"]["to"] == "customer@example.com"
+    assert mock_send_email.call_args.args[0] == "customer@example.com"
 
     from app import store
 
@@ -156,8 +154,10 @@ def test_login_start_returns_502_when_notification_fails(client):
     lookup_response = _FakeResponse(
         json_data={"customer_id": "cust-uuid-1", "email": "customer@example.com"}
     )
+    from app.notification import NotificationError
+
     with patch("app.routes_login.requests.get", return_value=lookup_response), patch(
-        "app.routes_login.requests.post", return_value=_FakeResponse(status_code=500)
+        "app.routes_login.notification.send_email", side_effect=NotificationError("smtp down")
     ):
         response = client.post(
             "/login/start", data={"challenge_id": challenge_id, "customer_bank_id": "cust-001"}
@@ -175,7 +175,7 @@ def _authorize_and_start_login(client, customer_id="cust-uuid-1", email="custome
     with patch(
         "app.routes_login.requests.get",
         return_value=_FakeResponse(json_data={"customer_id": customer_id, "email": email}),
-    ), patch("app.routes_login.requests.post", return_value=_FakeResponse(status_code=202)):
+    ), patch("app.routes_login.notification.send_email"):
         client.post(
             "/login/start", data={"challenge_id": challenge_id, "customer_bank_id": "cust-001"}
         )

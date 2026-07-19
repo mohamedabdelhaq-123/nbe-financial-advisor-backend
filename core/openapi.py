@@ -58,24 +58,6 @@ class BankSyncServiceAuthenticationScheme(OpenApiAuthenticationExtension):
         }
 
 
-class MockBankServiceAuthenticationScheme(OpenApiAuthenticationExtension):
-    """Documents core/authentication.py's MockBankServiceAuthentication for
-    POST /internal/notifications/email/."""
-
-    target_class = "core.authentication.MockBankServiceAuthentication"
-    name = "MockBankServiceAuth"
-
-    def get_security_definition(self, auto_schema):
-        return {
-            "type": "apiKey",
-            "in": "header",
-            "name": "X-Service-Token",
-            "description": (
-                "Shared secret presented by mock-bank-oauth when delivering an OTP email."
-            ),
-        }
-
-
 _DEFAULT_DESCRIPTIONS = {
     400: "Malformed request — invalid JSON or a required field is missing entirely.",
     401: "Missing, invalid, or expired credentials.",

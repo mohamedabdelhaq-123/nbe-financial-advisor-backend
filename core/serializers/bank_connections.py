@@ -67,13 +67,3 @@ class BankSyncWebhookSerializer(serializers.Serializer):
     external_account_id = serializers.CharField(max_length=255)
     external_customer_id = serializers.CharField(max_length=255)
     transactions = BankSyncTransactionSerializer(many=True)
-
-
-class InternalEmailSerializer(serializers.Serializer):
-    """POST /internal/notifications/email/ request body — called only by
-    mock-bank-oauth to deliver its OTP emails through the one real
-    notification client (services/notification_service.py)."""
-
-    to = serializers.EmailField()
-    subject = serializers.CharField(max_length=255)
-    body = serializers.CharField()

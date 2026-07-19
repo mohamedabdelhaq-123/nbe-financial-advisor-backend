@@ -15,10 +15,10 @@ import os
 
 os.environ["MOCK_BANK_OAUTH_CLIENT_ID"] = "test-client"
 os.environ["MOCK_BANK_OAUTH_CLIENT_SECRET"] = "test-client-secret"
-os.environ["MOCK_BANK_SERVICE_TOKEN"] = "test-service-token"
 os.environ["MOCK_BANK_INTERNAL_SECRET"] = "test-internal-secret"
 os.environ["MOCK_BANK_JWT_SECRET"] = "test-jwt-secret"
-os.environ["BACKEND_INTERNAL_URL"] = "http://fake-backend:8000"
+os.environ["MOCK_BANK_OAUTH_GMAIL_ADDRESS"] = "test-mock-bank@example.com"
+os.environ["MOCK_BANK_OAUTH_GMAIL_APP_PASSWORD"] = "test-app-password"
 os.environ["MOCK_BANK_SYNC_SERVICE_URL"] = "http://fake-mock-bank-sync:8003"
 os.environ["MOCK_BANK_OAUTH_ENABLE_DEBUG_ENDPOINTS"] = "1"
 

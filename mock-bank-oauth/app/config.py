@@ -32,9 +32,10 @@ ALLOWED_REDIRECT_URIS = [
     uri.strip() for uri in _allowed_redirect_uris_raw.split(",") if uri.strip()
 ]
 
-# Main Django backend, used to trigger the OTP notification email.
-BACKEND_INTERNAL_URL = os.environ.get("BACKEND_INTERNAL_URL", "http://backend:8000")
-MOCK_BANK_SERVICE_TOKEN = _require("MOCK_BANK_SERVICE_TOKEN")
+# This service's own Gmail SMTP account, for sending OTP emails directly
+# (app/notification.py) — no dependency on the main Django backend.
+MOCK_BANK_OAUTH_GMAIL_ADDRESS = _require("MOCK_BANK_OAUTH_GMAIL_ADDRESS")
+MOCK_BANK_OAUTH_GMAIL_APP_PASSWORD = _require("MOCK_BANK_OAUTH_GMAIL_APP_PASSWORD")
 
 # Sibling ledger service, which owns the actual mock bank customer directory.
 MOCK_BANK_SYNC_SERVICE_URL = os.environ.get(

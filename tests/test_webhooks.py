@@ -1,18 +1,15 @@
 """
-Endpoint-level tests for the two machine-to-machine endpoints
+Endpoint-level tests for the one machine-to-machine endpoint
 (core/views/webhooks.py) — no end-user JWT, shared-secret authenticated
-(core/authentication.py's BankSyncServiceAuthentication/
-MockBankServiceAuthentication). Plain APIClient (no force_authenticate)
-since these callers have no User at all — identity comes from the header,
-not request.user.
+(core/authentication.py's BankSyncServiceAuthentication). Plain APIClient
+(no force_authenticate) since this caller has no User at all — identity
+comes from the header, not request.user.
 """
 
 import pytest
-from django.core import mail
 from rest_framework.test import APIClient
 
 from core.models import BankAccount, BankConnection, Transaction, User
-from services import notification_service
 
 
 @pytest.fixture
@@ -174,59 +171,3 @@ def test_webhook_discovers_new_account_via_fallback(
     assert account.link_type == BankAccount.LINK_TYPE_SYNCED
     transaction = Transaction.objects.get(account=account)
     assert transaction.merchant_raw == "Carrefour"
-
-
-# ============================================================================
-# POST /internal/notifications/email/
-# ============================================================================
-
-
-def test_internal_email_with_correct_token_sends_email(client, settings):
-    settings.MOCK_BANK_SERVICE_TOKEN = "test-service-token"
-
-    response = client.post(
-        "/internal/notifications/email/",
-        {"to": "customer@example.com", "subject": "Your code", "body": "123456"},
-        format="json",
-        HTTP_X_SERVICE_TOKEN="test-service-token",
-    )
-
-    assert response.status_code == 202
-    assert len(mail.outbox) == 1
-    assert mail.outbox[0].to == ["customer@example.com"]
-    assert mail.outbox[0].subject == "Your code"
-
-
-def test_internal_email_wrong_token_401s(client, settings):
-    settings.MOCK_BANK_SERVICE_TOKEN = "test-service-token"
-
-    response = client.post(
-        "/internal/notifications/email/",
-        {"to": "customer@example.com", "subject": "Your code", "body": "123456"},
-        format="json",
-        HTTP_X_SERVICE_TOKEN="wrong-token",
-    )
-
-    assert response.status_code == 401
-    assert len(mail.outbox) == 0
-
-
-def test_internal_email_notification_failure_returns_502(client, settings, monkeypatch):
-    settings.MOCK_BANK_SERVICE_TOKEN = "test-service-token"
-    monkeypatch.setattr(
-        notification_service,
-        "send_email",
-        lambda *a, **kw: (_ for _ in ()).throw(
-            notification_service.NotificationServiceError("smtp down")
-        ),
-    )
-
-    response = client.post(
-        "/internal/notifications/email/",
-        {"to": "customer@example.com", "subject": "Your code", "body": "123456"},
-        format="json",
-        HTTP_X_SERVICE_TOKEN="test-service-token",
-    )
-
-    assert response.status_code == 502
-    assert response.data["error"]["code"] == "notification_service_unavailable"

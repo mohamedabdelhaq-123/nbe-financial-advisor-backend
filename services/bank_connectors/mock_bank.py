@@ -58,6 +58,10 @@ class MockBankConnector(BankConnector):
     def get_authorize_url(self, state: str, redirect_uri: str) -> str:
         # Pure URL construction — the actual login/OTP round trip happens
         # entirely within mock-bank-oauth once the browser is sent here.
+        # MOCK_BANK_OAUTH_PUBLIC_URL, not MOCK_BANK_OAUTH_SERVICE_URL: this
+        # URL is handed to the frontend for the *browser* to navigate to
+        # directly, not called server-to-server, so it needs a host-reachable
+        # address rather than the Docker-internal service name.
         params = urlencode(
             {
                 "client_id": settings.MOCK_BANK_OAUTH_CLIENT_ID,
@@ -66,7 +70,7 @@ class MockBankConnector(BankConnector):
                 "response_type": "code",
             }
         )
-        return f"{settings.MOCK_BANK_OAUTH_SERVICE_URL}/authorize?{params}"
+        return f"{settings.MOCK_BANK_OAUTH_PUBLIC_URL}/authorize?{params}"
 
     def exchange_code_for_token(self, code: str) -> dict:
         data = _request(
