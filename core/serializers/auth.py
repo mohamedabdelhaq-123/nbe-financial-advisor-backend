@@ -2,6 +2,7 @@ from django.contrib.auth import authenticate
 from rest_framework import serializers
 
 from core.models import User
+from core.validators import validate_signup_email
 
 
 class SignupSerializer(serializers.ModelSerializer):
@@ -15,6 +16,11 @@ class SignupSerializer(serializers.ModelSerializer):
         # unique=True constraint, so a duplicate signup surfaces as a normal
         # 422 validation error (via core/exceptions.py) rather than an
         # unhandled IntegrityError.
+
+    def validate_email(self, value):
+        # Syntax (RFC-grounded, stricter than Django's built-in EmailField
+        # regex) + MX/DNS deliverability check — see core/validators.py.
+        return validate_signup_email(value)
 
     def create(self, validated_data):
         # UserManager.create_user() calls set_password() internally — never

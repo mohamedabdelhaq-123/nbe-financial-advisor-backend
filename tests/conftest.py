@@ -5,6 +5,17 @@ from moto import mock_aws
 
 
 @pytest.fixture(autouse=True)
+def _no_signup_dns_check(settings):
+    """
+    Disables the MX/DNS lookup core/validators.py's validate_signup_email()
+    runs (SignupSerializer.validate_email) — without this, every signup test
+    would make a live DNS query, which is slow and flakes in offline/CI runs.
+    Syntax validation still runs as normal.
+    """
+    settings.SIGNUP_EMAIL_DNS_CHECK = False
+
+
+@pytest.fixture(autouse=True)
 def _celery_eager_mode(monkeypatch):
     """
     Forces every task (core/tasks/statements.py, core/tasks/conversations.py)

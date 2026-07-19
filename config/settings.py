@@ -47,6 +47,11 @@ AI_SERVICE_URL = env.str("AI_SERVICE_URL", "http://ai-service:8001")
 # never need a live ai-service; flip to 0 once one is reachable.
 USE_MOCK_AI_SERVICE = env.bool("USE_MOCK_AI_SERVICE", True)
 
+# Gates the MX/DNS deliverability lookup core/validators.py runs on signup
+# emails. On by default; flip off for offline dev/CI environments without
+# egress (tests do this themselves — see tests/conftest.py).
+SIGNUP_EMAIL_DNS_CHECK = env.bool("SIGNUP_EMAIL_DNS_CHECK", True)
+
 # ── Mock Bank OAuth+OTP service (mock-bank-oauth/, in-repo) ───────────────────
 # services/bank_connectors/mock_bank.py's client. No USE_MOCK_*/real toggle —
 # this connector *is* the mock for now; a real bank later is a second
