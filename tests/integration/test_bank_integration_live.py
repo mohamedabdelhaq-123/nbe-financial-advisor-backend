@@ -277,6 +277,13 @@ def test_bank_login_flow_against_real_running_services(mock_customer, db):
         )
         account = BankAccount.objects.get(connection=connection)
         assert account.link_type == BankAccount.LINK_TYPE_SYNCED
+        # mock_customer's pre-seeded transaction must have backfilled via
+        # apply_synced_accounts()'s ingest_synced_transactions.delay() call.
+        # BankLoginCallbackView must only dispatch that call once the
+        # User/BankConnection creation above is committed — a real
+        # (non-eager) Celery worker can otherwise query for a BankAccount id
+        # before an enclosing transaction has made it visible.
+        assert Transaction.objects.filter(account=account, source="synced").exists()
 
         # Second login, same mock customer: a fresh, real OAuth+OTP round
         # trip (a genuinely new authorization code, not a replay), but the
