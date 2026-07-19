@@ -362,6 +362,7 @@ class BankLoginCallbackView(APIView):
             ) from exc
 
         user = User.objects.filter(email=token["email"]).first()
+        new_connection = None
         try:
             with transaction.atomic():
                 if user is None:
@@ -379,7 +380,7 @@ class BankLoginCallbackView(APIView):
                     access_token=token["access_token"],
                     refresh_token=token.get("refresh_token"),
                 )
-                apply_synced_accounts(connection, accounts, connector)
+            new_connection = connection
         except IntegrityError:
             # A concurrent callback for the same bank customer won the
             # race — log into the winner's user rather than erroring.
@@ -387,6 +388,15 @@ class BankLoginCallbackView(APIView):
                 provider_slug=provider_slug, external_customer_id=token["external_customer_id"]
             )
             user = connection.user
+
+        if new_connection is not None:
+            # Runs only once the User/BankConnection creation above has
+            # actually committed — apply_synced_accounts() dispatches a real
+            # Celery task via ingest_synced_transactions.delay(), which a
+            # real broker's worker can pick up and run before an
+            # uncommitted transaction is visible to it, silently no-oping
+            # against a BankAccount id it can't find yet.
+            apply_synced_accounts(new_connection, accounts, connector)
 
         return _token_pair_response(user, status.HTTP_201_CREATED)
 
