@@ -97,8 +97,8 @@ class _SharedSecretAuthentication(BaseAuthentication):
 
     authenticate() returning (None, token) leaves request.user literally
     None, not AnonymousUser — callers on these endpoints never read
-    request.user, only the request body (see BankSyncWebhookView,
-    InternalNotificationEmailView), so this is never observed.
+    request.user, only the request body (see BankSyncWebhookView), so this
+    is never observed.
     """
 
     header_name = None
@@ -136,13 +136,3 @@ class BankSyncServiceAuthentication(_SharedSecretAuthentication):
 
     header_name = "HTTP_X_WEBHOOK_SECRET"
     settings_attr = "BANK_SYNC_WEBHOOK_SECRET"
-
-
-class MockBankServiceAuthentication(_SharedSecretAuthentication):
-    """Used only by POST /internal/notifications/email/ (core/views/webhooks.py)
-    — called exclusively by mock-bank-oauth to deliver an OTP email through
-    the one real notification client (services/notification_service.py)
-    instead of reimplementing SMTP itself."""
-
-    header_name = "HTTP_X_SERVICE_TOKEN"
-    settings_attr = "MOCK_BANK_SERVICE_TOKEN"

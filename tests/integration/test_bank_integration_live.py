@@ -10,15 +10,15 @@ as tests/integration/test_file_storage_live.py; run with:
     docker compose exec backend pytest -m integration \
         tests/integration/test_bank_integration_live.py -v
 
-The OTP-email step is exercised for real: mock-bank-oauth genuinely calls
-this backend's own /internal/notifications/email/, which genuinely fails
-against this dev stack's placeholder Gmail credentials. That 502 is
-asserted as the correct outcome, not routed around — it's proof the
-error-handling path works under a real failure. The OTP itself is then read
-via mock-bank-oauth's debug-only GET /debug/challenges/{id}
-(MOCK_BANK_OAUTH_ENABLE_DEBUG_ENDPOINTS=1 in this stack) — the one
-deliberate bypass in this test; every other step through account linking
-(step 6 below) is a real network call between real running containers.
+The OTP-email step is exercised for real: mock-bank-oauth genuinely sends
+the OTP via its own Gmail SMTP account, which genuinely fails against this
+dev stack's placeholder Gmail credentials. That 502 is asserted as the
+correct outcome, not routed around — it's proof the error-handling path
+works under a real failure. The OTP itself is then read via mock-bank-oauth's
+debug-only GET /debug/challenges/{id} (MOCK_BANK_OAUTH_ENABLE_DEBUG_ENDPOINTS=1
+in this stack) — the one deliberate bypass in this test; every other step
+through account linking (step 6 below) is a real network call between real
+running containers.
 
 KNOWN GAP, not silently worked around: the reverse direction (step 7 —
 mock-bank-sync pushing a webhook back to this backend) is NOT verified
@@ -133,7 +133,17 @@ def _complete_oauth_otp_dance(authorize_url: str, customer_bank_id: str) -> str:
     hand off to the exact same provider-hosted login page. Returns the
     single-use authorization code the provider's redirect hands back."""
     # 2. Real GET /authorize against the live mock-bank-oauth container.
-    authorize_response = requests.get(authorize_url, timeout=_REQUEST_TIMEOUT_SECONDS)
+    # authorize_url uses MOCK_BANK_OAUTH_PUBLIC_URL — the browser-facing
+    # address — but this test plays "the browser" from inside the backend
+    # container, which can't reach a host-facing address (e.g. localhost:8002
+    # means the backend container itself here, not mock-bank-oauth). Swap in
+    # the server-to-server address for this process's own network vantage
+    # point; the path/query this test is actually verifying (challenge state,
+    # redirect_uri, etc.) are unaffected.
+    internal_authorize_url = authorize_url.replace(
+        settings.MOCK_BANK_OAUTH_PUBLIC_URL, settings.MOCK_BANK_OAUTH_SERVICE_URL
+    )
+    authorize_response = requests.get(internal_authorize_url, timeout=_REQUEST_TIMEOUT_SECONDS)
     assert authorize_response.status_code == 200
     challenge_id = re.search(r'name="challenge_id" value="([^"]+)"', authorize_response.text).group(
         1
@@ -141,8 +151,9 @@ def _complete_oauth_otp_dance(authorize_url: str, customer_bank_id: str) -> str:
 
     # 3. Real POST /login/start — mock-bank-oauth makes a real cross-container
     # lookup call to mock-bank-sync, then a real (and, in this dev stack,
-    # genuinely failing) attempt to email the OTP via this backend. See
-    # module docstring: the 502 here is the expected, correct outcome.
+    # genuinely failing) attempt to email the OTP via its own Gmail SMTP
+    # account. See module docstring: the 502 here is the expected, correct
+    # outcome.
     login_start_response = requests.post(
         f"{settings.MOCK_BANK_OAUTH_SERVICE_URL}/login/start",
         data={"challenge_id": challenge_id, "customer_bank_id": customer_bank_id},

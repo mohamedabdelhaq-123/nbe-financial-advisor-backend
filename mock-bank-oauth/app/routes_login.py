@@ -2,15 +2,15 @@
 
 /login/start resolves the opaque `customer_bank_id` the user typed into a
 real customer identity by asking mock-bank-sync (which owns the customer
-directory), then triggers an OTP email via the main Django backend's
-internal notification endpoint.
+directory), then emails the OTP directly via this service's own Gmail SMTP
+account (app/notification.py).
 
 /login/verify checks the submitted OTP and, on success, issues a short-lived
 OAuth2 authorization code and redirects back to the caller's redirect_uri.
 
 Route handlers here are plain `def` (not `async def`) because they make
-blocking outbound calls via `requests`; FastAPI runs sync path operations in
-a thread pool so this doesn't block the event loop.
+blocking outbound calls via `requests` and smtplib; FastAPI runs sync path
+operations in a thread pool so this doesn't block the event loop.
 """
 
 import html
@@ -20,13 +20,8 @@ import requests
 from fastapi import APIRouter, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app import store
-from app.config import (
-    BACKEND_INTERNAL_URL,
-    MOCK_BANK_INTERNAL_SECRET,
-    MOCK_BANK_SERVICE_TOKEN,
-    MOCK_BANK_SYNC_SERVICE_URL,
-)
+from app import notification, store
+from app.config import MOCK_BANK_INTERNAL_SECRET, MOCK_BANK_SYNC_SERVICE_URL
 
 router = APIRouter()
 
@@ -43,7 +38,7 @@ def _error_page(message: str, status_code: int = 400) -> HTMLResponse:
 @router.post("/login/start")
 def login_start(challenge_id: str = Form(...), customer_bank_id: str = Form(...)):
     """Resolves customer_bank_id via mock-bank-sync and, on success, emails
-    an OTP through the main backend's notification endpoint."""
+    an OTP directly via this service's own Gmail SMTP account."""
     challenge = store.get_challenge(challenge_id)
     if challenge is None:
         return _error_page("This login session is unknown or has expired.", status_code=404)
@@ -81,29 +76,16 @@ def login_start(challenge_id: str = Form(...), customer_bank_id: str = Form(...)
 
     otp = store.set_challenge_otp(challenge_id, customer_id=customer_id, email=email, name=name)
 
-    # Send the OTP by email via the main backend. If this fails, surface it
-    # explicitly rather than silently proceeding to a code the user has no
-    # way to obtain — a demo where the email just never shows up is worse
-    # than a loud, clear failure here.
+    # Send the OTP by email directly. If this fails, surface it explicitly
+    # rather than silently proceeding to a code the user has no way to
+    # obtain — a demo where the email just never shows up is worse than a
+    # loud, clear failure here.
     try:
-        notify_response = requests.post(
-            f"{BACKEND_INTERNAL_URL}/internal/notifications/email/",
-            json={
-                "to": email,
-                "subject": "Your bank verification code",
-                "body": f"Your verification code is {otp}",
-            },
-            headers={"X-Service-Token": MOCK_BANK_SERVICE_TOKEN},
-            timeout=_OUTBOUND_TIMEOUT_SECONDS,
+        notification.send_email(
+            email, "Your bank verification code", f"Your verification code is {otp}"
         )
-    except requests.RequestException as exc:
+    except notification.NotificationError as exc:
         return _error_page(f"Could not send the verification email: {exc}", status_code=502)
-
-    if not notify_response.ok:
-        return _error_page(
-            f"Verification email failed to send (status {notify_response.status_code}).",
-            status_code=502,
-        )
 
     html = f"""
     <html>

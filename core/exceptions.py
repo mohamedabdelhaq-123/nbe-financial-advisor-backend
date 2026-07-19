@@ -53,7 +53,7 @@ class AIServiceUnavailable(APIException):
 class NotificationServiceUnavailable(APIException):
     """
     502 — for endpoints that call services/notification_service.py
-    synchronously (e.g. InternalNotificationEmailView, core/views/webhooks.py)
+    synchronously (e.g. EmailVerificationRequestView, core/views/auth.py)
     and have no buffering task to instead record the failure on. Same
     reasoning as AIServiceUnavailable above, for the notification gateway
     instead of ai-service.

@@ -56,7 +56,16 @@ SIGNUP_EMAIL_DNS_CHECK = env.bool("SIGNUP_EMAIL_DNS_CHECK", True)
 # services/bank_connectors/mock_bank.py's client. No USE_MOCK_*/real toggle —
 # this connector *is* the mock for now; a real bank later is a second
 # BankConnector subclass under a new slug (services/bank_connectors/__init__.py).
+# Server-to-server address (token exchange, fetch_accounts/fetch_transactions)
+# — reached from inside the Docker network, so the compose service name
+# resolves correctly here.
 MOCK_BANK_OAUTH_SERVICE_URL = env.str("MOCK_BANK_OAUTH_SERVICE_URL", "http://mock-bank-oauth:8002")
+# Browser-facing address for the authorize_url handed to the frontend
+# (get_authorize_url()) — a different audience from MOCK_BANK_OAUTH_SERVICE_URL
+# above: the user's browser navigates here directly, so it needs a host-
+# reachable address (e.g. localhost:8002 in dev, a public domain in
+# production), never the Docker-internal service name.
+MOCK_BANK_OAUTH_PUBLIC_URL = env.str("MOCK_BANK_OAUTH_PUBLIC_URL", "http://localhost:8002")
 MOCK_BANK_OAUTH_CLIENT_ID = env.str("MOCK_BANK_OAUTH_CLIENT_ID", "nbe-backend")
 MOCK_BANK_OAUTH_CLIENT_SECRET = env.str("MOCK_BANK_OAUTH_CLIENT_SECRET")
 # Where mock-bank-oauth redirects the browser after login+OTP — a frontend
@@ -65,10 +74,6 @@ MOCK_BANK_OAUTH_CLIENT_SECRET = env.str("MOCK_BANK_OAUTH_CLIENT_SECRET")
 MOCK_BANK_OAUTH_REDIRECT_URI = env.str(
     "MOCK_BANK_OAUTH_REDIRECT_URI", "http://localhost:5173/bank-connect/callback"
 )
-# Shared secret mock-bank-oauth presents when it calls this backend's
-# POST /internal/notifications/email/ to deliver an OTP (core/authentication.py's
-# MockBankServiceAuthentication).
-MOCK_BANK_SERVICE_TOKEN = env.str("MOCK_BANK_SERVICE_TOKEN")
 
 # ── Mock Bank Sync service (mock-bank-sync/, in-repo) ──────────────────────────
 # The ledger owner — services/bank_connectors/mock_bank.py's fetch_accounts()/

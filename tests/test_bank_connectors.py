@@ -40,6 +40,7 @@ class _FakeSession:
 @pytest.fixture
 def connector_settings(settings):
     settings.MOCK_BANK_OAUTH_SERVICE_URL = "http://fake-mock-bank-oauth:8002"
+    settings.MOCK_BANK_OAUTH_PUBLIC_URL = "http://fake-mock-bank-oauth-public:8002"
     settings.MOCK_BANK_OAUTH_CLIENT_ID = "test-client-id"
     settings.MOCK_BANK_OAUTH_CLIENT_SECRET = "test-client-secret"
     settings.MOCK_BANK_OAUTH_REDIRECT_URI = "http://frontend.test/bank-connect/callback"
@@ -73,7 +74,7 @@ def test_get_authorize_url_builds_expected_query(connector_settings):
         state="abc123", redirect_uri="http://frontend.test/bank-connect/callback"
     )
 
-    assert url.startswith("http://fake-mock-bank-oauth:8002/authorize?")
+    assert url.startswith("http://fake-mock-bank-oauth-public:8002/authorize?")
     assert "client_id=test-client-id" in url
     assert "state=abc123" in url
     assert "response_type=code" in url

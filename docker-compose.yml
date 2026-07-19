@@ -60,10 +60,7 @@ services:
       MOCK_BANK_OAUTH_CLIENT_ID: ${MOCK_BANK_OAUTH_CLIENT_ID:-nbe-backend}
       MOCK_BANK_OAUTH_CLIENT_SECRET: ${MOCK_BANK_OAUTH_CLIENT_SECRET}
       MOCK_BANK_OAUTH_REDIRECT_URI: ${MOCK_BANK_OAUTH_REDIRECT_URI:-http://localhost:5173/bank-connect/callback}
-      # Checked against mock-bank-oauth's X-Service-Token when it calls this
-      # backend's POST /internal/notifications/email/ (core/authentication.py's
-      # MockBankServiceAuthentication).
-      MOCK_BANK_SERVICE_TOKEN: ${MOCK_BANK_SERVICE_TOKEN}
+      MOCK_BANK_OAUTH_PUBLIC_URL: ${MOCK_BANK_OAUTH_PUBLIC_URL:-http://localhost:8002}
       MOCK_BANK_SYNC_SERVICE_URL: http://mock-bank-sync:8003
       # Checked against mock-bank-sync's X-Webhook-Secret when it pushes to
       # this backend's POST /webhooks/bank-sync/ (BankSyncServiceAuthentication).
@@ -120,7 +117,7 @@ services:
       MOCK_BANK_OAUTH_CLIENT_ID: ${MOCK_BANK_OAUTH_CLIENT_ID:-nbe-backend}
       MOCK_BANK_OAUTH_CLIENT_SECRET: ${MOCK_BANK_OAUTH_CLIENT_SECRET}
       MOCK_BANK_OAUTH_REDIRECT_URI: ${MOCK_BANK_OAUTH_REDIRECT_URI:-http://localhost:5173/bank-connect/callback}
-      MOCK_BANK_SERVICE_TOKEN: ${MOCK_BANK_SERVICE_TOKEN}
+      MOCK_BANK_OAUTH_PUBLIC_URL: ${MOCK_BANK_OAUTH_PUBLIC_URL:-http://localhost:8002}
       MOCK_BANK_SYNC_SERVICE_URL: http://mock-bank-sync:8003
       BANK_SYNC_WEBHOOK_SECRET: ${BANK_SYNC_WEBHOOK_SECRET}
       GMAIL_ADDRESS: ${GMAIL_ADDRESS}
@@ -156,8 +153,10 @@ services:
     environment:
       MOCK_BANK_OAUTH_CLIENT_ID: ${MOCK_BANK_OAUTH_CLIENT_ID:-nbe-backend}
       MOCK_BANK_OAUTH_CLIENT_SECRET: ${MOCK_BANK_OAUTH_CLIENT_SECRET}
-      BACKEND_INTERNAL_URL: http://backend:8000
-      MOCK_BANK_SERVICE_TOKEN: ${MOCK_BANK_SERVICE_TOKEN}
+      # This service's own Gmail SMTP account, for sending OTP emails
+      # directly (app/notification.py) — not a real user password.
+      MOCK_BANK_OAUTH_GMAIL_ADDRESS: ${MOCK_BANK_OAUTH_GMAIL_ADDRESS}
+      MOCK_BANK_OAUTH_GMAIL_APP_PASSWORD: ${MOCK_BANK_OAUTH_GMAIL_APP_PASSWORD}
       MOCK_BANK_SYNC_SERVICE_URL: http://mock-bank-sync:8003
       MOCK_BANK_INTERNAL_SECRET: ${MOCK_BANK_INTERNAL_SECRET}
       MOCK_BANK_JWT_SECRET: ${MOCK_BANK_JWT_SECRET}

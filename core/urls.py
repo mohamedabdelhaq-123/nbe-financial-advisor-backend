@@ -35,7 +35,6 @@ from core.views import (
     EventStreamView,
     FeedbackCreateView,
     GoalView,
-    InternalNotificationEmailView,
     IssueListCreateView,
     LoginView,
     LogoutView,
@@ -110,13 +109,11 @@ urlpatterns = [
         "bank-connections/<uuid:connection_id>/callback/",
         BankConnectionCallbackView.as_view(),
     ),
-    # Inbound machine-to-machine endpoints — shared-secret authenticated,
+    # Inbound machine-to-machine endpoint — shared-secret authenticated,
     # never end-user JWT (core/authentication.py's _SharedSecretAuthentication
     # subclasses). mock-bank-sync (later: a real bank's own sync feed) pushes
-    # transaction batches to the first; mock-bank-oauth calls the second to
-    # deliver its OTP emails through the one real notification client.
+    # transaction batches here.
     path("webhooks/bank-sync/", BankSyncWebhookView.as_view()),
-    path("internal/notifications/email/", InternalNotificationEmailView.as_view()),
     # 4. Statements & Document Ingestion (API_Endpoints_1.md §4)
     path("statements/", StatementListCreateView.as_view()),
     path("statements/<uuid:statement_id>/", StatementDetailView.as_view()),
