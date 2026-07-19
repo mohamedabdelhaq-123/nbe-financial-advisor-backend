@@ -25,14 +25,19 @@ class NotificationError(Exception):
     instead of smtplib's own exception hierarchy."""
 
 
-def send_email(to: str, subject: str, body: str) -> None:
-    """Sends a plain-text email via this service's own Gmail SMTP account.
+def send_email(to: str, subject: str, body: str, html_body: str | None = None) -> None:
+    """Sends an email via this service's own Gmail SMTP account. `body` is
+    always sent (either as the whole plain-text email, or as the plain-text
+    fallback part of a multipart message when `html_body` is given — same
+    shape as services/notification_service.py on the Django side).
     Raises NotificationError on any send failure."""
     message = EmailMessage()
     message["From"] = MOCK_BANK_OAUTH_GMAIL_ADDRESS
     message["To"] = to
     message["Subject"] = subject
     message.set_content(body)
+    if html_body is not None:
+        message.add_alternative(html_body, subtype="html")
 
     try:
         with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT, timeout=_SMTP_TIMEOUT_SECONDS) as smtp:
