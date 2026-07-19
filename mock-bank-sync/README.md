@@ -328,3 +328,8 @@ curl -X POST http://localhost:8003/simulate/transaction \
   -H "Content-Type: application/json" \
   -d '{"account_id": "<uuid from the customer response above>"}'
 ```
+
+For a one-shot setup covering both customers not yet linked to any Django
+user and demo users fully registered in both systems (driven through the
+real OAuth+OTP flow), run the Django backend's own seed command instead:
+`python manage.py seed_bank_demo_data --help`.
