@@ -98,18 +98,19 @@ class PasswordResetRequestSerializer(serializers.Serializer):
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
-    """POST /auth/password-reset/confirm body — `user_id`/`token` come from
-    the link emailed by the request step above."""
+    """POST /auth/password-reset/confirm body — `t` is the opaque link
+    ticket from the query string of the link emailed by the request step
+    above (services/link_tickets.py), redeemed server-side to the real
+    (user_id, token) pair the URL used to carry directly."""
 
-    user_id = serializers.UUIDField()
-    token = serializers.CharField()
+    t = serializers.CharField()
     new_password = serializers.CharField(write_only=True, min_length=8)
 
 
 class EmailVerificationConfirmSerializer(serializers.Serializer):
-    """POST /auth/verify-email/confirm body — `user_id`/`token` come from
-    the link emailed on signup (or re-sent via
-    POST /auth/verify-email/request)."""
+    """POST /auth/verify-email/confirm body — `t` is the opaque link ticket
+    from the query string of the link emailed on signup (or re-sent via
+    POST /auth/verify-email/request), same redemption as
+    PasswordResetConfirmSerializer above."""
 
-    user_id = serializers.UUIDField()
-    token = serializers.CharField()
+    t = serializers.CharField()

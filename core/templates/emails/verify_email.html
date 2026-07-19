@@ -1,0 +1,27 @@
+{% extends "emails/base.html" %}
+{% block title %}Verify your email{% endblock %}
+{% block content %}
+  <h1 style="margin:0 0 12px;color:#111827;font-size:20px;font-weight:600;">
+    Verify your email
+  </h1>
+  <p style="margin:0 0 24px;color:#4B5563;font-size:14px;line-height:1.6;">
+    Confirm your email address to finish securing your account.
+  </p>
+  <table role="presentation" cellpadding="0" cellspacing="0">
+    <tr>
+      <td style="border-radius:8px;background-color:#2E6350;">
+        <a
+          href="{{ link }}"
+          style="display:inline-block;padding:12px 28px;color:#FFFFFF;font-size:14px;font-weight:600;text-decoration:none;border-radius:8px;"
+        >
+          Verify email
+        </a>
+      </td>
+    </tr>
+  </table>
+  <p style="margin:24px 0 0;color:#9CA3AF;font-size:12px;line-height:1.6;">
+    This link expires in a few days. If the button above doesn't work, copy and
+    paste this URL into your browser:<br />
+    <span style="word-break:break-all;color:#6B7280;">{{ link }}</span>
+  </p>
+{% endblock %}

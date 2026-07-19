@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.http import Http404
+from django.template.loader import render_to_string
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
@@ -29,7 +30,7 @@ from core.serializers.auth import (
     SignupSerializer,
     TokenPairResponseSerializer,
 )
-from services import bank_login_states, notification_service
+from services import bank_login_states, link_tickets, notification_service
 from services.bank_connectors import BankConnectorError, get_connector
 from services.bank_connectors.sync import apply_synced_accounts
 
@@ -73,18 +74,23 @@ def _token_pair_response(user, status_code):
 
 
 def _verify_email_link(user, token):
-    """The frontend page these links point at doesn't exist yet — see
-    Frontend-Email-Handoff.md (repo root) for the exact contract: query
-    param names are deliberately identical to
-    EmailVerificationConfirmSerializer's body fields, so the page can
-    forward them straight through with no translation."""
-    return f"{settings.FRONTEND_URL}/verify-email?user_id={user.id}&token={token}"
+    """
+    The query string carries one opaque, single-use ticket (services/link_tickets.py)
+    rather than `user_id`/`token` directly — keeps both out of the URL (browser
+    history, referrer headers, email-client link-preview scanners). The
+    frontend's /verify-email page reads `t` and forwards it as-is to
+    EmailVerificationConfirmSerializer, which redeems it server-side back to
+    the (user_id, token) pair this function used to put in the URL directly.
+    """
+    ticket = link_tickets.mint_link_ticket(user.id, token, settings.PASSWORD_RESET_TIMEOUT)
+    return f"{settings.FRONTEND_URL}/verify-email?t={ticket}"
 
 
 def _reset_password_link(user, token):
     """Same reasoning as _verify_email_link, for
-    PasswordResetConfirmSerializer's body fields."""
-    return f"{settings.FRONTEND_URL}/reset-password?user_id={user.id}&token={token}"
+    PasswordResetConfirmSerializer's body field."""
+    ticket = link_tickets.mint_link_ticket(user.id, token, settings.PASSWORD_RESET_TIMEOUT)
+    return f"{settings.FRONTEND_URL}/reset-password?t={ticket}"
 
 
 def _send_verification_email(user):
@@ -95,13 +101,15 @@ def _send_verification_email(user):
     PLAN.md Checkpoint 5) even if this send fails.
     """
     token = email_verification_token_generator.make_token(user)
+    link = _verify_email_link(user, token)
     try:
         notification_service.send_email(
             user.email,
             "Verify your email",
             "Confirm your email address by visiting the link below:\n\n"
-            f"{_verify_email_link(user, token)}\n\n"
+            f"{link}\n\n"
             "This link expires in a few days.",
+            html_body=render_to_string("emails/verify_email.html", {"link": link}),
         )
     except notification_service.NotificationServiceError:
         pass
@@ -437,13 +445,15 @@ class PasswordResetRequestView(APIView):
         user = User.objects.filter(email=serializer.validated_data["email"]).first()
         if user is not None:
             token = password_reset_token_generator.make_token(user)
+            link = _reset_password_link(user, token)
             try:
                 notification_service.send_email(
                     user.email,
                     "Reset your password",
                     "Reset your password by visiting the link below:\n\n"
-                    f"{_reset_password_link(user, token)}\n\n"
+                    f"{link}\n\n"
                     "If you didn't request this, you can ignore this email.",
+                    html_body=render_to_string("emails/reset_password.html", {"link": link}),
                 )
             except notification_service.NotificationServiceError:
                 # Same reasoning as every other best-effort send in this
@@ -478,11 +488,16 @@ class PasswordResetConfirmView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        user = User.objects.filter(id=data["user_id"]).first()
-        if user is None or not password_reset_token_generator.check_token(user, data["token"]):
-            # Doesn't distinguish "no such user" from "bad/expired token" —
-            # same enumeration-avoidance reasoning as everywhere else here.
-            raise DRFValidationError({"token": "Invalid or expired token."})
+        redeemed = link_tickets.redeem_link_ticket(data["t"])
+        user = User.objects.filter(id=redeemed["user_id"]).first() if redeemed else None
+        if (
+            user is None
+            or not password_reset_token_generator.check_token(user, redeemed["token"])
+        ):
+            # Doesn't distinguish "no such ticket"/"no such user"/"bad or
+            # expired token" — same enumeration-avoidance reasoning as
+            # everywhere else here.
+            raise DRFValidationError({"t": "Invalid or expired link."})
 
         user.set_password(data["new_password"])
         user.save(update_fields=["password"])
@@ -507,13 +522,15 @@ class EmailVerificationRequestView(APIView):
     )
     def post(self, request):
         token = email_verification_token_generator.make_token(request.user)
+        link = _verify_email_link(request.user, token)
         try:
             notification_service.send_email(
                 request.user.email,
                 "Verify your email",
                 "Confirm your email address by visiting the link below:\n\n"
-                f"{_verify_email_link(request.user, token)}\n\n"
+                f"{link}\n\n"
                 "This link expires in a few days.",
+                html_body=render_to_string("emails/verify_email.html", {"link": link}),
             )
         except notification_service.NotificationServiceError as exc:
             raise NotificationServiceUnavailable(str(exc)) from exc
@@ -522,8 +539,12 @@ class EmailVerificationRequestView(APIView):
 
 class EmailVerificationConfirmView(APIView):
     """
-    Complete email verification given the `user_id`/`token` from the
-    signup (or resend) email. Same stateless-token shape as
+    Complete email verification given the opaque link ticket (`t`) from the
+    signup (or resend) email — see services/link_tickets.py and
+    _verify_email_link's docstring for why the URL carries a ticket rather
+    than `user_id`/`token` directly. Redeeming it recovers the same
+    (user_id, token) pair this endpoint used to receive straight from the
+    client, checked the same way: same stateless-token shape as
     PasswordResetConfirmView, keyed on `email_verified` instead of
     `password` (core/auth_tokens.py::EmailVerificationTokenGenerator) — so
     the token is invalidated by this endpoint's own effect (flipping
@@ -541,9 +562,13 @@ class EmailVerificationConfirmView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        user = User.objects.filter(id=data["user_id"]).first()
-        if user is None or not email_verification_token_generator.check_token(user, data["token"]):
-            raise DRFValidationError({"token": "Invalid or expired token."})
+        redeemed = link_tickets.redeem_link_ticket(data["t"])
+        user = User.objects.filter(id=redeemed["user_id"]).first() if redeemed else None
+        if (
+            user is None
+            or not email_verification_token_generator.check_token(user, redeemed["token"])
+        ):
+            raise DRFValidationError({"t": "Invalid or expired link."})
 
         user.email_verified = True
         user.save(update_fields=["email_verified"])
