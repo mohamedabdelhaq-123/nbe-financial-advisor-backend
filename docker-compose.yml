@@ -9,7 +9,7 @@ services:
       # ai_readonly is provisioned separately by a Django migration (see
       # core/migrations/0009_grant_ai_readonly_role.py), which reads
       # AI_READONLY_PASSWORD from the backend service's own environment below.
-      AI_DB_PASSWORD: ${AI_DB_PASSWORD:-ai_db_pass}
+      AI_DB_PASSWORD: ${AI_DB_PASSWORD:-change-me-ai-db-pass}
       # Consumed by deploy/initdb/20-mock-bank-roles.sh to provision
       # mock_bank_user + mock_bank_db (mock-bank-sync's own database).
       MOCK_BANK_DB_PASSWORD: ${MOCK_BANK_DB_PASSWORD:-mock_bank_db_pass}
@@ -47,7 +47,7 @@ services:
       USE_MOCK_AI_SERVICE: ${USE_MOCK_AI_SERVICE:-1}
       # Consumed by core/migrations/0009_grant_ai_readonly_role.py to
       # provision/refresh the ai_readonly role's password.
-      AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-ai_readonly_pass}
+      AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-change-me-readonly-pass}
       SEAWEED_S3_ENDPOINT: ${SEAWEED_S3_ENDPOINT:-http://seaweedfs:8333}
       SEAWEED_ACCESS_KEY: ${SEAWEED_ACCESS_KEY:-dev-seaweed-key}
       SEAWEED_SECRET_KEY: ${SEAWEED_SECRET_KEY:-dev-seaweed-secret}
@@ -103,7 +103,7 @@ services:
       # See backend's AI_SERVICE_URL/USE_MOCK_AI_SERVICE above — same reasoning.
       AI_SERVICE_URL: http://ai-service:8001
       USE_MOCK_AI_SERVICE: ${USE_MOCK_AI_SERVICE:-1}
-      AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-ai_readonly_pass}
+      AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-change-me-readonly-pass}
       SEAWEED_S3_ENDPOINT: ${SEAWEED_S3_ENDPOINT:-http://seaweedfs:8333}
       SEAWEED_ACCESS_KEY: ${SEAWEED_ACCESS_KEY:-dev-seaweed-key}
       SEAWEED_SECRET_KEY: ${SEAWEED_SECRET_KEY:-dev-seaweed-secret}
