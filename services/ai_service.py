@@ -140,13 +140,18 @@ def process_statement(statement_id: str) -> dict:
 def normalize_statement(ocr_result_id: str) -> dict:
     """
     Phase 2/2 (Normalization Agent). Returns {"normalized_json", "model_used"}
-    either way — normalized_json = {"bank_name", "account_hint", "transactions": [...]},
-    each transaction = {"transaction_date", "merchant_raw", "ai_description",
-    "category", "amount", "transaction_type", "duplicate_of"}. duplicate_of is
-    computed here (both mock and real), not by the caller — the real AI
-    service resolves it itself via its read-only Django DB connection, so the
-    mock mirrors that instead of leaving it for run_normalization_phase to
-    re-derive.
+    either way — normalized_json = {"bank_name", "account_number", "transactions": [...],
+    "extra_fields"?}, each transaction = {"transaction_date", "merchant_raw",
+    "merchant_normalized", "ai_description", "category", "amount",
+    "transaction_type", "balance", "duplicate_of", "extra_fields"?}.
+    account_number is the real, unmasked account number as printed in the
+    source (null if not determinable) — not a masked hint. balance/
+    merchant_normalized are dedicated keys, always present but null when not
+    determinable. extra_fields (both levels) is a plain key-value object,
+    present only when non-empty. duplicate_of is computed here (both mock and
+    real), not by the caller — the real AI service resolves it itself via its
+    read-only Django DB connection, so the mock mirrors that instead of
+    leaving it for run_normalization_phase to re-derive.
     """
     if settings.USE_MOCK_AI_SERVICE:
         return _mock_normalize_statement(ocr_result_id)
@@ -185,11 +190,15 @@ def _mock_normalize_statement(ocr_result_id: str) -> dict:
         Category.objects.filter(category_type="expense").values_list("name", flat=True)
     )
 
+    starting_balance = round(rng.uniform(5000, 20000), 2)
+    balance = starting_balance
     transactions = []
-    for _ in range(3):
+    for i in range(3):
         transaction_date = date.today() - timedelta(days=rng.randrange(1, 60))
         amount = round(rng.uniform(50, 5000), 2)
-        merchant_raw = f"{merchants[rng.randrange(len(merchants))]} #{statement.id.hex[:6]}"
+        merchant = merchants[rng.randrange(len(merchants))]
+        merchant_raw = f"{merchant} #{statement.id.hex[:6]}"
+        balance = round(balance - amount, 2)
 
         # Mirrors the real ai-service's find_duplicate(): user-scoped, exact
         # amount, date within a 2-day window, closest by date — not scoped by
@@ -208,23 +217,32 @@ def _mock_normalize_statement(ocr_result_id: str) -> dict:
             default=None,
         )
 
-        transactions.append(
-            {
-                "transaction_date": transaction_date.isoformat(),
-                "merchant_raw": merchant_raw,
-                "ai_description": f"Payment to {merchant_raw}.",
-                "category": categories[rng.randrange(len(categories))],
-                "amount": amount,
-                "transaction_type": "debit",
-                "duplicate_of": str(duplicate.id) if duplicate is not None else None,
-            }
-        )
+        txn_entry = {
+            "transaction_date": transaction_date.isoformat(),
+            "merchant_raw": merchant_raw,
+            "merchant_normalized": merchant,
+            "ai_description": f"Payment to {merchant_raw}.",
+            "category": categories[rng.randrange(len(categories))],
+            "amount": amount,
+            "transaction_type": "debit",
+            "balance": balance,
+            "duplicate_of": str(duplicate.id) if duplicate is not None else None,
+        }
+        if i == 0:
+            # Exercises the extra_fields round-trip (contract: a plain
+            # key-value object, present only when non-empty) without every
+            # fabricated transaction needing one.
+            txn_entry["extra_fields"] = {"reference_number": f"REF{seed}{i}"}
+        transactions.append(txn_entry)
 
     return {
         "normalized_json": {
             "bank_name": "National Bank of Egypt",
-            "account_hint": "****" + statement.checksum[:4],
+            # Unmasked — matches the real contract's account_number (never a
+            # masked hint like the old account_hint field).
+            "account_number": statement.checksum[:16],
             "transactions": transactions,
+            "extra_fields": {"opening_balance": str(starting_balance)},
         },
         "model_used": "mock-normalizer-v0",
     }
