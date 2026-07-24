@@ -51,7 +51,11 @@ def apply_synced_accounts(connection, accounts: list[dict], connector) -> list[B
                     "link_type": BankAccount.LINK_TYPE_SYNCED,
                     "bank_name": acct["bank_name"],
                     "account_type": acct.get("account_type"),
-                    "masked_account_number": acct["masked_account_number"],
+                    # acct["masked_account_number"] is BankConnector.fetch_accounts()'s
+                    # own interface contract (services/bank_connectors/base.py) —
+                    # providers only ever hand back a masked value for sync;
+                    # only the destination model field is renamed here.
+                    "account_number": acct["masked_account_number"],
                     "currency": acct.get("currency", "EGP"),
                 },
             )
