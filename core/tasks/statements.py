@@ -89,24 +89,22 @@ def run_normalization_phase(statement: StatementFile) -> None:
     if statement.account is None:
         # System_Architecture.md §5: "Normalization Agent maps columns...".
         # When the client didn't supply account_id upfront, the Normalization
-        # Agent may resolve or create one — keyed on bank_name only, not
-        # bank_name + account_hint. account_hint is currently
-        # "****" + the *uploaded file's own checksum* (services/ai_service.py,
-        # the mock Normalization Agent) — not a real extracted account
-        # number — so it's different on every upload and can never match an
+        # Agent may resolve or create one — keyed on (bank_name, account_number)
+        # now that account_number is the real, unmasked number as printed in
+        # the source (services/ai_service.py), not a checksum-derived hint
+        # that was different on every upload and could never match an
         # existing account across two statements from the same real bank
-        # account. Keying on it created a brand-new duplicate BankAccount
-        # per upload. Once a real OCR/MinerU pipeline extracts a genuine
-        # masked account number, matching on it too becomes correct again.
-        # Real MinerU may also return null for either field when the PDF
-        # doesn't clearly show them — fall back to safe placeholders so the
-        # NOT NULL constraints are satisfied and the account is still created.
+        # account. Real MinerU may also return null for either field when the
+        # PDF doesn't clearly show them — fall back to safe placeholders so
+        # the NOT NULL constraints are satisfied and the account is still
+        # created (a statement with no determinable account number lands on
+        # its own "unknown"-keyed account per bank, same as before).
         bank_name = normalized.get("bank_name") or "Unknown Bank"
-        account_hint = normalized.get("account_hint") or "****unknown"
+        account_number = normalized.get("account_number") or "unknown"
         statement.account, _ = BankAccount.objects.get_or_create(
             user=statement.user,
             bank_name=bank_name,
-            defaults={"masked_account_number": account_hint},
+            account_number=account_number,
         )
 
     transaction_dates = [

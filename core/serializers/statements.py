@@ -4,6 +4,7 @@ from rest_framework import serializers
 
 from core.models import StatementFile
 from core.serializers.aggregations import TransactionListSerializer
+from core.utils import mask_account_number
 
 # Valid "advance to" targets, shared by StatementUploadRequestSerializer's
 # optional `status` and StatementPatchSerializer's required one — both
@@ -34,7 +35,7 @@ class StatementFileSerializer(serializers.ModelSerializer):
     """List/base shape (GET /statements, and inherited by everything below).
 
     Carries the file-level metadata — file_size/file_type plus what
-    normalization resolved (bank_name/account_hint/model_used/adjusted_at) —
+    normalization resolved (bank_name/account_number/model_used/adjusted_at) —
     so a document list can show "which bank / what file / when parsed"
     without a per-row detail call. The heavy part (the transaction array
     itself) stays on StatementDetailSerializer instead: a list screen wants
@@ -45,7 +46,7 @@ class StatementFileSerializer(serializers.ModelSerializer):
     # used throughout docs/API_GUIDE/Data_Shapes_*.md.
     account_id = serializers.PrimaryKeyRelatedField(source="account", read_only=True)
     bank_name = serializers.SerializerMethodField()
-    account_hint = serializers.SerializerMethodField()
+    account_number = serializers.SerializerMethodField()
     model_used = serializers.SerializerMethodField()
     adjusted_at = serializers.SerializerMethodField()
 
@@ -61,7 +62,7 @@ class StatementFileSerializer(serializers.ModelSerializer):
             "file_size",
             "file_type",
             "bank_name",
-            "account_hint",
+            "account_number",
             "model_used",
             "adjusted_at",
             "start_transaction_date",
@@ -89,9 +90,13 @@ class StatementFileSerializer(serializers.ModelSerializer):
         payload = obj.normalized_payload
         return payload.get("bank_name") if payload else None
 
-    def get_account_hint(self, obj) -> str | None:
+    def get_account_number(self, obj) -> str | None:
+        # normalized_json carries the real, unmasked account number
+        # (services/ai_service.py) — mask it here, at the one point it's
+        # about to leave the backend, rather than storing two values.
         payload = obj.normalized_payload
-        return payload.get("account_hint") if payload else None
+        raw = payload.get("account_number") if payload else None
+        return mask_account_number(raw)
 
     def get_model_used(self, obj) -> str | None:
         # These describe the normalization run itself, not the mutable
@@ -212,6 +217,13 @@ class TransactionApprovalItemSerializer(serializers.Serializer):
     transaction_type = serializers.CharField(
         max_length=20, allow_blank=True, allow_null=True, required=False
     )
+    balance = serializers.DecimalField(
+        max_digits=14, decimal_places=2, required=False, allow_null=True
+    )
+    merchant_normalized = serializers.CharField(
+        max_length=255, allow_blank=True, allow_null=True, required=False
+    )
+    extra_fields = serializers.JSONField(required=False, allow_null=True)
 
 
 class TransactionApprovalRequestSerializer(serializers.Serializer):
@@ -221,7 +233,7 @@ class TransactionApprovalRequestSerializer(serializers.Serializer):
     `account_id`, which is how the user confirms or corrects the account
     that normalization inferred from OCR — the one and only
     account-confirmation moment, since by this point the client has
-    already seen the inferred `bank_name`/`account_hint`/`account_id` via
+    already seen the inferred `bank_name`/`account_number`/`account_id` via
     `GET /statements/{id}`.
     """
 
