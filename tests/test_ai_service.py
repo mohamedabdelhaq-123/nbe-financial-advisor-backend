@@ -54,7 +54,7 @@ def ocr_result(statement):
 @pytest.fixture
 def account(user):
     return BankAccount.objects.create(
-        user=user, bank_name="Test Bank", masked_account_number="1234"
+        user=user, bank_name="Test Bank", account_number="1234"
     )
 
 
@@ -74,18 +74,29 @@ def test_normalize_statement_mock_matches_real_transaction_shape(ocr_result):
     assert set(result) == {"normalized_json", "model_used"}
 
     normalized = result["normalized_json"]
-    assert set(normalized) == {"bank_name", "account_hint", "transactions"}
+    assert set(normalized) == {"bank_name", "account_number", "transactions", "extra_fields"}
+    # account_number is the real, unmasked value — not a masked hint like the
+    # old account_hint field.
+    assert not normalized["account_number"].startswith("****")
     assert len(normalized["transactions"]) == 3
-    for txn in normalized["transactions"]:
-        assert set(txn) == {
+    for i, txn in enumerate(normalized["transactions"]):
+        expected_keys = {
             "transaction_date",
             "merchant_raw",
+            "merchant_normalized",
             "ai_description",
             "category",
             "amount",
             "transaction_type",
+            "balance",
             "duplicate_of",
         }
+        if i == 0:
+            # Only the first fabricated transaction carries extra_fields —
+            # omit-when-empty applies per-transaction, same as the real
+            # contract.
+            expected_keys |= {"extra_fields"}
+        assert set(txn) == expected_keys
         assert txn["category"] in {"housing", "food", "transport", "savings", "lifestyle", "other"}
 
 
@@ -99,7 +110,7 @@ def test_normalize_statement_flags_duplicate_within_window(ocr_result):
     assert txn["duplicate_of"] is None
 
     account = BankAccount.objects.create(
-        user=statement.user, bank_name="Test Bank", masked_account_number="1234"
+        user=statement.user, bank_name="Test Bank", account_number="1234"
     )
     Transaction.objects.create(
         user=statement.user,

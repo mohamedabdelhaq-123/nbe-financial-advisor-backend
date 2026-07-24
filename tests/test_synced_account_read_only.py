@@ -34,7 +34,7 @@ def synced_account(user):
     return BankAccount.objects.create(
         user=user,
         bank_name="Mock National Bank",
-        masked_account_number="****1234",
+        account_number="****1234",
         link_type=BankAccount.LINK_TYPE_SYNCED,
     )
 
@@ -44,7 +44,7 @@ def manual_account(user):
     return BankAccount.objects.create(
         user=user,
         bank_name="Manual Bank",
-        masked_account_number="****9999",
+        account_number="****9999",
         link_type=BankAccount.LINK_TYPE_MANUAL,
     )
 
@@ -119,7 +119,7 @@ def test_delete_manual_account_still_allowed(client, manual_account):
 def _create_account_payload(**overrides):
     payload = {
         "bank_name": "Mock National Bank",
-        "masked_account_number": "****5678",
+        "account_number": "****5678",
     }
     payload.update(overrides)
     return payload
@@ -132,7 +132,7 @@ def test_create_manual_account_shadowing_synced_bank_rejected(client, synced_acc
 
     assert response.status_code == 422
     assert response.data["error"]["code"] == "bank_account_source_of_truth"
-    assert not BankAccount.objects.filter(masked_account_number="****5678").exists()
+    assert not BankAccount.objects.filter(account_number="****5678").exists()
 
 
 def test_create_manual_account_different_bank_still_allowed(client, synced_account):

@@ -253,7 +253,7 @@ def test_callback_email_collision_merges_into_existing_user_and_replaces_manual_
     manual_account = BankAccount.objects.create(
         user=existing_user,
         bank_name="Mock National Bank",
-        masked_account_number="****9999",
+        account_number="****9999",
         link_type=BankAccount.LINK_TYPE_MANUAL,
     )
     Transaction.objects.create(
@@ -267,7 +267,7 @@ def test_callback_email_collision_merges_into_existing_user_and_replaces_manual_
     other_manual_account = BankAccount.objects.create(
         user=existing_user,
         bank_name="Some Other Bank",
-        masked_account_number="****0001",
+        account_number="****0001",
         link_type=BankAccount.LINK_TYPE_MANUAL,
     )
 

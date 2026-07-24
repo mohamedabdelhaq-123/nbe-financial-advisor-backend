@@ -202,7 +202,7 @@ def test_callback_replaces_preexisting_manual_account_under_same_bank_name(
     manual_account = BankAccount.objects.create(
         user=user,
         bank_name="Mock National Bank",
-        masked_account_number="****9999",
+        account_number="****9999",
         link_type=BankAccount.LINK_TYPE_MANUAL,
     )
     Transaction.objects.create(
@@ -216,7 +216,7 @@ def test_callback_replaces_preexisting_manual_account_under_same_bank_name(
     other_bank_account = BankAccount.objects.create(
         user=user,
         bank_name="Some Other Bank",
-        masked_account_number="****0001",
+        account_number="****0001",
         link_type=BankAccount.LINK_TYPE_MANUAL,
     )
 

@@ -40,7 +40,7 @@ def synced_account(user, connection):
     return BankAccount.objects.create(
         user=user,
         bank_name="Mock National Bank",
-        masked_account_number="****1234",
+        account_number="****1234",
         link_type=BankAccount.LINK_TYPE_SYNCED,
         connection=connection,
         external_account_id="acc-1",
