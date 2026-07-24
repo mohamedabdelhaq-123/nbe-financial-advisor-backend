@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from core.models import BankAccount, ConsentRecord, User, UserPreference
+from core.utils import mask_account_number
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -53,7 +54,7 @@ class BankAccountSerializer(serializers.ModelSerializer):
             "id",
             "bank_name",
             "account_type",
-            "masked_account_number",
+            "account_number",
             "currency",
             "is_active",
             "link_type",
@@ -65,6 +66,16 @@ class BankAccountSerializer(serializers.ModelSerializer):
         # and never client-writable — a synced account's link_type also can't
         # be spoofed away from the client side to bypass assert_account_mutable().
         read_only_fields = ["id", "link_type", "external_account_id", "created_at"]
+
+    def to_representation(self, instance):
+        # account_number stores whatever's actually known — the real number
+        # for statement-derived accounts, an already-masked value for synced
+        # accounts (core/utils.py's mask_account_number docstring) — masking
+        # only applies on the way out, so POST/PATCH can still accept a raw
+        # client-supplied value on the way in.
+        data = super().to_representation(instance)
+        data["account_number"] = mask_account_number(instance.account_number)
+        return data
 
 
 class ConsentGrantSerializer(serializers.Serializer):
