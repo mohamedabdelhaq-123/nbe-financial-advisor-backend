@@ -2,7 +2,7 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
-from core.models import StatementFile
+from core.models import StatementFile, Transaction
 from core.serializers.aggregations import TransactionListSerializer
 from core.utils import mask_account_number
 
@@ -207,9 +207,8 @@ class TransactionApprovalItemSerializer(serializers.Serializer):
     all."""
 
     transaction_date = serializers.DateField()
-    merchant_raw = serializers.CharField(
-        max_length=500, allow_blank=True, allow_null=True, required=False
-    )
+    # Deliberately no max_length: an over-long value is truncated
+    merchant_raw = serializers.CharField(allow_blank=True, allow_null=True, required=False)
     category = serializers.CharField(
         max_length=100, allow_blank=True, allow_null=True, required=False
     )
@@ -224,6 +223,12 @@ class TransactionApprovalItemSerializer(serializers.Serializer):
         max_length=255, allow_blank=True, allow_null=True, required=False
     )
     extra_fields = serializers.JSONField(required=False, allow_null=True)
+
+    def validate_merchant_raw(self, value):
+        # Truncate rather than reject. This value isn't user-authored input
+        if value is None:
+            return value
+        return value[: Transaction._meta.get_field("merchant_raw").max_length]
 
 
 class TransactionApprovalRequestSerializer(serializers.Serializer):
