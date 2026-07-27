@@ -186,7 +186,7 @@ def test_embed_transactions_mock_raises_on_unknown_id(db):
 def test_create_embeddings_mock_shape_and_dimensions(user):
     result = ai_service.create_embeddings(["hello world", "second text"], dimensions=768)
 
-    assert set(result) == {"object", "data", "model", "usage"}
+    assert set(result) == {"object", "data", "model"}
     assert len(result["data"]) == 2
     assert [datum["index"] for datum in result["data"]] == [0, 1]
     assert all(len(datum["embedding"]) == 768 for datum in result["data"])
@@ -469,7 +469,6 @@ def test_create_embeddings_real_calls_correct_endpoint_with_dimensions(real_mode
                 "object": "list",
                 "data": [{"object": "embedding", "embedding": [0.1], "index": 0}],
                 "model": "real-embedder",
-                "usage": {"prompt_tokens": 1, "total_tokens": 1},
             }
         )
     )
@@ -483,7 +482,7 @@ def test_create_embeddings_real_calls_correct_endpoint_with_dimensions(real_mode
 
 
 def test_create_embeddings_real_omits_dimensions_when_not_given(real_mode, monkeypatch):
-    fake = _FakeSession(_FakeResponse({"object": "list", "data": [], "model": "x", "usage": {}}))
+    fake = _FakeSession(_FakeResponse({"object": "list", "data": [], "model": "x"}))
     monkeypatch.setattr(ai_service, "_session", fake)
 
     ai_service.create_embeddings(["hello"])

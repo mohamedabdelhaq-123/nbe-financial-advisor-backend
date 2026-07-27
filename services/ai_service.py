@@ -481,7 +481,7 @@ def _real_embed_transactions(transaction_ids: list[str]) -> dict:
 
 
 def create_embeddings(texts: list[str], dimensions: int | None = None) -> dict:
-    """Returns {"data": [{"embedding", "index"}], "model", "usage"}."""
+    """Returns {"data": [{"embedding", "index"}], "model"}."""
     if settings.USE_MOCK_AI_SERVICE:
         return _mock_create_embeddings(texts, dimensions)
     return _real_create_embeddings(texts, dimensions)
@@ -496,12 +496,10 @@ def _mock_create_embeddings(texts: list[str], dimensions: int | None) -> dict:
         {"object": "embedding", "embedding": [random.random() for _ in range(size)], "index": i}
         for i in range(len(texts))
     ]
-    prompt_tokens = sum(len(text.split()) for text in texts)
     return {
         "object": "list",
         "data": data,
         "model": "mock-embedder-v0",
-        "usage": {"prompt_tokens": prompt_tokens, "total_tokens": prompt_tokens},
     }
 
 
