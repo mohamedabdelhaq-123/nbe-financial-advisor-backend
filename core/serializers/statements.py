@@ -4,7 +4,6 @@ from rest_framework import serializers
 
 from core.models import StatementFile, Transaction
 from core.serializers.aggregations import TransactionListSerializer
-from core.utils import mask_account_number
 
 # Valid "advance to" targets, shared by StatementUploadRequestSerializer's
 # optional `status` and StatementPatchSerializer's required one — both
@@ -91,12 +90,11 @@ class StatementFileSerializer(serializers.ModelSerializer):
         return payload.get("bank_name") if payload else None
 
     def get_account_number(self, obj) -> str | None:
-        # normalized_json carries the real, unmasked account number
-        # (services/ai_service.py) — mask it here, at the one point it's
-        # about to leave the backend, rather than storing two values.
+        # normalized_json carries the real, unmasked account number as
+        # printed in the source document (services/ai_service.py) — surfaced
+        # verbatim, same as BankAccountSerializer's account_number.
         payload = obj.normalized_payload
-        raw = payload.get("account_number") if payload else None
-        return mask_account_number(raw)
+        return payload.get("account_number") if payload else None
 
     def get_model_used(self, obj) -> str | None:
         # These describe the normalization run itself, not the mutable

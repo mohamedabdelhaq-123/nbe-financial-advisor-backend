@@ -380,7 +380,7 @@ class Command(BaseCommand):
                     user=user,
                     bank_name=bank_name,
                     account_type=random.choice(["checking", "savings"]),
-                    account_number=f"****{random.randint(1000, 9999)}",
+                    account_number=str(random.randint(10**15, 10**16 - 1)),
                     currency="EGP",
                     is_active=True,
                 )

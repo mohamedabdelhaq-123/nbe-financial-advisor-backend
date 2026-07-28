@@ -94,7 +94,11 @@ def run_normalization_phase(statement: StatementFile) -> None:
         # the source (services/ai_service.py), not a checksum-derived hint
         # that was different on every upload and could never match an
         # existing account across two statements from the same real bank
-        # account. Real MinerU may also return null for either field when the
+        # account. Synced accounts store the real number too (the connector
+        # contract in services/bank_connectors/base.py), so a statement for an
+        # already-linked account resolves onto it here rather than creating a
+        # duplicate manual one alongside it. Real MinerU may also return null
+        # for either field when the
         # PDF doesn't clearly show them — fall back to safe placeholders so
         # the NOT NULL constraints are satisfied and the account is still
         # created (a statement with no determinable account number lands on

@@ -137,6 +137,40 @@ def test_different_bank_name_still_creates_a_distinct_account(monkeypatch, user)
     assert stmt1.account_id != stmt2.account_id
 
 
+def test_statement_resolves_onto_an_existing_synced_account(monkeypatch, user):
+    """A statement uploaded for an account the user already linked by bank
+    sync must land on that account, not shadow it with a manual duplicate.
+
+    This only holds because the connector contract hands back the real
+    account number (services/bank_connectors/base.py) rather than a masked
+    one — while sync stored "****3200" and the statement reported the full
+    number, the two could never compare equal and every such upload silently
+    forked a second account. assert_bank_not_already_synced doesn't cover
+    this path: get_or_create here never goes through the view layer.
+    """
+    synced = BankAccount.objects.create(
+        user=user,
+        bank_name="National Bank of Egypt",
+        account_number="4213010248203200016",
+        link_type=BankAccount.LINK_TYPE_SYNCED,
+    )
+    monkeypatch.setattr(
+        statements_task_module.ai_service,
+        "normalize_statement",
+        _fake_normalize("National Bank of Egypt", "4213010248203200016"),
+    )
+    stmt = _make_statement(user, "checksum-synced")
+
+    statements_task_module.run_normalization_phase(stmt)
+
+    stmt.refresh_from_db()
+    assert stmt.account_id == synced.id
+    assert BankAccount.objects.filter(user=user, bank_name="National Bank of Egypt").count() == 1
+    # Still the synced row — resolved onto, not downgraded to manual.
+    synced.refresh_from_db()
+    assert synced.link_type == BankAccount.LINK_TYPE_SYNCED
+
+
 def test_statement_with_preselected_account_is_left_untouched(monkeypatch, user):
     account = BankAccount.objects.create(
         user=user, bank_name="Preselected Bank", account_number="0000"

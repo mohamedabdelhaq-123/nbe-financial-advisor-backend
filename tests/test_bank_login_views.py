@@ -69,7 +69,7 @@ _DEFAULT_ACCOUNTS = [
         "external_account_id": "acc-1",
         "bank_name": "Mock National Bank",
         "account_type": "checking",
-        "masked_account_number": "****1234",
+        "account_number": "1000200030001234",
         "currency": "EGP",
     }
 ]
@@ -253,7 +253,7 @@ def test_callback_email_collision_merges_into_existing_user_and_replaces_manual_
     manual_account = BankAccount.objects.create(
         user=existing_user,
         bank_name="Mock National Bank",
-        account_number="****9999",
+        account_number="1000200030009999",
         link_type=BankAccount.LINK_TYPE_MANUAL,
     )
     Transaction.objects.create(
@@ -267,7 +267,7 @@ def test_callback_email_collision_merges_into_existing_user_and_replaces_manual_
     other_manual_account = BankAccount.objects.create(
         user=existing_user,
         bank_name="Some Other Bank",
-        account_number="****0001",
+        account_number="1000200030000001",
         link_type=BankAccount.LINK_TYPE_MANUAL,
     )
 
@@ -311,7 +311,7 @@ def test_callback_login_via_second_bank_keeps_both_connections(client, monkeypat
             "external_account_id": "acc-2",
             "bank_name": "Second Mock Bank",
             "account_type": "checking",
-            "masked_account_number": "****4321",
+            "account_number": "1000200030004321",
             "currency": "EGP",
         }
     ]

@@ -162,11 +162,11 @@ class BankAccountListCreateView(generics.ListCreateAPIView):
         # account_number/bank_name (BankAccountFilterSet) let the frontend
         # check "does the user already have an account matching this
         # OCR-derived account number?" (PLAN.md Checkpoint A) before/without
-        # creating a duplicate — exact match against whatever
-        # core/tasks/statements.py's run_normalization_phase() resolved/
-        # created the account with. Display-side masking is a separate,
-        # serializer-boundary concern (core.utils.mask_account_number), not
-        # something this query or run_normalization_phase() does.
+        # creating a duplicate — an exact match works across every creation
+        # path (manual entry, statement normalization, and bank sync) because
+        # all three store the real number, and the serializer hands it back
+        # unmasked, so a value read off a GET /accounts response round-trips
+        # as a filter unchanged.
         return BankAccount.objects.filter(user=self.request.user).order_by("-created_at")
 
     def perform_create(self, serializer):

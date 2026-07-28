@@ -36,7 +36,7 @@ def account(user):
     return BankAccount.objects.create(
         user=user,
         bank_name="Mock National Bank",
-        account_number="****1234",
+        account_number="1000200030001234",
         link_type=BankAccount.LINK_TYPE_SYNCED,
     )
 

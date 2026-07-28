@@ -35,7 +35,7 @@ def synced_account(user):
     return BankAccount.objects.create(
         user=user,
         bank_name="Mock National Bank",
-        account_number="****1234",
+        account_number="1000200030001234",
         link_type=BankAccount.LINK_TYPE_SYNCED,
     )
 
@@ -45,7 +45,7 @@ def manual_account(user):
     return BankAccount.objects.create(
         user=user,
         bank_name="Manual Bank",
-        account_number="****9999",
+        account_number="1000200030009999",
         link_type=BankAccount.LINK_TYPE_MANUAL,
     )
 
