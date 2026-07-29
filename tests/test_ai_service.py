@@ -61,9 +61,7 @@ def ocr_result(statement):
 
 @pytest.fixture
 def account(user):
-    return BankAccount.objects.create(
-        user=user, bank_name="Test Bank", account_number="1234"
-    )
+    return BankAccount.objects.create(user=user, bank_name="Test Bank", account_number="1234")
 
 
 @pytest.fixture
