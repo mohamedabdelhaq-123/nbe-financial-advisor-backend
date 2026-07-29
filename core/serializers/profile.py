@@ -48,7 +48,7 @@ class BankAccountSerializer(serializers.ModelSerializer):
     """`account_number` is returned exactly as stored — no display-side masking.
 
     It holds the full number whatever created the account: manual entry,
-    statement OCR (core/tasks/statements.py's run_normalization_phase()), or
+    statement OCR (core/tasks/statements.py's _finalize_normalization_phase()), or
     bank sync, where BankConnector.fetch_accounts()' contract
     (services/bank_connectors/base.py) requires the provider to hand back the
     real number rather than a masked hint. That uniformity is what lets a

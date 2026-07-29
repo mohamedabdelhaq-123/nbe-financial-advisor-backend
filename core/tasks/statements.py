@@ -5,12 +5,18 @@ cycle. validate_advance() stays synchronously callable (a double-clicked
 retry needs an immediate 422, not a task that fails a few hundred ms later);
 everything else — the phase cascade itself — only ever runs from inside
 process_statement_pipeline.
+
+Each phase submits an async job to the AI service and polls for completion
+via Celery's own retry/countdown mechanism (self.retry(countdown=...))
+instead of blocking a worker on one long HTTP call — see
+process_statement_pipeline's docstring for the poll-loop design.
 """
 
 from datetime import date
 from decimal import Decimal
 
 from celery import shared_task
+from celery.exceptions import Retry
 
 from core.exceptions import BusinessRuleError
 from core.models import (
@@ -21,25 +27,27 @@ from core.models import (
 )
 from services import ai_service, event_bus, notification_service
 
+# ~15s between polls, bounded to 240 attempts (~60 minutes) — matches the
+# old single blocking call's read-timeout budget (services/ai_service/ai_client.py's
+# _SYNC_INGESTION_TIMEOUT_SECONDS), just spread across many short polls
+# instead of one long HTTP read.
+POLL_INTERVAL_SECONDS = 15
+MAX_POLL_ATTEMPTS = 240
 
-def run_extraction_phase(statement: StatementFile) -> None:
-    """
-    Phase 1/2 of the ingestion pipeline (MinerU/OCR). On failure, status is
-    left at uploaded and failure_reason/failed_phase record why —
-    PATCH /statements/{id} is then the way to retry this phase (PLAN.md).
-    """
-    statement.is_processing = True
-    statement.save(update_fields=["is_processing"])
 
-    try:
-        result = ai_service.process_statement(str(statement.id))
-    except Exception as exc:
-        statement.failure_reason = str(exc)
-        statement.failed_phase = StatementFile.PHASE_EXTRACTION
-        statement.is_processing = False
-        statement.save(update_fields=["failure_reason", "failed_phase", "is_processing"])
-        return
+_PHASE_SUBMIT = {
+    StatementFile.PHASE_EXTRACTION: lambda client, statement: client.submit_process_job(
+        str(statement.id)
+    ),
+    StatementFile.PHASE_NORMALIZATION: lambda client, statement: client.submit_normalize_job(
+        str(statement.latest_ocr_run.id)
+    ),
+}
 
+
+def _finalize_extraction_phase(statement: StatementFile, result: dict) -> None:
+    """Phase 1/2 (MinerU/OCR) succeeded — persist the OCR result and advance
+    status."""
     StatementOcrResult.objects.create(
         statement=statement,
         seaweed_file_id=result["prefix"],
@@ -54,36 +62,17 @@ def run_extraction_phase(statement: StatementFile) -> None:
     statement.save(update_fields=["status", "failure_reason", "failed_phase", "is_processing"])
 
 
-def run_normalization_phase(statement: StatementFile) -> None:
+def _finalize_normalization_phase(statement: StatementFile, result: dict) -> None:
     """
-    Phase 2/2 (Normalization Agent). Resolves bank properties and writes the
-    proposed transaction array to normalized_json for the user to review —
-    nothing is written to the ledger here; that only happens via
+    Phase 2/2 (Normalization Agent) succeeded — writes the proposed
+    transaction array to normalized_json for the user to review. Nothing is
+    written to the ledger here; that only happens via
     POST /statements/{id}/transactions once the user approves the whole
     batch (PLAN.md). `duplicate_of` on each transaction is computed by the AI
-    service itself (both mock and real — see services/ai_service.py), not
+    service itself (both mock and real — see services/ai_service/), not
     re-derived here; it's a preview only, re-checked at approval time rather
     than trusted, since time may have passed since this ran.
-
-    Unlike run_extraction_phase() above, this calls ai_service.normalize_statement()
-    against the specific StatementOcrResult that phase just created — the two
-    real AI-service endpoints (/internal/ingestion/process,
-    .../normalize) are genuinely separate steps threaded by ocr_result_id,
-    not two calls sharing one fabricated result.
     """
-    statement.is_processing = True
-    statement.save(update_fields=["is_processing"])
-
-    ocr_result = statement.latest_ocr_run
-    try:
-        result = ai_service.normalize_statement(str(ocr_result.id))
-    except Exception as exc:
-        statement.failure_reason = str(exc)
-        statement.failed_phase = StatementFile.PHASE_NORMALIZATION
-        statement.is_processing = False
-        statement.save(update_fields=["failure_reason", "failed_phase", "is_processing"])
-        return
-
     normalized = result["normalized_json"]
 
     if statement.account is None:
@@ -91,7 +80,7 @@ def run_normalization_phase(statement: StatementFile) -> None:
         # When the client didn't supply account_id upfront, the Normalization
         # Agent may resolve or create one — keyed on (bank_name, account_number)
         # now that account_number is the real, unmasked number as printed in
-        # the source (services/ai_service.py), not a checksum-derived hint
+        # the source (services/ai_service/), not a checksum-derived hint
         # that was different on every upload and could never match an
         # existing account across two statements from the same real bank
         # account. Synced accounts store the real number too (the connector
@@ -148,6 +137,19 @@ def run_normalization_phase(statement: StatementFile) -> None:
     )
 
 
+_PHASE_FINALIZERS = {
+    StatementFile.PHASE_EXTRACTION: _finalize_extraction_phase,
+    StatementFile.PHASE_NORMALIZATION: _finalize_normalization_phase,
+}
+
+
+def _fail_phase(statement: StatementFile, phase: str, reason: str) -> None:
+    statement.failure_reason = reason
+    statement.failed_phase = phase
+    statement.is_processing = False
+    statement.save(update_fields=["failure_reason", "failed_phase", "is_processing"])
+
+
 # Ordered so a target status's index can be compared against the current
 # status's index to tell "forward" from "backward/same" (validate_advance()
 # below) and to drive the retry cascade.
@@ -158,18 +160,13 @@ _STATUS_ORDER = [
     StatementFile.STATUS_APPROVED,
 ]
 
-# Which phase function runs *from* a given status. STATUS_NORMALIZED and
-# STATUS_APPROVED have no entry — the former only ever advances via the
+# Maps a status to the phase that would run *from* it — used both to look up
+# the right submit/finalize pair for the statement's current status, and by
+# process_statement_pipeline's exception handler to fill in failed_phase when
+# an error occurs outside a phase's own try/except (e.g. saving
+# StatementOcrResult/StatementNormalized itself failing). STATUS_NORMALIZED
+# and STATUS_APPROVED have no entry — the former only ever advances via the
 # transaction-approval endpoint, never PATCH; the latter is terminal.
-_PHASE_RUNNERS = {
-    StatementFile.STATUS_UPLOADED: run_extraction_phase,
-    StatementFile.STATUS_EXTRACTED: run_normalization_phase,
-}
-
-# Maps a status to the phase that would run *from* it — used only by
-# process_statement_pipeline's exception handler to fill in failed_phase
-# when an error occurs outside a phase runner's own try/except (e.g. saving
-# StatementOcrResult/StatementNormalized itself failing).
 _PHASE_FOR_STATUS = {
     StatementFile.STATUS_UPLOADED: StatementFile.PHASE_EXTRACTION,
     StatementFile.STATUS_EXTRACTED: StatementFile.PHASE_NORMALIZATION,
@@ -207,22 +204,42 @@ def validate_advance(statement: StatementFile, target_status: str) -> int:
     return target_rank
 
 
-@shared_task
-def process_statement_pipeline(statement_id: str, target_status: str) -> None:
+@shared_task(bind=True)
+def process_statement_pipeline(
+    self,
+    statement_id: str,
+    target_status: str,
+    job_id: str | None = None,
+    poll_attempt: int = 0,
+) -> None:
     """
     Runs in the Celery worker — re-fetches the row rather than accepting a
     model instance (task args must be JSON-serializable, and a stale
     in-memory instance across the process boundary would be wrong anyway).
 
     validate_advance() has already run synchronously in the view before this
-    was enqueued, and the view already set is_processing=True — this resumes
-    one phase at a time, stopping once target_status is reached or a phase
-    fails (leaving failure_reason/failed_phase set by that phase's runner —
-    a mid-cascade failure is a valid outcome, not something this re-raises).
+    was first enqueued, and the view already set is_processing=True — this
+    resumes one phase at a time, stopping once target_status is reached or a
+    phase fails (leaving failure_reason/failed_phase set — a mid-cascade
+    failure is a valid outcome, not something this re-raises).
 
-    The outer try/except hardens a pre-existing gap: run_extraction_phase()/
-    run_normalization_phase() only ever catch ai_service's own call
-    exceptions — anything else raised in the loop (e.g. a DB error saving
+    Each phase submits an async job to the AI service (ai_service.get_client()
+    .submit_process_job()/submit_normalize_job()) and polls its status
+    (get_job_status()). While the job is still queued/running, the task
+    reschedules itself via self.retry(countdown=POLL_INTERVAL_SECONDS,
+    args=(...)) instead of blocking the worker — job_id/poll_attempt ride
+    through as plain task args (self.retry() must pass a full replacement
+    args= tuple, not kwargs=, since the view calls .delay(statement_id,
+    target_status) positionally: passing only kwargs would replay those two
+    original positional args *and* the new kwargs together and collide).
+    self.retry() raises celery.exceptions.Retry to hand control back to
+    Celery's tracer — that's caught separately (before the general except
+    Exception below) so the outer finally doesn't publish an SSE event on
+    every poll tick, only on terminal outcomes.
+
+    The outer try/except hardens a pre-existing gap: phase failures from
+    ai_service's own call exceptions are handled by _fail_phase(), but
+    anything else raised in the loop (e.g. a DB error saving
     StatementOcrResult) used to 500 the request and leave is_processing
     stuck True forever, with the request/response cycle there to at least
     surface the 500. That's no longer tolerable once nothing is watching
@@ -230,28 +247,72 @@ def process_statement_pipeline(statement_id: str, target_status: str) -> None:
     records a failure_reason here before re-raising (Celery still logs/
     retries per its own configuration).
 
-    Publishes a statement_status event either way (finally) — the single
-    multiplexed SSE connection (core/views/events.py) is how the client
-    learns the pipeline finished without polling.
+    Publishes a statement_status event on every terminal outcome (phase
+    success advancing to target_status, a phase failure, or poll-budget
+    exhaustion) — the single multiplexed SSE connection
+    (core/views/events.py) is how the client learns the pipeline finished
+    without polling itself.
     """
     try:
         statement = StatementFile.objects.select_related("user").get(id=statement_id)
     except StatementFile.DoesNotExist:
         return
 
+    client = ai_service.get_client()
+    retry_pending = False
     try:
         target_rank = _STATUS_ORDER.index(target_status)
         while _STATUS_ORDER.index(statement.status) < target_rank:
-            runner = _PHASE_RUNNERS.get(statement.status)
-            if runner is None:
+            phase = _PHASE_FOR_STATUS.get(statement.status)
+            if phase is None:
                 break
-            status_before = statement.status
-            runner(statement)
-            if statement.status == status_before:
-                # The phase attempted and failed — its runner already
-                # recorded failure_reason/failed_phase and left status where
-                # it was.
+
+            if not statement.is_processing:
+                statement.is_processing = True
+                statement.save(update_fields=["is_processing"])
+
+            if job_id is None:
+                try:
+                    submission = _PHASE_SUBMIT[phase](client, statement)
+                except Exception as exc:
+                    _fail_phase(statement, phase, str(exc))
+                    break
+                job_id = submission["job_id"]
+
+            try:
+                status = client.get_job_status(job_id)
+            except Exception as exc:
+                _fail_phase(statement, phase, str(exc))
                 break
+
+            if status["state"] == "succeeded":
+                _PHASE_FINALIZERS[phase](statement, status["result"])
+                job_id, poll_attempt = None, 0
+                continue
+
+            if status["state"] == "failed":
+                _fail_phase(statement, phase, status.get("error") or "AI service job failed")
+                break
+
+            # queued/running
+            if poll_attempt >= MAX_POLL_ATTEMPTS:
+                _fail_phase(
+                    statement,
+                    phase,
+                    f"AI service job {job_id} did not complete after "
+                    f"{MAX_POLL_ATTEMPTS} polls ({MAX_POLL_ATTEMPTS * POLL_INTERVAL_SECONDS}s)",
+                )
+                break
+
+            retry_pending = True
+            self.retry(
+                countdown=POLL_INTERVAL_SECONDS,
+                max_retries=MAX_POLL_ATTEMPTS,
+                args=(statement_id, target_status, job_id, poll_attempt + 1),
+            )
+    except Retry:
+        retry_pending = True
+        raise
     except Exception as exc:
         statement.refresh_from_db()
         statement.is_processing = False
@@ -260,14 +321,15 @@ def process_statement_pipeline(statement_id: str, target_status: str) -> None:
         statement.save(update_fields=["is_processing", "failure_reason", "failed_phase"])
         raise
     finally:
-        event_bus.publish_user_event(
-            statement.user_id,
-            "statement_status",
-            {
-                "statement_id": str(statement.id),
-                "status": statement.status,
-                "is_processing": statement.is_processing,
-                "failure_reason": statement.failure_reason,
-                "failed_phase": statement.failed_phase,
-            },
-        )
+        if not retry_pending:
+            event_bus.publish_user_event(
+                statement.user_id,
+                "statement_status",
+                {
+                    "statement_id": str(statement.id),
+                    "status": statement.status,
+                    "is_processing": statement.is_processing,
+                    "failure_reason": statement.failure_reason,
+                    "failed_phase": statement.failed_phase,
+                },
+            )

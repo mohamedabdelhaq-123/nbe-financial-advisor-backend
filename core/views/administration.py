@@ -216,7 +216,7 @@ class AdminProductListCreateView(AdminAuthMixin, generics.ListCreateAPIView):
         # a clear 500 rather than silently leaving problem_statements unembedded.
         embeddings = []
         if problem_statements:
-            response = ai_service.create_embeddings(problem_statements, dimensions=768)
+            response = ai_service.get_client().create_embeddings(problem_statements, dimensions=768)
             # Matched by `index`, not array position — the response's own
             # ordering isn't documented as guaranteed to match input order.
             by_index = {datum["index"]: datum["embedding"] for datum in response["data"]}

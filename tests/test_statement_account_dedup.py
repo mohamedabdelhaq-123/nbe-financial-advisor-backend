@@ -1,12 +1,13 @@
 """
-Unit tests for core/tasks/statements.py::run_normalization_phase's
+Unit tests for core/tasks/statements.py::_finalize_normalization_phase's
 BankAccount resolution — PLAN.md Checkpoint 4.
 
-Calls run_normalization_phase directly (not through the full upload ->
-Celery-task flow used by tests/test_statements_tasks.py) with
-ai_service.normalize_statement monkeypatched, so these don't depend on
-settings.USE_MOCK_AI_SERVICE/a reachable AI service at all — just the
-BankAccount get_or_create logic itself.
+Calls _finalize_normalization_phase directly (not through the full upload ->
+Celery-task flow used by tests/test_statements_tasks.py) with a fabricated
+normalize result dict passed straight in — the finalizer takes the AI
+service's result as a plain argument now (core/tasks/statements.py's
+submit/poll split), so these tests don't need to touch ai_service at all,
+mock or real.
 
 Previously this was keyed on (user, bank_name) only, deliberately ignoring
 the AI service's account_hint field — account_hint was a masked hint
@@ -46,39 +47,30 @@ def _make_statement(user, checksum):
     return statement
 
 
-def _fake_normalize(bank_name, account_number):
-    def _normalize(ocr_result_id):
-        return {
-            "normalized_json": {
-                "bank_name": bank_name,
-                "account_number": account_number,
-                "transactions": [],
-            },
-            "model_used": "fake-model",
-        }
-
-    return _normalize
+def _normalize_result(bank_name, account_number):
+    return {
+        "normalized_json": {
+            "bank_name": bank_name,
+            "account_number": account_number,
+            "transactions": [],
+        },
+        "model_used": "fake-model",
+    }
 
 
-def test_two_uploads_same_bank_same_account_number_reuse_the_same_account(monkeypatch, user):
+def test_two_uploads_same_bank_same_account_number_reuse_the_same_account(user):
     # Same real account_number both times (the AI service extracts it
     # unmasked and deterministically from the source document) — should
     # land on the same BankAccount.
-    monkeypatch.setattr(
-        statements_task_module.ai_service,
-        "normalize_statement",
-        _fake_normalize("National Bank of Egypt", "4213010248203200016"),
-    )
     stmt1 = _make_statement(user, "checksum-1")
-    statements_task_module.run_normalization_phase(stmt1)
-
-    monkeypatch.setattr(
-        statements_task_module.ai_service,
-        "normalize_statement",
-        _fake_normalize("National Bank of Egypt", "4213010248203200016"),
+    statements_task_module._finalize_normalization_phase(
+        stmt1, _normalize_result("National Bank of Egypt", "4213010248203200016")
     )
+
     stmt2 = _make_statement(user, "checksum-2")
-    statements_task_module.run_normalization_phase(stmt2)
+    statements_task_module._finalize_normalization_phase(
+        stmt2, _normalize_result("National Bank of Egypt", "4213010248203200016")
+    )
 
     stmt1.refresh_from_db()
     stmt2.refresh_from_db()
@@ -86,28 +78,20 @@ def test_two_uploads_same_bank_same_account_number_reuse_the_same_account(monkey
     assert BankAccount.objects.filter(user=user, bank_name="National Bank of Egypt").count() == 1
 
 
-def test_two_uploads_same_bank_different_account_number_creates_distinct_accounts(
-    monkeypatch, user
-):
+def test_two_uploads_same_bank_different_account_number_creates_distinct_accounts(user):
     # Genuinely different real account numbers for the same bank — this is
     # the case the old hint-based matching could never distinguish (the
     # hint was never trustworthy enough to key on). Now that account_number
     # is real, two different numbers must land on two different accounts.
-    monkeypatch.setattr(
-        statements_task_module.ai_service,
-        "normalize_statement",
-        _fake_normalize("National Bank of Egypt", "4213010248203200016"),
-    )
     stmt1 = _make_statement(user, "checksum-1")
-    statements_task_module.run_normalization_phase(stmt1)
-
-    monkeypatch.setattr(
-        statements_task_module.ai_service,
-        "normalize_statement",
-        _fake_normalize("National Bank of Egypt", "9988776655443322110"),
+    statements_task_module._finalize_normalization_phase(
+        stmt1, _normalize_result("National Bank of Egypt", "4213010248203200016")
     )
+
     stmt2 = _make_statement(user, "checksum-2")
-    statements_task_module.run_normalization_phase(stmt2)
+    statements_task_module._finalize_normalization_phase(
+        stmt2, _normalize_result("National Bank of Egypt", "9988776655443322110")
+    )
 
     stmt1.refresh_from_db()
     stmt2.refresh_from_db()
@@ -115,29 +99,23 @@ def test_two_uploads_same_bank_different_account_number_creates_distinct_account
     assert BankAccount.objects.filter(user=user, bank_name="National Bank of Egypt").count() == 2
 
 
-def test_different_bank_name_still_creates_a_distinct_account(monkeypatch, user):
-    monkeypatch.setattr(
-        statements_task_module.ai_service,
-        "normalize_statement",
-        _fake_normalize("NBE", "4213010248203200016"),
-    )
+def test_different_bank_name_still_creates_a_distinct_account(user):
     stmt1 = _make_statement(user, "checksum-3")
-    statements_task_module.run_normalization_phase(stmt1)
-
-    monkeypatch.setattr(
-        statements_task_module.ai_service,
-        "normalize_statement",
-        _fake_normalize("CIB", "9988776655443322110"),
+    statements_task_module._finalize_normalization_phase(
+        stmt1, _normalize_result("NBE", "4213010248203200016")
     )
+
     stmt2 = _make_statement(user, "checksum-4")
-    statements_task_module.run_normalization_phase(stmt2)
+    statements_task_module._finalize_normalization_phase(
+        stmt2, _normalize_result("CIB", "9988776655443322110")
+    )
 
     stmt1.refresh_from_db()
     stmt2.refresh_from_db()
     assert stmt1.account_id != stmt2.account_id
 
 
-def test_statement_resolves_onto_an_existing_synced_account(monkeypatch, user):
+def test_statement_resolves_onto_an_existing_synced_account(user):
     """A statement uploaded for an account the user already linked by bank
     sync must land on that account, not shadow it with a manual duplicate.
 
@@ -154,14 +132,11 @@ def test_statement_resolves_onto_an_existing_synced_account(monkeypatch, user):
         account_number="4213010248203200016",
         link_type=BankAccount.LINK_TYPE_SYNCED,
     )
-    monkeypatch.setattr(
-        statements_task_module.ai_service,
-        "normalize_statement",
-        _fake_normalize("National Bank of Egypt", "4213010248203200016"),
-    )
     stmt = _make_statement(user, "checksum-synced")
 
-    statements_task_module.run_normalization_phase(stmt)
+    statements_task_module._finalize_normalization_phase(
+        stmt, _normalize_result("National Bank of Egypt", "4213010248203200016")
+    )
 
     stmt.refresh_from_db()
     assert stmt.account_id == synced.id
@@ -171,40 +146,34 @@ def test_statement_resolves_onto_an_existing_synced_account(monkeypatch, user):
     assert synced.link_type == BankAccount.LINK_TYPE_SYNCED
 
 
-def test_statement_with_preselected_account_is_left_untouched(monkeypatch, user):
+def test_statement_with_preselected_account_is_left_untouched(user):
     account = BankAccount.objects.create(
         user=user, bank_name="Preselected Bank", account_number="0000"
-    )
-    monkeypatch.setattr(
-        statements_task_module.ai_service,
-        "normalize_statement",
-        _fake_normalize("Some Other Bank", "5566778899001122334"),
     )
     stmt = _make_statement(user, "checksum-5")
     stmt.account = account
     stmt.save(update_fields=["account"])
 
-    statements_task_module.run_normalization_phase(stmt)
+    statements_task_module._finalize_normalization_phase(
+        stmt, _normalize_result("Some Other Bank", "5566778899001122334")
+    )
 
     stmt.refresh_from_db()
     assert stmt.account_id == account.id
     assert not BankAccount.objects.filter(bank_name="Some Other Bank").exists()
 
 
-def test_normalization_emails_the_user_that_the_statement_is_ready(monkeypatch, user):
+def test_normalization_emails_the_user_that_the_statement_is_ready(user):
     """PLAN.md Checkpoint 6 — a finished statement upload now also emails
     the user, not just SSE (this call has no fake_redis fixture, so it
-    incidentally also proves run_normalization_phase itself never touches
-    event_bus directly — only the outer process_statement_pipeline task
-    does)."""
-    monkeypatch.setattr(
-        statements_task_module.ai_service,
-        "normalize_statement",
-        _fake_normalize("National Bank of Egypt", "4213010248203200016"),
-    )
+    incidentally also proves _finalize_normalization_phase itself never
+    touches event_bus directly — only the outer process_statement_pipeline
+    task does)."""
     stmt = _make_statement(user, "checksum-6")
 
-    statements_task_module.run_normalization_phase(stmt)
+    statements_task_module._finalize_normalization_phase(
+        stmt, _normalize_result("National Bank of Egypt", "4213010248203200016")
+    )
 
     assert len(mail.outbox) == 1
     assert mail.outbox[0].to == [user.email]

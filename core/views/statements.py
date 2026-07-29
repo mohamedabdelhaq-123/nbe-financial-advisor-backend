@@ -99,7 +99,7 @@ def create_statement_from_upload(user, file_obj, target_status=None) -> Statemen
 
     # No account resolution here — the client never supplies one at upload
     # time (PLAN.md Checkpoint A). core/tasks/statements.py's
-    # run_normalization_phase() infers/creates the account from OCR output
+    # _finalize_normalization_phase() infers/creates the account from OCR output
     # once extraction runs; the user confirms or corrects it at approval
     # time (StatementTransactionApprovalView).
     extension = file_obj.name.rsplit(".", 1)[-1].lower() if "." in file_obj.name else "bin"

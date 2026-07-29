@@ -161,7 +161,7 @@ class StatementUploadRequestSerializer(serializers.Serializer):
     # override instead of flipping that project-wide setting for one field.
     file = _BinaryFileField()
     # No account_id here — the Normalization Agent always infers/resolves the
-    # account from OCR output (core/tasks/statements.py::run_normalization_phase),
+    # account from OCR output (core/tasks/statements.py::_finalize_normalization_phase),
     # and the user confirms/corrects it at approval time instead
     # (TransactionApprovalRequestSerializer below), not at upload time.
     # Optional: how far to auto-chain the pipeline in this same call. Omit
