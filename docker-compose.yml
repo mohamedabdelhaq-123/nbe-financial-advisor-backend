@@ -217,8 +217,15 @@ services:
     # same fix in deploy/docker-compose.yml — this was silently broken there
     # before PLAN.md Checkpoint 1). Per docs/Environment_Profiles.md, storage
     # topology is NOT on the "dev may differ" exception list (only model
-    # serving is), so dev runs the same real SeaweedFS as staging/prod.
-    command: "server -dir=/data -master.volumeSizeLimitMB=1024 -filer -s3 -s3.port=8333"
+    # serving is), so dev runs the same real SeaweedFS as staging/prod —
+    # except volumeSizeLimitMB, intentionally shrunk from prod's 1024 to 128
+    # here: the master caps how many volumes it'll ever allocate at
+    # free_disk_space / volumeSizeLimitMB (a worst-case reservation, not
+    # actual usage), so on a disk-constrained dev box the default 1024
+    # starves later buckets/collections of any volume at all long before
+    # real data comes close to filling one. 128MB just means no single
+    # uploaded file can exceed that — far above any bank-statement PDF.
+    command: "server -dir=/data -master.volumeSizeLimitMB=128 -filer -s3 -s3.port=8333"
     volumes:
       - seaweed_data:/data
     ports:
