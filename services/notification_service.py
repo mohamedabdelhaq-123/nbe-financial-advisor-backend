@@ -14,6 +14,7 @@ reason to take on a paid provider's setup cost before it's actually needed.
 from smtplib import SMTPException
 
 from django.core.mail import EmailMultiAlternatives, send_mail
+from django.template.loader import render_to_string
 
 
 class NotificationServiceError(Exception):
@@ -53,8 +54,14 @@ def notify(user, subject: str, body: str) -> None:
     the parent action over a notification that couldn't be sent" behavior
     that core/tasks/bank_sync.py implemented inline before this existed.
     Collected here once instead of repeating the try/except at every site.
+
+    `body` is still sent as the plain-text part (see send_email's docstring
+    for why), but every call site also gets the same branded HTML card as
+    the OTP/verify-email/reset-password emails for free, via
+    emails/notification.html, instead of arriving as a bare plain-text email.
     """
     try:
-        send_email(user.email, subject, body)
+        html_body = render_to_string("emails/notification.html", {"subject": subject, "body": body})
+        send_email(user.email, subject, body, html_body=html_body)
     except NotificationServiceError:
         pass

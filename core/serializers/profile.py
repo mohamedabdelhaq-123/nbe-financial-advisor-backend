@@ -4,6 +4,17 @@ from core.models import BankAccount, ConsentRecord, User, UserPreference
 
 
 class UserSerializer(serializers.ModelSerializer):
+    # Bank-login-created accounts (core/views/auth.py's BankLoginCallbackView)
+    # are provisioned with `password=None`, i.e. Django's unusable-password
+    # marker — the frontend uses this, alongside email_verified below, to
+    # decide whether the "verify your email" nudge applies at all: a
+    # bank-login account never goes through the emailed-link flow (no
+    # verification email is ever sent on that path), so email_verified stays
+    # False for it forever — has_password is what lets the frontend hide the
+    # nudge for that case specifically, since bank OTP already proved the
+    # identity behind the email.
+    has_password = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         fields = [
@@ -18,6 +29,11 @@ class UserSerializer(serializers.ModelSerializer):
             "dependents_count",
             "onboarding_date",
             "status",
+            "has_password",
+            # Real model field (not computed) — settable only by
+            # EmailVerificationConfirmView, never by a plain profile PATCH,
+            # hence read_only below.
+            "email_verified",
             "created_at",
             "updated_at",
         ]
@@ -26,7 +42,18 @@ class UserSerializer(serializers.ModelSerializer):
         # status transitions (suspended/deleted) aren't exposed as a plain
         # profile edit; onboarding_date is set by the onboarding flow itself,
         # not hand-edited here.
-        read_only_fields = ["id", "email", "status", "onboarding_date", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "email",
+            "status",
+            "onboarding_date",
+            "email_verified",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_has_password(self, obj: User) -> bool:
+        return obj.has_usable_password()
 
 
 class UserPreferenceSerializer(serializers.ModelSerializer):
