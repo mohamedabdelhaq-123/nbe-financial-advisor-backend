@@ -142,6 +142,7 @@ class TransactionListCreateView(ListAPIView):
             category=data.get("category"),
             amount=data["amount"],
             transaction_type=data.get("transaction_type"),
+            is_recurring=data.get("is_recurring", False),
         )
         return Response(
             TransactionDetailSerializer(transaction).data, status=status.HTTP_201_CREATED
@@ -153,8 +154,8 @@ class TransactionDetailView(mixins.RetrieveModelMixin, mixins.DestroyModelMixin,
     Retrieve, edit, or delete a single transaction.
 
     PATCH only accepts a restricted field subset (`category`, `merchant_raw`,
-    `amount`, `transaction_date`, `transaction_type`) — `account_id` and
-    `source` are deliberately not patchable, since changing either would
+    `amount`, `transaction_date`, `transaction_type`, `is_recurring`) —
+    `account_id` and `source` are deliberately not patchable, since changing either would
     misrepresent where the transaction actually came from. Built from
     Retrieve+Destroy mixins directly (not RetrieveUpdateDestroyAPIView)
     because PATCH's input shape genuinely differs from GET's response
