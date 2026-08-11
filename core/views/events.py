@@ -11,11 +11,34 @@ EventSource can't set one.
 from django.conf import settings
 from django.http import StreamingHttpResponse
 from drf_spectacular.utils import OpenApiResponse, extend_schema
+from rest_framework.renderers import BaseRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.authentication import SSETicketAuthentication
 from services import event_bus, sse_tickets
+
+
+class ServerSentEventRenderer(BaseRenderer):
+    """
+    Exists only so DRF's content negotiation (APIView.initial() ->
+    perform_content_negotiation(), which runs BEFORE authentication) accepts
+    a native EventSource's request: EventSource always sends
+    `Accept: text/event-stream` and cannot be made to send anything else,
+    and the project default renderers (JSONRenderer/BrowsableAPIRenderer,
+    config/settings.py's REST_FRAMEWORK has no DEFAULT_RENDERER_CLASSES
+    override) don't advertise that media type — so without this, every
+    connection attempt 406s before SSETicketAuthentication or get() ever
+    run. render() itself is never called: EventStreamView.get() returns a
+    raw StreamingHttpResponse, not a DRF Response, which skips the renderer
+    pipeline entirely.
+    """
+
+    media_type = "text/event-stream"
+    format = "txt"
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        raise NotImplementedError("StreamingHttpResponse bypasses the renderer pipeline.")
 
 
 class SSETicketMintView(APIView):
@@ -44,6 +67,7 @@ class EventStreamView(APIView):
     """
 
     authentication_classes = [SSETicketAuthentication]
+    renderer_classes = [ServerSentEventRenderer]
 
     @extend_schema(
         responses={
