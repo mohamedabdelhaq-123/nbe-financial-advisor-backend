@@ -1,3 +1,4 @@
+import calendar
 from datetime import date
 from decimal import Decimal
 
@@ -256,7 +257,9 @@ class MonthlySummariesView(APIView):
         if request.query_params.get("from"):
             qs = qs.filter(transaction_date__gte=f"{request.query_params['from']}-01")
         if request.query_params.get("to"):
-            qs = qs.filter(transaction_date__lte=f"{request.query_params['to']}-31")
+            to_year, to_month = (int(p) for p in request.query_params["to"].split("-"))
+            to_last_day = calendar.monthrange(to_year, to_month)[1]
+            qs = qs.filter(transaction_date__lte=date(to_year, to_month, to_last_day))
 
         months = (
             qs.annotate(month=TruncMonth("transaction_date"))
