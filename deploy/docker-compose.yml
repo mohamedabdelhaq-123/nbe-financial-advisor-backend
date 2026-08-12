@@ -252,6 +252,15 @@ services:
       AI_SERVICE_EMBEDDINGS__API_KEY: ${EMBEDDING_API_KEY}
       AI_SERVICE_EMBEDDINGS__MODEL_NAME: ${EMBEDDING_MODEL_NAME}
       AI_SERVICE_EMBEDDINGS__DIMENSIONS: ${EMBEDDING_DIMENSIONS}
+      # Scope guardrail (zero-shot "is this about personal finance" check) — off
+      # by default, still being validated. MODE=hosted calls the HF Inference API
+      # (needs SCOPE_GUARD_HOSTED_API_KEY, a free token from
+      # https://huggingface.co/settings/tokens); MODE=local runs the model
+      # in-process instead (image must be built with `--group local-scope-guard`
+      # first — not included by default, see the ai-service repo's pyproject.toml).
+      AI_SERVICE_SCOPE_GUARD__ENABLED: ${SCOPE_GUARD_ENABLED:-0}
+      AI_SERVICE_SCOPE_GUARD__MODE: ${SCOPE_GUARD_MODE:-hosted}
+      AI_SERVICE_SCOPE_GUARD__HOSTED_API_KEY: ${SCOPE_GUARD_HOSTED_API_KEY}
     expose: ["8001"]                  # internal only, NEVER published — Pattern A
     depends_on:
       postgres:
