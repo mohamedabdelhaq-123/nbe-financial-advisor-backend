@@ -1,3 +1,18 @@
+# Full production-optimized stack. Optimized builds, no hot reload/bind
+# mounts — a code change needs `up -d --build <service>`. nginx is the only
+# publicly reachable service (port 8080); everything else is internal-only.
+#
+# Needs --env-file (see Usage) — several services here have no env_file: of
+# their own and are filled in via ${VAR} substitution from it instead.
+#
+# Usage (run from nbe-financial-advisor-backend/deploy):
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d --build <service>   # redeploy one
+#   docker compose -f docker-compose.prod.yml down          # keep data
+#   docker compose -f docker-compose.prod.yml down -v       # wipe data too
+
+name: nbe-financial-advisor-prod
+
 services:
   nginx:
     image: nginx:1.27-alpine
@@ -47,9 +62,6 @@ services:
       # dev value (:5173) — explicit override here to the address nginx
       # actually serves the frontend on in this stack.
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
-      # ai-service is built/run separately (its own compose files, not this
-      # stack) and joins the `nbe-prod` network below externally — reached
-      # here by container name, same pattern as the dev setup one level up.
       AI_SERVICE_URL: http://ai-service:8001
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
       # Consumed by core/migrations/0009_grant_ai_readonly_role.py to
@@ -171,7 +183,7 @@ services:
       BANK_SYNC_WEBHOOK_SECRET: ${BANK_SYNC_WEBHOOK_SECRET}
     # Overrides the image's baked-in HEALTHCHECK (Dockerfile hits
     # localhost:8000/health/, which nothing serves here) with a
-    # Celery-native worker ping — same fix as docker-compose.yml's
+    # Celery-native worker ping — same fix as docker-compose.dev.yml's
     # celery-worker service.
     healthcheck:
       test: ["CMD-SHELL", "celery -A config inspect ping -d celery@$$HOSTNAME || exit 1"]
@@ -187,9 +199,8 @@ services:
       redis:
         condition: service_healthy
 
-  # Mock bank OAuth+OTP identity provider (mock-bank-oauth/README.md) — a
-  # real sibling container, same as in docker-compose.yml. No build args:
-  # this service's Dockerfile has no dev/prod variant.
+  # Mock bank OAuth+OTP identity provider (mock-bank-oauth/README.md). No
+  # build args: this service's Dockerfile has no dev/prod variant.
   #
   # Publicly reachable via nginx's /authorize + /login/ locations
   # (nginx.conf) rather than a published port — same internal-only +
@@ -207,9 +218,9 @@ services:
       MOCK_BANK_INTERNAL_SECRET: ${MOCK_BANK_INTERNAL_SECRET}
       MOCK_BANK_JWT_SECRET: ${MOCK_BANK_JWT_SECRET}
       FRONTEND_ALLOWED_ORIGINS: ${FRONTEND_URL:-http://localhost:8080}
-      # Debug-only OTP reader — off by default (unlike the dev stack's
-      # docker-compose.yml, which turns it on). Leave off here; flip on only
-      # for a deliberate, temporary debugging session.
+      # Debug-only OTP reader — off by default (unlike the dev stack, which
+      # turns it on). Leave off here; flip on only for a deliberate,
+      # temporary debugging session.
       MOCK_BANK_OAUTH_ENABLE_DEBUG_ENDPOINTS: ${MOCK_BANK_OAUTH_ENABLE_DEBUG_ENDPOINTS:-0}
     expose: ["8002"]                  # internal only for now — see note above
 
@@ -298,10 +309,10 @@ services:
       AI_SERVICE_STORAGE__S3_SECRET_KEY: ${SEAWEED_SECRET_KEY}
       AI_SERVICE_STORAGE__S3_USE_PATH_STYLE: "true"
       AI_SERVICE_STORAGE__S3_OCR_BUCKET: ${AI_STORAGE_OCR_BUCKET:-pfm-statements-ocr}
-      # MinerU document processing — real service is PARKED (see below), so
-      # this stays mocked until an image/approach is chosen.
+      # MinerU document processing — real service (mineru-server below) is
+      # off by default; stays mocked until it's explicitly started.
       AI_SERVICE_MINERU__USE_MOCK: ${USE_MOCK_MINERU:-1}
-      AI_SERVICE_MINERU__API_URL: ${MINERU_API_URL:-http://mineru:8000}
+      AI_SERVICE_MINERU__API_URL: ${MINERU_API_URL:-http://mineru-server:8000}
       AI_SERVICE_MINERU__API_KEY: ${MINERU_API_KEY:-key}
       AI_SERVICE_EMBEDDINGS__BASE_URL: ${EMBEDDING_BASE_URL}
       AI_SERVICE_EMBEDDINGS__API_KEY: ${EMBEDDING_API_KEY}
@@ -325,6 +336,14 @@ services:
       backend:
         condition: service_started    # backend starts (runs its migrate) before AI service
 
+  # Real document-OCR engine (GPU-only). Off by default — start explicitly
+  # with `docker compose -f docker-compose.prod.yml --profile api up -d mineru-server`,
+  # then point AI_SERVICE_MINERU__USE_MOCK=0 at it.
+  mineru-server:
+    extends:
+      file: ../../nbe-financial-advisor-ai-service/compose/mineru/docker-compose.yml
+      service: mineru-api
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:
@@ -338,7 +357,6 @@ services:
       AI_DB_PASSWORD: ${AI_DB_PASSWORD:-change-me-ai-db-pass}
       # Consumed by initdb/20-mock-bank-roles.sh to provision
       # mock_bank_user + mock_bank_db (mock-bank-sync's own database).
-      # Consumed by initdb/20-mock-bank-roles.sh to provision mock_bank_user + mock_bank_db.
       MOCK_BANK_DB_PASSWORD: ${MOCK_BANK_DB_PASSWORD:-mock_bank_db_pass}
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -354,9 +372,7 @@ services:
   seaweedfs:
     image: chrislusf/seaweedfs:latest
     # -s3/-filer are required for the S3 gateway to actually come up — without
-    # them nothing listens on 8333 despite it being exposed below (PLAN.md
-    # Checkpoint 1: this was silently broken before, verified by hand against
-    # the real image).
+    # them nothing listens on 8333 despite it being exposed below.
     # volumeSizeLimitMB intentionally shrunk from SeaweedFS's default-ish 1024
     # to 128: the master caps how many volumes it'll ever allocate at
     # free_disk_space / volumeSizeLimitMB (a worst-case reservation, not
@@ -364,7 +380,7 @@ services:
     # later buckets/collections of any volume at all long before real data
     # comes close to filling one. 128MB just means no single uploaded file
     # can exceed that — far above any bank-statement PDF (same fix applied
-    # to the dev backend/docker-compose.yml's seaweedfs service).
+    # to docker-compose.dev.yml's seaweedfs service).
     command: "server -dir=/data -master.volumeSizeLimitMB=128 -filer -s3 -s3.port=8333"
     volumes:
       - seaweed_data:/data              # named volume — files persist across restarts
@@ -375,26 +391,11 @@ services:
     healthcheck:
       # 127.0.0.1, not localhost: this image's busybox wget resolves
       # "localhost" to ::1 first and doesn't fall back to IPv4, so the
-      # healthcheck never passes if written the more obvious way (verified
-      # by hand — PLAN.md Checkpoint 1).
+      # healthcheck never passes if written the more obvious way.
       test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:9333/cluster/status || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
-
-  # ── MinerU — PARKED, pending AI Specialist input ──────────────────────────
-  # There is NO official MinerU image on Docker Hub. The project team explicitly
-  # does not publish to Docker Hub. Options:
-  #   A) Build from their Dockerfile: https://github.com/opendatalab/MinerU
-  #      Requires GPU with Volta+ architecture and ≥8 GB VRAM.
-  #   B) Use pip install magic-pdf inside a Python base image (CPU mode, slower).
-  # Uncomment and fill in once the AI Specialist decides the approach.
-  #
-  # mineru:
-  #   image: <to-be-decided by AI Specialist>
-  #   expose:
-  #     - "8000"                        # internal only — Pattern A
-  #   restart: unless-stopped
 
   # ── vLLM (PARKED — enable when a GPU machine is available) ──────────────
   # Serves the real model with an OpenAI-compatible API. Requires a GPU +
@@ -423,14 +424,6 @@ services:
   #     start_period: 300s                   # weights take minutes to load
 
 networks:
-  # Named (not the Compose-default per-project network) so ai-service — built
-  # and run separately via its own compose files, not by this stack — can
-  # join it externally and still reach `backend`/`postgres`/`seaweedfs` (and
-  # be reached back at `http://ai-service:8001`, per `backend`/`celery-worker`
-  # above) by container name. Mirrors the dev pattern already in place one
-  # level up (nbe-financial-advisor-backend/docker-compose.yml's `nbe-dev`,
-  # joined externally by the ai-service repo's own docker-compose.dev.yml) —
-  # same shape, prod name.
   default:
     name: nbe-prod
 
