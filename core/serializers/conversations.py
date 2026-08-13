@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from core.constants import CHAT_MESSAGE_MAX_LENGTH
 from core.models import Conversation, Message, MessageReference
 from core.serializers.statements import _BinaryFileField
 
@@ -54,7 +55,7 @@ class MessageSerializer(serializers.ModelSerializer):
 
 
 class MessageCreateSerializer(serializers.Serializer):
-    content = serializers.CharField()
+    content = serializers.CharField(max_length=CHAT_MESSAGE_MAX_LENGTH)
 
 
 class WidgetSerializer(serializers.Serializer):
