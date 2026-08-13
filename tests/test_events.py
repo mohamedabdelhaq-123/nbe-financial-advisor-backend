@@ -71,3 +71,31 @@ def test_event_stream_accepts_valid_ticket(client, user, fake_redis):
     response = client.get(f"/events/stream/?ticket={ticket}")
     assert response.status_code == 200
     assert response["Content-Type"] == "text/event-stream"
+
+
+def test_event_stream_accepts_event_stream_accept_header(client, user, fake_redis):
+    """
+    The header a real browser sends. Every other test here (and any hand-check
+    with curl) sends `Accept: */*`, which matches JSONRenderer and passes even
+    when the endpoint is completely unreachable from an EventSource — DRF
+    negotiates content before authenticating, so a missing `text/event-stream`
+    renderer 406s the request before the ticket is looked at. Pinned
+    explicitly so core/renderers.py can't be dropped without a failure here.
+    """
+    ticket = sse_tickets.mint_ticket(user)
+    response = client.get(
+        f"/events/stream/?ticket={ticket}", HTTP_ACCEPT="text/event-stream"
+    )
+    assert response.status_code == 200
+    assert response["Content-Type"] == "text/event-stream"
+
+
+def test_event_stream_rejects_invalid_ticket_with_event_stream_accept_header(
+    client, fake_redis
+):
+    """A bad ticket must still authenticate-fail (401), not 406 — i.e. the
+    renderer widened negotiation without widening access."""
+    response = client.get(
+        "/events/stream/?ticket=totally-bogus-ticket", HTTP_ACCEPT="text/event-stream"
+    )
+    assert response.status_code == 401
