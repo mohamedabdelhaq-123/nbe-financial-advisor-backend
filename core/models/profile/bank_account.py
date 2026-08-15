@@ -13,7 +13,7 @@ class BankAccount(models.Model):
     user = models.ForeignKey("User", on_delete=models.CASCADE, related_name="bank_accounts")
     bank_name = models.CharField(max_length=255)
     account_type = models.CharField(max_length=50, blank=True, null=True)
-    masked_account_number = models.CharField(max_length=50)
+    account_number = models.CharField(max_length=50)
     currency = models.CharField(max_length=10, default="EGP")
     is_active = models.BooleanField(default=True)
     link_type = models.CharField(
@@ -53,7 +53,7 @@ class BankAccount(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.bank_name} - {self.masked_account_number}"
+        return f"{self.bank_name} - {self.account_number}"
 
     @property
     def is_synced(self):

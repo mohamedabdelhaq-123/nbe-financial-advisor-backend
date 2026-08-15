@@ -94,7 +94,10 @@ def test_generate_chat_reply_skips_message_when_stream_has_no_terminal_event(
     def _stream_with_no_terminal_event(*args, **kwargs):
         yield {"event": "token", "data": "partial "}
 
-    monkeypatch.setattr(ai_service, "stream_chat", _stream_with_no_terminal_event)
+    class _FakeClient:
+        stream_chat = staticmethod(_stream_with_no_terminal_event)
+
+    monkeypatch.setattr(ai_service, "get_client", lambda: _FakeClient())
 
     generate_chat_reply(str(conversation.id), str(user_message.id))
 

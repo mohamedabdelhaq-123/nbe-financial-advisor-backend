@@ -44,7 +44,10 @@ def test_get_recommendations_returns_502_when_ai_service_fails(client, monkeypat
     def _raise(*args, **kwargs):
         raise ai_service.AIServiceError("AI service call to /internal/recommendations/match failed")
 
-    monkeypatch.setattr(ai_service, "match_recommendations", _raise)
+    class _FakeClient:
+        match_recommendations = staticmethod(_raise)
+
+    monkeypatch.setattr(ai_service, "get_client", lambda: _FakeClient())
 
     response = client.get("/recommendations/?q=savings")
 

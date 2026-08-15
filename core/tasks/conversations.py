@@ -41,7 +41,7 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
 
     result = None
     try:
-        for envelope in ai_service.stream_chat(
+        for envelope in ai_service.get_client().stream_chat(
             str(conversation.id), str(conversation.user_id), user_message.content
         ):
             event = envelope["event"]

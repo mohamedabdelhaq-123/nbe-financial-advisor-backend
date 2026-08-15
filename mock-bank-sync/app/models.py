@@ -47,7 +47,8 @@ class MockAccount(Base):
     )
     bank_name = Column(String, nullable=False, default="Mock National Bank")
     account_type = Column(String, nullable=True)  # e.g. checking/savings/credit_card
-    masked_account_number = Column(String, nullable=True)
+    # The real account number as the bank knows it, not a masked hint
+    account_number = Column(String, nullable=True)
     currency = Column(String, nullable=False, default="EGP")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

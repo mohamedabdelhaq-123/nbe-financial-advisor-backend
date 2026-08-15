@@ -90,7 +90,7 @@ class Command(BaseCommand):
         for customer in unlinked:
             self.stdout.write(
                 f"  {customer['customer_bank_id']}  {customer['email']}  "
-                f"account {customer['masked_account_number']}"
+                f"account {customer['account_number']}"
             )
         self.stdout.write(
             "\nLinked (registered in both systems — sign back in with no "
@@ -174,7 +174,7 @@ class Command(BaseCommand):
                 {
                     "customer_bank_id": customer_bank_id,
                     "email": email,
-                    "masked_account_number": account["masked_account_number"],
+                    "account_number": account["account_number"],
                 }
             )
         return customers

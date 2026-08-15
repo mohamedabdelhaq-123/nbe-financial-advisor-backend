@@ -83,7 +83,7 @@ Returns all accounts belonging to that customer:
     "external_account_id": "<uuid>",
     "bank_name": "Mock National Bank",
     "account_type": "checking",
-    "masked_account_number": "****1234",
+    "account_number": "1000200030001234",
     "currency": "EGP"
   }
 ]
@@ -205,7 +205,7 @@ Request body:
     {
       "bank_name": "Mock National Bank",
       "account_type": "checking",
-      "masked_account_number": "****1234",
+      "account_number": "1000200030001234",
       "currency": "EGP"
     }
   ]
@@ -228,7 +228,7 @@ Response:
       "external_account_id": "<uuid>",
       "bank_name": "Mock National Bank",
       "account_type": "checking",
-      "masked_account_number": "****1234",
+      "account_number": "1000200030001234",
       "currency": "EGP"
     }
   ]
@@ -259,7 +259,7 @@ service's *own* test suite.
 - `MockAccount` — `id` (UUID PK), `customer_id` (FK -> `MockCustomer.id`),
   `bank_name` (string, default `"Mock National Bank"`), `account_type`
   (string, nullable, e.g. checking/savings/credit_card),
-  `masked_account_number` (string), `currency` (string, default `"EGP"`).
+  `account_number` (string, the real number — not a masked hint), `currency` (string, default `"EGP"`).
 - `MockTransaction` — `id` (UUID PK), `account_id` (FK ->
   `MockAccount.id`), `transaction_date` (datetime), `merchant` (string,
   nullable), `amount` (numeric), `transaction_type` (string, nullable),

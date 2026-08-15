@@ -145,8 +145,8 @@ class BankAccountListCreateView(generics.ListCreateAPIView):
     which is paginated despite also being small), so pagination would add
     overhead without solving any real problem here.
 
-    `masked_account_number`/`bank_name` query params let the frontend check
-    whether the user already has an account matching an OCR-derived mask
+    `account_number`/`bank_name` query params let the frontend check whether
+    the user already has an account matching an OCR-derived account number
     before creating a duplicate from a newly uploaded statement.
     """
 
@@ -159,12 +159,14 @@ class BankAccountListCreateView(generics.ListCreateAPIView):
         # TransactionListCreateView.get_queryset().
         if getattr(self, "swagger_fake_view", False):
             return BankAccount.objects.none()
-        # masked_account_number/bank_name (BankAccountFilterSet) let the
-        # frontend check "does the user already have an account matching
-        # this OCR-derived mask?" (PLAN.md Checkpoint A) before/without
-        # creating a duplicate — exact match, same masking strategy
-        # core/tasks/statements.py's run_normalization_phase() already uses
-        # to resolve/create accounts.
+        # account_number/bank_name (BankAccountFilterSet) let the frontend
+        # check "does the user already have an account matching this
+        # OCR-derived account number?" (PLAN.md Checkpoint A) before/without
+        # creating a duplicate — an exact match works across every creation
+        # path (manual entry, statement normalization, and bank sync) because
+        # all three store the real number, and the serializer hands it back
+        # unmasked, so a value read off a GET /accounts response round-trips
+        # as a filter unchanged.
         return BankAccount.objects.filter(user=self.request.user).order_by("-created_at")
 
     def perform_create(self, serializer):
