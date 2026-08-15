@@ -26,6 +26,16 @@ from app.routes_accounts import _serialize_account, _serialize_transaction
 
 router = APIRouter(prefix="/simulate", tags=["simulate"])
 
+_ACCOUNT_NUMBER_DIGITS = 17
+
+
+def _generate_account_number() -> str:
+    """A full account number for a simulated account, not a masked stub — the
+    connector contract hands the real number through to the Django backend,
+    so seeded customers need to exercise that shape."""
+    return "".join(str(random.randint(0, 9)) for _ in range(_ACCOUNT_NUMBER_DIGITS))
+
+
 _SAMPLE_MERCHANTS = [
     "Carrefour",
     "Talabat",
@@ -48,7 +58,7 @@ class SimulateTransactionRequest(BaseModel):
 class SimulateAccountRequest(BaseModel):
     bank_name: str | None = None
     account_type: str | None = None
-    masked_account_number: str | None = None
+    account_number: str | None = None
     currency: str | None = None
 
 
@@ -167,7 +177,7 @@ def simulate_customer(body: SimulateCustomerRequest, db: Session = Depends(get_d
             customer_id=customer.id,
             bank_name=spec.bank_name or "Mock National Bank",
             account_type=spec.account_type or "checking",
-            masked_account_number=spec.masked_account_number or "****0000",
+            account_number=spec.account_number or _generate_account_number(),
             currency=spec.currency or "EGP",
         )
         db.add(account)

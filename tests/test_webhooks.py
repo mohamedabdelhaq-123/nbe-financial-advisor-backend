@@ -40,7 +40,7 @@ def synced_account(user, connection):
     return BankAccount.objects.create(
         user=user,
         bank_name="Mock National Bank",
-        masked_account_number="****1234",
+        account_number="1000200030001234",
         link_type=BankAccount.LINK_TYPE_SYNCED,
         connection=connection,
         external_account_id="acc-1",
@@ -148,7 +148,7 @@ def test_webhook_discovers_new_account_via_fallback(
             {
                 "external_account_id": "acc-2",
                 "bank_name": "Mock National Bank",
-                "masked_account_number": "****5678",
+                "account_number": "1000200030005678",
                 "account_type": "savings",
                 "currency": "EGP",
             }

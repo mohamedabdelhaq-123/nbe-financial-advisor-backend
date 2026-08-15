@@ -45,6 +45,17 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
 
 
 class BankAccountSerializer(serializers.ModelSerializer):
+    """`account_number` is returned exactly as stored — no display-side masking.
+
+    It holds the full number whatever created the account: manual entry,
+    statement OCR (core/tasks/statements.py's _finalize_normalization_phase()), or
+    bank sync, where BankConnector.fetch_accounts()' contract
+    (services/bank_connectors/base.py) requires the provider to hand back the
+    real number rather than a masked hint. That uniformity is what lets a
+    statement resolve onto an already-synced account instead of shadowing it
+    with a duplicate.
+    """
+
     current_balance = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
 
     class Meta:
@@ -53,7 +64,7 @@ class BankAccountSerializer(serializers.ModelSerializer):
             "id",
             "bank_name",
             "account_type",
-            "masked_account_number",
+            "account_number",
             "currency",
             "is_active",
             "link_type",

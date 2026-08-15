@@ -51,7 +51,12 @@ def apply_synced_accounts(connection, accounts: list[dict], connector) -> list[B
                     "link_type": BankAccount.LINK_TYPE_SYNCED,
                     "bank_name": acct["bank_name"],
                     "account_type": acct.get("account_type"),
-                    "masked_account_number": acct["masked_account_number"],
+                    # The real number, per BankConnector.fetch_accounts()'s
+                    # contract (services/bank_connectors/base.py) — same kind
+                    # of value the statement path stores, which is what lets
+                    # _finalize_normalization_phase() match a statement against an
+                    # already-synced account instead of shadowing it.
+                    "account_number": acct["account_number"],
                     "currency": acct.get("currency", "EGP"),
                 },
             )
