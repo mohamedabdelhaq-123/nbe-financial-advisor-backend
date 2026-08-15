@@ -8,6 +8,7 @@ from rest_framework import status
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
@@ -132,6 +133,11 @@ class SignupView(APIView):
     """
 
     permission_classes = [AllowAny]
+    # SEC-004 — shares the "auth" scope (config/settings.py's
+    # DEFAULT_THROTTLE_RATES) with every other credential-guessing/spam
+    # target below, keyed per-IP since there's no user yet at signup time.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth"
 
     @extend_schema(
         request=SignupSerializer,
@@ -158,6 +164,10 @@ class LoginView(APIView):
     """
 
     permission_classes = [AllowAny]
+    # SEC-004 — see SignupView's throttle comment above; this is the actual
+    # brute-force target the ticket calls out.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth"
 
     @extend_schema(
         request=LoginSerializer,
@@ -434,6 +444,11 @@ class PasswordResetRequestView(APIView):
     """
 
     permission_classes = [AllowAny]
+    # SEC-004 — without this, POST-ing someone else's email here in a loop
+    # floods them with reset emails (harassment + sender-reputation risk for
+    # the GMAIL_ADDRESS account) with no per-caller limit.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth"
 
     @extend_schema(
         request=PasswordResetRequestSerializer,
@@ -512,6 +527,11 @@ class EmailVerificationRequestView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    # SEC-004 — same spam-email concern as PasswordResetRequestView; keyed
+    # per-user here (ScopedRateThrottle falls back to the authenticated
+    # user's pk once IsAuthenticated has already run) rather than per-IP.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth"
 
     @extend_schema(
         request=None,

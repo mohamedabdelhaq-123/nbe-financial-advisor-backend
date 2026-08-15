@@ -172,6 +172,21 @@ REST_FRAMEWORK = {
     # paginated by default, matching every endpoint documented as
     # "Pagination: Offset" in the Data Shapes docs.
     "PAGE_SIZE": 20,
+    # Project-wide baseline (SEC-004) — every DRF view gets a rate limit by
+    # default, keyed per-IP for anonymous callers and per-user once
+    # authenticated. "auth" is a separate, much tighter scope opted into
+    # explicitly (throttle_classes/throttle_scope) by the handful of views
+    # a brute-force/spam attempt would actually target — signup, login,
+    # password-reset-request, email-verification-request, admin login.
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "60/min",
+        "user": "120/min",
+        "auth": "5/min",
+    },
 }
 
 # rest_framework.W001 warns about PAGE_SIZE with no DEFAULT_PAGINATION_CLASS —
@@ -388,6 +403,20 @@ STORAGES = {
 # services/sse_tickets.py) — not added to _REQUIRED_ENV above since it has a
 # working default, same pattern as POSTGRES_HOST.
 REDIS_URL = env.str("REDIS_URL", "redis://redis:6379/0")
+
+# Backs DRF's rate-limiting throttle counters (REST_FRAMEWORK's
+# DEFAULT_THROTTLE_CLASSES above) — the default LocMemCache is per-process,
+# so with gunicorn's multiple worker processes (docker-compose.prod.yml's
+# --workers 2) each worker would count requests independently and the
+# configured rate would only be enforced ~1/workers as strictly. A separate
+# DB index (not REDIS_URL's) keeps cache traffic logically apart from
+# Celery's own broker queue data on the same Redis instance.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL.rsplit("/", 1)[0] + "/1",
+    }
+}
 
 CELERY_BROKER_URL = env.str("CELERY_BROKER_URL", REDIS_URL)
 # No result backend: task completion is communicated to callers via the

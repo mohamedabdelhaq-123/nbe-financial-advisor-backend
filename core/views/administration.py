@@ -8,6 +8,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.settings import api_settings as simplejwt_settings
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -49,6 +50,11 @@ class AdminLoginView(APIView):
 
     authentication_classes = []
     permission_classes = [AllowAny]
+    # SEC-004 — shares the "auth" scope (config/settings.py's
+    # DEFAULT_THROTTLE_RATES) with end-user login/signup/password-reset;
+    # same brute-force concern, separate credential space.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth"
 
     @extend_schema(
         request=AdminLoginSerializer,

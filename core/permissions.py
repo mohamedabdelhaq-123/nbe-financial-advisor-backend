@@ -39,3 +39,13 @@ class AdminAuthMixin:
 
     authentication_classes = [AdminJWTAuthentication]
     permission_classes = [IsAdminUser]
+    # SEC-004's global DEFAULT_THROTTLE_CLASSES (config/settings.py) assumes
+    # `request.user.is_authenticated` — an attribute AdminUser deliberately
+    # doesn't have (see IsAdminUser's docstring above), so those throttles
+    # crash with an AttributeError on every /admin/* request otherwise.
+    # Not a regression in practice: every /admin/* view is already gated by
+    # IsAdminUser, so it was never part of the anonymous-abuse threat model
+    # the global throttle targets. AdminLoginView (no AdminAuthMixin, since
+    # there's no admin session yet at login) keeps its own explicit
+    # ScopedRateThrottle("auth") unaffected by this.
+    throttle_classes = []
