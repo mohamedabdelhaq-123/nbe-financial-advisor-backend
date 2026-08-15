@@ -10,3 +10,8 @@ TRANSACTION_SOURCES = ("statement", "manual", "synced")
 # manual entry, fully editable); "synced" accounts are bank-integrated via a
 # BankConnection and read-only to the end user (see BankAccount.is_synced).
 BANK_ACCOUNT_LINK_TYPES = ("manual", "synced")
+
+# Upper bound on a chat message's `content` (core/serializers/conversations.py's
+# MessageCreateSerializer) — keeps prompts sent to the AI service bounded and
+# matches the frontend composer's textarea maxLength (ChatComposer.tsx).
+CHAT_MESSAGE_MAX_LENGTH = 4000

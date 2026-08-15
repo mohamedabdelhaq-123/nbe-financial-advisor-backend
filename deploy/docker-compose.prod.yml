@@ -1,3 +1,18 @@
+# Full production-optimized stack. Optimized builds, no hot reload/bind
+# mounts — a code change needs `up -d --build <service>`. nginx is the only
+# publicly reachable service (port 8080); everything else is internal-only.
+#
+# Needs --env-file (see Usage) — several services here have no env_file: of
+# their own and are filled in via ${VAR} substitution from it instead.
+#
+# Usage (run from nbe-financial-advisor-backend/deploy):
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d --build <service>   # redeploy one
+#   docker compose -f docker-compose.prod.yml down          # keep data
+#   docker compose -f docker-compose.prod.yml down -v       # wipe data too
+
+name: nbe-financial-advisor-prod
+
 services:
   nginx:
     image: nginx:1.27-alpine
@@ -5,7 +20,7 @@ services:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
       - "8080:80"                     # changed from 80 (already in use on this host)
-    depends_on: [frontend, backend]
+    depends_on: [frontend, backend, backend-events]
 
   frontend:
     build:
@@ -18,10 +33,14 @@ services:
       context: ..
       args:
         BUILD_ENV: production
-    # --worker-class gthread --timeout 0: the single multiplexed SSE
-    # connection (core/views/events.py's GET /events/stream) is long-lived
-    # and would otherwise occupy an entire sync worker for its lifetime and
-    # get SIGKILL'd by gunicorn's default 30s request timeout.
+    # --worker-class gthread --timeout 0: left over from when this process
+    # also served GET /events/stream directly (a long-lived connection would
+    # otherwise get SIGKILL'd by gunicorn's default 30s request timeout).
+    # That route now runs on the isolated backend-events service below
+    # instead (nginx.conf's /api/events/ location points there, not here) —
+    # kept here too as harmless headroom rather than reverting it, since
+    # nothing about this service's normal request/response endpoints needs
+    # gunicorn's default timeout enforced.
     command: >
       sh -c "python manage.py migrate &&
             python manage.py ensure_storage_buckets &&
@@ -43,9 +62,6 @@ services:
       # dev value (:5173) — explicit override here to the address nginx
       # actually serves the frontend on in this stack.
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
-      # ai-service is built/run separately (its own compose files, not this
-      # stack) and joins the `nbe-prod` network below externally — reached
-      # here by container name, same pattern as the dev setup one level up.
       AI_SERVICE_URL: http://ai-service:8001
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
       # Consumed by core/migrations/0009_grant_ai_readonly_role.py to
@@ -64,15 +80,69 @@ services:
       MOCK_BANK_OAUTH_CLIENT_SECRET: ${MOCK_BANK_OAUTH_CLIENT_SECRET}
       MOCK_BANK_OAUTH_REDIRECT_URI: ${MOCK_BANK_OAUTH_REDIRECT_URI:-http://localhost:8080/bank-connect/callback}
       # Browser-facing address for the authorize_url handed to the frontend
-      # (services/bank_connectors/mock_bank.py's get_authorize_url()) — NOT
-      # yet routed through nginx in this stack (no /bank-oauth/-style location
-      # in nginx.conf and no published port on mock-bank-oauth below), so
-      # this needs a real reachable value before the bank-login flow works
-      # end-to-end here. Left as a placeholder for whoever wires that up.
-      MOCK_BANK_OAUTH_PUBLIC_URL: ${MOCK_BANK_OAUTH_PUBLIC_URL:-http://localhost:8002}
+      # (services/bank_connectors/mock_bank.py's get_authorize_url()) —
+      # routed through nginx's /authorize, /login/ locations (nginx.conf),
+      # so this is the same public origin as the frontend itself, not
+      # mock-bank-oauth's internal container address.
+      MOCK_BANK_OAUTH_PUBLIC_URL: ${MOCK_BANK_OAUTH_PUBLIC_URL:-http://localhost:8080}
       MOCK_BANK_SYNC_SERVICE_URL: http://mock-bank-sync:8003
       BANK_SYNC_WEBHOOK_SECRET: ${BANK_SYNC_WEBHOOK_SECRET}
     expose: ["8000"]                  # internal only — reached via nginx /api/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Dedicated worker pool for the single multiplexed SSE connection
+  # (core/views/events.py's POST /events/ticket + GET /events/stream), split
+  # off from `backend` so a pile-up of open, long-lived streams (many
+  # browser tabs, a reconnect storm, a slow client) can never starve
+  # `backend`'s own thread pool the way it did when both shared it — every
+  # other request (dashboard, transactions, chat, ...) stayed queued behind
+  # open streams because backend's 2 workers x 4 threads is only 8 slots
+  # total. Same image as `backend` (no migrate/seed step here — `backend`
+  # already runs those against the same database on startup). Routed to by
+  # nginx.conf's /api/events/ location instead of `backend` directly.
+  backend-events:
+    build:
+      context: ..
+      args:
+        BUILD_ENV: production
+    # 1 worker, many threads (not more workers): these connections are pure
+    # I/O wait on a Redis pub/sub read (services/event_bus.py's
+    # stream_user_events), not CPU work, so threads are cheap here and one
+    # process is enough. 30 threads comfortably covers far more concurrent
+    # streams than backend's old shared pool ever could.
+    command: >
+      gunicorn config.wsgi:application --bind 0.0.0.0:8010
+      --worker-class gthread --workers 1 --threads 30 --timeout 0
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+      POSTGRES_USER: ${POSTGRES_USER:-appuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apppass}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      API_URL_PREFIX: /api
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
+      AI_SERVICE_URL: http://ai-service:8001
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+      AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-change-me-readonly-pass}
+      SEAWEED_S3_ENDPOINT: http://seaweedfs:8333
+      SEAWEED_ACCESS_KEY: ${SEAWEED_ACCESS_KEY:-dev-seaweed-key}
+      SEAWEED_SECRET_KEY: ${SEAWEED_SECRET_KEY}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      MOCK_BANK_OAUTH_SERVICE_URL: http://mock-bank-oauth:8002
+      MOCK_BANK_OAUTH_CLIENT_ID: ${MOCK_BANK_OAUTH_CLIENT_ID:-nbe-backend}
+      MOCK_BANK_OAUTH_CLIENT_SECRET: ${MOCK_BANK_OAUTH_CLIENT_SECRET}
+      MOCK_BANK_OAUTH_REDIRECT_URI: ${MOCK_BANK_OAUTH_REDIRECT_URI:-http://localhost:8080/bank-connect/callback}
+      MOCK_BANK_OAUTH_PUBLIC_URL: ${MOCK_BANK_OAUTH_PUBLIC_URL:-http://localhost:8080}
+      MOCK_BANK_SYNC_SERVICE_URL: http://mock-bank-sync:8003
+      BANK_SYNC_WEBHOOK_SECRET: ${BANK_SYNC_WEBHOOK_SECRET}
+    expose: ["8010"]                  # internal only — reached via nginx /api/events/
     depends_on:
       postgres:
         condition: service_healthy
@@ -113,7 +183,7 @@ services:
       BANK_SYNC_WEBHOOK_SECRET: ${BANK_SYNC_WEBHOOK_SECRET}
     # Overrides the image's baked-in HEALTHCHECK (Dockerfile hits
     # localhost:8000/health/, which nothing serves here) with a
-    # Celery-native worker ping — same fix as docker-compose.yml's
+    # Celery-native worker ping — same fix as docker-compose.dev.yml's
     # celery-worker service.
     healthcheck:
       test: ["CMD-SHELL", "celery -A config inspect ping -d celery@$$HOSTNAME || exit 1"]
@@ -129,17 +199,13 @@ services:
       redis:
         condition: service_healthy
 
-  # Mock bank OAuth+OTP identity provider (mock-bank-oauth/README.md) — a
-  # real sibling container, same as in docker-compose.yml. No build args:
-  # this service's Dockerfile has no dev/prod variant.
+  # Mock bank OAuth+OTP identity provider (mock-bank-oauth/README.md). No
+  # build args: this service's Dockerfile has no dev/prod variant.
   #
-  # NOT YET publicly reachable in this stack: /authorize is a browser-facing
-  # page (the frontend redirects the user's browser here directly), but
-  # there's no nginx location routing to it below and no port published on
-  # this service — nginx.conf and MOCK_BANK_OAUTH_PUBLIC_URL above both need
-  # updating together once the team decides how this should be exposed
-  # (a dedicated nginx location, e.g. same shape as /api/, is the likely
-  # answer). Added here so the container/env wiring exists to build on.
+  # Publicly reachable via nginx's /authorize + /login/ locations
+  # (nginx.conf) rather than a published port — same internal-only +
+  # nginx-fronted shape as backend's /api/, kept consistent with
+  # MOCK_BANK_OAUTH_PUBLIC_URL above.
   mock-bank-oauth:
     build:
       context: ../mock-bank-oauth
@@ -152,9 +218,9 @@ services:
       MOCK_BANK_INTERNAL_SECRET: ${MOCK_BANK_INTERNAL_SECRET}
       MOCK_BANK_JWT_SECRET: ${MOCK_BANK_JWT_SECRET}
       FRONTEND_ALLOWED_ORIGINS: ${FRONTEND_URL:-http://localhost:8080}
-      # Debug-only OTP reader — off by default (unlike the dev stack's
-      # docker-compose.yml, which turns it on). Leave off here; flip on only
-      # for a deliberate, temporary debugging session.
+      # Debug-only OTP reader — off by default (unlike the dev stack, which
+      # turns it on). Leave off here; flip on only for a deliberate,
+      # temporary debugging session.
       MOCK_BANK_OAUTH_ENABLE_DEBUG_ENDPOINTS: ${MOCK_BANK_OAUTH_ENABLE_DEBUG_ENDPOINTS:-0}
     expose: ["8002"]                  # internal only for now — see note above
 
@@ -243,10 +309,10 @@ services:
       AI_SERVICE_STORAGE__S3_SECRET_KEY: ${SEAWEED_SECRET_KEY}
       AI_SERVICE_STORAGE__S3_USE_PATH_STYLE: "true"
       AI_SERVICE_STORAGE__S3_OCR_BUCKET: ${AI_STORAGE_OCR_BUCKET:-pfm-statements-ocr}
-      # MinerU document processing — real service is PARKED (see below), so
-      # this stays mocked until an image/approach is chosen.
+      # MinerU document processing — real service (mineru-server below) is
+      # off by default; stays mocked until it's explicitly started.
       AI_SERVICE_MINERU__USE_MOCK: ${USE_MOCK_MINERU:-1}
-      AI_SERVICE_MINERU__API_URL: ${MINERU_API_URL:-http://mineru:8000}
+      AI_SERVICE_MINERU__API_URL: ${MINERU_API_URL:-http://mineru-server:8000}
       AI_SERVICE_MINERU__API_KEY: ${MINERU_API_KEY:-key}
       AI_SERVICE_EMBEDDINGS__BASE_URL: ${EMBEDDING_BASE_URL}
       AI_SERVICE_EMBEDDINGS__API_KEY: ${EMBEDDING_API_KEY}
@@ -270,6 +336,14 @@ services:
       backend:
         condition: service_started    # backend starts (runs its migrate) before AI service
 
+  # Real document-OCR engine (GPU-only). Off by default — start explicitly
+  # with `docker compose -f docker-compose.prod.yml --profile api up -d mineru-server`,
+  # then point AI_SERVICE_MINERU__USE_MOCK=0 at it.
+  mineru-server:
+    extends:
+      file: ../../nbe-financial-advisor-ai-service/compose/mineru/docker-compose.yml
+      service: mineru-api
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:
@@ -283,7 +357,6 @@ services:
       AI_DB_PASSWORD: ${AI_DB_PASSWORD:-change-me-ai-db-pass}
       # Consumed by initdb/20-mock-bank-roles.sh to provision
       # mock_bank_user + mock_bank_db (mock-bank-sync's own database).
-      # Consumed by initdb/20-mock-bank-roles.sh to provision mock_bank_user + mock_bank_db.
       MOCK_BANK_DB_PASSWORD: ${MOCK_BANK_DB_PASSWORD:-mock_bank_db_pass}
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -299,9 +372,7 @@ services:
   seaweedfs:
     image: chrislusf/seaweedfs:latest
     # -s3/-filer are required for the S3 gateway to actually come up — without
-    # them nothing listens on 8333 despite it being exposed below (PLAN.md
-    # Checkpoint 1: this was silently broken before, verified by hand against
-    # the real image).
+    # them nothing listens on 8333 despite it being exposed below.
     # volumeSizeLimitMB intentionally shrunk from SeaweedFS's default-ish 1024
     # to 128: the master caps how many volumes it'll ever allocate at
     # free_disk_space / volumeSizeLimitMB (a worst-case reservation, not
@@ -309,7 +380,7 @@ services:
     # later buckets/collections of any volume at all long before real data
     # comes close to filling one. 128MB just means no single uploaded file
     # can exceed that — far above any bank-statement PDF (same fix applied
-    # to the dev backend/docker-compose.yml's seaweedfs service).
+    # to docker-compose.dev.yml's seaweedfs service).
     command: "server -dir=/data -master.volumeSizeLimitMB=128 -filer -s3 -s3.port=8333"
     volumes:
       - seaweed_data:/data              # named volume — files persist across restarts
@@ -320,26 +391,11 @@ services:
     healthcheck:
       # 127.0.0.1, not localhost: this image's busybox wget resolves
       # "localhost" to ::1 first and doesn't fall back to IPv4, so the
-      # healthcheck never passes if written the more obvious way (verified
-      # by hand — PLAN.md Checkpoint 1).
+      # healthcheck never passes if written the more obvious way.
       test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:9333/cluster/status || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
-
-  # ── MinerU — PARKED, pending AI Specialist input ──────────────────────────
-  # There is NO official MinerU image on Docker Hub. The project team explicitly
-  # does not publish to Docker Hub. Options:
-  #   A) Build from their Dockerfile: https://github.com/opendatalab/MinerU
-  #      Requires GPU with Volta+ architecture and ≥8 GB VRAM.
-  #   B) Use pip install magic-pdf inside a Python base image (CPU mode, slower).
-  # Uncomment and fill in once the AI Specialist decides the approach.
-  #
-  # mineru:
-  #   image: <to-be-decided by AI Specialist>
-  #   expose:
-  #     - "8000"                        # internal only — Pattern A
-  #   restart: unless-stopped
 
   # ── vLLM (PARKED — enable when a GPU machine is available) ──────────────
   # Serves the real model with an OpenAI-compatible API. Requires a GPU +
@@ -368,14 +424,6 @@ services:
   #     start_period: 300s                   # weights take minutes to load
 
 networks:
-  # Named (not the Compose-default per-project network) so ai-service — built
-  # and run separately via its own compose files, not by this stack — can
-  # join it externally and still reach `backend`/`postgres`/`seaweedfs` (and
-  # be reached back at `http://ai-service:8001`, per `backend`/`celery-worker`
-  # above) by container name. Mirrors the dev pattern already in place one
-  # level up (nbe-financial-advisor-backend/docker-compose.yml's `nbe-dev`,
-  # joined externally by the ai-service repo's own docker-compose.dev.yml) —
-  # same shape, prod name.
   default:
     name: nbe-prod
 

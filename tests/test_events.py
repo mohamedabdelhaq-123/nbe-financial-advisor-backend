@@ -71,3 +71,19 @@ def test_event_stream_accepts_valid_ticket(client, user, fake_redis):
     response = client.get(f"/events/stream/?ticket={ticket}")
     assert response.status_code == 200
     assert response["Content-Type"] == "text/event-stream"
+
+
+def test_event_stream_accepts_browser_eventsource_accept_header(client, user, fake_redis):
+    """
+    A native EventSource always sends `Accept: text/event-stream` and
+    cannot be made to send anything else — the other tests above use
+    APIClient's default (unset) Accept header, which DRF's content
+    negotiation treats as "accept anything" and so never exercised this
+    path. Without ServerSentEventRenderer (core/views/events.py),
+    perform_content_negotiation() 406s on this Accept header before
+    SSETicketAuthentication or get() ever run, regardless of a valid ticket.
+    """
+    ticket = sse_tickets.mint_ticket(user)
+    response = client.get(f"/events/stream/?ticket={ticket}", HTTP_ACCEPT="text/event-stream")
+    assert response.status_code == 200
+    assert response["Content-Type"] == "text/event-stream"
