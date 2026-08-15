@@ -49,7 +49,11 @@ def test_notify_swallows_send_failures(monkeypatch):
     def _raise(*args, **kwargs):
         raise SMTPException("connection refused")
 
-    monkeypatch.setattr(notification_service, "send_mail", _raise)
+    # notify() always renders an html_body, so send_email() always takes the
+    # EmailMultiAlternatives.send() branch, never the plain send_mail() one —
+    # patching send_mail here doesn't intercept anything, and the email
+    # "succeeds" via the real locmem backend instead of failing.
+    monkeypatch.setattr(notification_service.EmailMultiAlternatives, "send", _raise)
 
     # Doesn't raise — this is the whole point of notify() vs. send_email().
     notification_service.notify(_FakeUser(), "Subject", "Body")
