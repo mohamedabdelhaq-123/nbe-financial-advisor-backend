@@ -26,8 +26,7 @@ services:
       sh -c "python manage.py migrate &&
             python manage.py ensure_storage_buckets &&
             python manage.py seed_onboarding_templates &&
-            gunicorn config.wsgi:application --bind 0.0.0.0:8000
-            --worker-class gthread --workers 2 --threads 4 --timeout 0"
+            gunicorn config.wsgi:application --bind 0.0.0.0:8000 --worker-class gthread --workers 2 --threads 4 --timeout 0"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-appdb}
       POSTGRES_USER: ${POSTGRES_USER:-appuser}
@@ -194,6 +193,83 @@ services:
       timeout: 3s
       retries: 5
 
+  ai-service:
+    build:
+      context: ../../nbe-financial-advisor-ai-service
+      target: prod
+    # Alembic runs AFTER backend is healthy => Django's tables already exist.
+    # M7 hardening: upgrade depends_on to a dedicated backend-migrate one-shot
+    # service with condition: service_completed_successfully for a hard guarantee.
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8001"
+    environment:
+      # Own (read-write) database — a SEPARATE database (ai_appdb) owned by a
+      # dedicated least-privilege role. The AI service migrates & owns these
+      # tables; it holds NO superuser creds and cannot touch Django's appdb.
+      #
+      # Names below use the AI_SERVICE_<GROUP>__<FIELD> scheme required by
+      # this service's own app/core/config.py (pydantic-settings,
+      # env_prefix="AI_SERVICE_", env_nested_delimiter="__") — see that
+      # repo's .env.example. The flat names this block used before (e.g.
+      # POSTGRES_DB, USE_MOCK_MINERU) are NOT read by that Settings class at
+      # all; they silently did nothing.
+      AI_SERVICE_OWN_DB__POSTGRES_HOST: postgres
+      AI_SERVICE_OWN_DB__POSTGRES_PORT: 5432
+      AI_SERVICE_OWN_DB__POSTGRES_DB: ${AI_DB_NAME:-ai_appdb}
+      AI_SERVICE_OWN_DB__POSTGRES_USER: ${AI_DB_USER:-ai_user}
+      AI_SERVICE_OWN_DB__POSTGRES_PASSWORD: ${AI_DB_PASSWORD:-ai_db_pass}
+      # Backend (Django-owned) database — READ-ONLY role, SELECT only.
+      # Same Postgres server, but appdb via a locked-down role so writes are
+      # rejected by the DB itself.
+      AI_SERVICE_BACKEND_DB__HOST: postgres
+      AI_SERVICE_BACKEND_DB__PORT: 5432
+      AI_SERVICE_BACKEND_DB__NAME: ${POSTGRES_DB:-appdb}
+      AI_SERVICE_BACKEND_DB__USER: ai_readonly
+      AI_SERVICE_BACKEND_DB__PASSWORD: ${AI_READONLY_PASSWORD:-ai_readonly_pass}
+      AI_SERVICE_CHAT_MODEL__USE_MOCK: ${USE_MOCK_LLM:-1}
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+      AI_SERVICE_CHAT_MODEL__OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      AI_SERVICE_CHAT_MODEL__OPENAI_API_KEY: ${OPENAI_API_KEY:-__mock__}
+      AI_SERVICE_CHAT_MODEL__MODEL_NAME: ${MODEL_NAME:-gpt-4o-mini}
+      AI_SERVICE_CHAT_MODEL__NORMALIZATION_MAX_PARALLEL_CHUNKS: ${NORMALIZATION_MAX_PARALLEL_CHUNKS:-1}
+      AI_SERVICE_CHAT_MODEL__NORMALIZATION_CHUNK_MAX_TOKENS: ${NORMALIZATION_CHUNK_MAX_TOKENS:-4096}
+      # S3-compatible object storage — same SeaweedFS gateway the backend
+      # uses, reusing its already-provisioned SEAWEED_* credentials/env vars.
+      AI_SERVICE_STORAGE__S3_BUCKET: ${AI_STORAGE_BUCKET:-pfm-statements-normalized}
+      AI_SERVICE_STORAGE__S3_ENDPOINT_URL: http://seaweedfs:8333
+      AI_SERVICE_STORAGE__S3_REGION: ${STORAGE_S3_REGION:-us-east-1}
+      AI_SERVICE_STORAGE__S3_ACCESS_KEY: ${SEAWEED_ACCESS_KEY}
+      AI_SERVICE_STORAGE__S3_SECRET_KEY: ${SEAWEED_SECRET_KEY}
+      AI_SERVICE_STORAGE__S3_USE_PATH_STYLE: "true"
+      AI_SERVICE_STORAGE__S3_OCR_BUCKET: ${AI_STORAGE_OCR_BUCKET:-pfm-statements-ocr}
+      # MinerU document processing — real service is PARKED (see below), so
+      # this stays mocked until an image/approach is chosen.
+      AI_SERVICE_MINERU__USE_MOCK: ${USE_MOCK_MINERU:-1}
+      AI_SERVICE_MINERU__API_URL: ${MINERU_API_URL:-http://mineru:8000}
+      AI_SERVICE_MINERU__API_KEY: ${MINERU_API_KEY:-key}
+      AI_SERVICE_EMBEDDINGS__BASE_URL: ${EMBEDDING_BASE_URL}
+      AI_SERVICE_EMBEDDINGS__API_KEY: ${EMBEDDING_API_KEY}
+      AI_SERVICE_EMBEDDINGS__MODEL_NAME: ${EMBEDDING_MODEL_NAME}
+      AI_SERVICE_EMBEDDINGS__DIMENSIONS: ${EMBEDDING_DIMENSIONS}
+      # Scope guardrail (zero-shot "is this about personal finance" check) — off
+      # by default, still being validated. MODE=hosted calls the HF Inference API
+      # (needs SCOPE_GUARD_HOSTED_API_KEY, a free token from
+      # https://huggingface.co/settings/tokens); MODE=local runs the model
+      # in-process instead (image must be built with `--group local-scope-guard`
+      # first — not included by default, see the ai-service repo's pyproject.toml).
+      AI_SERVICE_SCOPE_GUARD__ENABLED: ${SCOPE_GUARD_ENABLED:-0}
+      AI_SERVICE_SCOPE_GUARD__MODE: ${SCOPE_GUARD_MODE:-hosted}
+      AI_SERVICE_SCOPE_GUARD__HOSTED_API_KEY: ${SCOPE_GUARD_HOSTED_API_KEY}
+    expose: ["8001"]                  # internal only, NEVER published — Pattern A
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      backend:
+        condition: service_started    # backend starts (runs its migrate) before AI service
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:
@@ -207,6 +283,7 @@ services:
       AI_DB_PASSWORD: ${AI_DB_PASSWORD:-change-me-ai-db-pass}
       # Consumed by initdb/20-mock-bank-roles.sh to provision
       # mock_bank_user + mock_bank_db (mock-bank-sync's own database).
+      # Consumed by initdb/20-mock-bank-roles.sh to provision mock_bank_user + mock_bank_db.
       MOCK_BANK_DB_PASSWORD: ${MOCK_BANK_DB_PASSWORD:-mock_bank_db_pass}
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -225,7 +302,15 @@ services:
     # them nothing listens on 8333 despite it being exposed below (PLAN.md
     # Checkpoint 1: this was silently broken before, verified by hand against
     # the real image).
-    command: "server -dir=/data -master.volumeSizeLimitMB=1024 -filer -s3 -s3.port=8333"
+    # volumeSizeLimitMB intentionally shrunk from SeaweedFS's default-ish 1024
+    # to 128: the master caps how many volumes it'll ever allocate at
+    # free_disk_space / volumeSizeLimitMB (a worst-case reservation, not
+    # actual usage), so on a disk-constrained host the larger limit starves
+    # later buckets/collections of any volume at all long before real data
+    # comes close to filling one. 128MB just means no single uploaded file
+    # can exceed that — far above any bank-statement PDF (same fix applied
+    # to the dev backend/docker-compose.yml's seaweedfs service).
+    command: "server -dir=/data -master.volumeSizeLimitMB=128 -filer -s3 -s3.port=8333"
     volumes:
       - seaweed_data:/data              # named volume — files persist across restarts
     expose:
