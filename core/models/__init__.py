@@ -1,5 +1,6 @@
 # Import Profile Domain
 # Import Administration Domain
+from .administration.admin_blacklisted_token import AdminBlacklistedToken
 from .administration.admin_user import AdminUser
 from .aggregations.anomaly_flag import AnomalyFlag
 from .aggregations.monthly_summary import MonthlySummary
@@ -87,6 +88,7 @@ __all__ = [
     "NetWorthSnapshot",
     # Administration
     "AdminUser",
+    "AdminBlacklistedToken",
     # Ping
     "Ping",
 ]

@@ -266,6 +266,14 @@ REFRESH_TOKEN_COOKIE_SECURE = not DEBUG
 REFRESH_TOKEN_COOKIE_SAMESITE = "Lax"
 REFRESH_TOKEN_COOKIE_MAX_AGE = int(SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"].total_seconds())
 
+# SEC-009 — admin credential space's own httpOnly refresh cookie, separate
+# name from REFRESH_TOKEN_COOKIE_NAME above so an admin login and an
+# end-user login in the same browser never overwrite each other's cookie
+# (both use path="/" — see core/views/administration.py's
+# _set_admin_refresh_cookie). Same Secure/SameSite/MaxAge attributes as the
+# end-user cookie; no reason for those to differ between the two spaces.
+ADMIN_REFRESH_TOKEN_COOKIE_NAME = "admin_refresh_token"
+
 MIDDLEWARE = [
     # CorsMiddleware must be first — before any middleware that can generate
     # responses (SecurityMiddleware, CommonMiddleware) so preflight OPTIONS
