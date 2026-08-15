@@ -30,7 +30,7 @@ environ.Env.read_env(BASE_DIR / ".env")
 # Each read below has no default, so django-environ raises ImproperlyConfigured
 # immediately if any is missing — surfacing misconfigurations at startup rather
 # than at first DB query or API call. They're consumed elsewhere
-# (services/storage_backends.py, core/ask_view.py) but are read here too so
+# (services/storage_backends.py, services/ai_service.py) but are read here too so
 # every required var is validated in one place. AI_READONLY_PASSWORD is
 # intentionally NOT required here: only core/migrations/0009_grant_ai_readonly_role.py
 # consumes it (during `migrate`), reading os.environ directly then — so
@@ -39,7 +39,7 @@ SEAWEED_S3_ENDPOINT = env.str("SEAWEED_S3_ENDPOINT")
 SEAWEED_ACCESS_KEY = env.str("SEAWEED_ACCESS_KEY")
 SEAWEED_SECRET_KEY = env.str("SEAWEED_SECRET_KEY")
 AI_SERVICE_TOKEN = env.str("AI_SERVICE_TOKEN")
-# Has a default; consumed by core/ask_view.py.
+# Has a default; consumed by services/ai_service.py.
 AI_SERVICE_URL = env.str("AI_SERVICE_URL", "http://ai-service:8001")
 # Toggles services/ai_service.py's dispatch functions between an in-process
 # mock and a real HTTP call to AI_SERVICE_URL — same pattern as the AI
@@ -145,7 +145,7 @@ AUTH_USER_MODEL = "core.User"
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     # Every endpoint requires a valid JWT by default (API Design Guidelines §8);
-    # individual views (signup/login/refresh, and the health/ping/ask dev probes)
+    # individual views (signup/login/refresh, and the health/ping dev probes)
     # opt out explicitly with AllowAny rather than the API being open by default.
     # UserJWTAuthentication (not simplejwt's raw JWTAuthentication) explicitly
     # rejects admin tokens — see core/authentication.py's module docstring —

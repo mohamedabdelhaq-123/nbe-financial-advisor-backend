@@ -1,6 +1,5 @@
 from django.urls import path
 
-from core.ask_view import ask
 from core.views import (
     AdminCategoryDetailView,
     AdminCategoryListCreateView,
@@ -70,11 +69,16 @@ from core.views import (
 
 urlpatterns = [
     # Dev/ops probes — deliberately outside DRF (plain Django views), so the
-    # DEFAULT_PERMISSION_CLASSES = IsAuthenticated default doesn't apply to them.
+    # DEFAULT_PERMISSION_CLASSES = IsAuthenticated default doesn't apply to
+    # them. NOTE: there used to be a fourth one, `ask/` (core/ask_view.py,
+    # now deleted) — an unauthenticated, unthrottled proxy straight to a
+    # real, cost-incurring LLM call (SEC-003). Unlike these three, that one
+    # wasn't a harmless liveness check: anyone who could reach the backend
+    # got free, unattributed AI-service invocations. Don't re-add an
+    # AllowAny AI-invoking route here without auth + throttling.
     path("health/", health),
     path("db/", db_check),
     path("ping/", ping),
-    path("ask/", ask),
     # 1. Auth & Onboarding (docs/API_GUIDE/API_Endpoints_1.md §1)
     path("auth/signup/", SignupView.as_view()),
     path("auth/login/", LoginView.as_view()),
