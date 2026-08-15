@@ -52,9 +52,11 @@ class TransactionWriteSerializer(serializers.ModelSerializer):
     ownership-checks the account before this serializer ever runs, so an
     unowned or nonexistent account returns 404 instead of a field-validation
     422 (see TransactionCreateRequestSerializer for the full request shape,
-    account_id included). Also excludes `source`/`is_recurring`/
-    `confidence_score`, which are always backend-set or backend-computed,
-    never accepted from the client.
+    account_id included). Also excludes `source`/`confidence_score`, which
+    are always backend-set or backend-computed, never accepted from the
+    client. `is_recurring` IS accepted here — unlike those two, it's a plain
+    user-facing flag on manual entry (there's no live detection job writing
+    it yet, so a client-supplied value can't collide with one).
     """
 
     # Manual entry is held to the exact vocabulary (a 400 for an unknown name)
@@ -74,9 +76,11 @@ class TransactionWriteSerializer(serializers.ModelSerializer):
             "amount",
             "currency",
             "transaction_type",
+            "is_recurring",
         ]
         extra_kwargs = {
             "currency": {"required": False},
+            "is_recurring": {"required": False},
         }
 
 
@@ -105,7 +109,14 @@ class TransactionPatchSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Transaction
-        fields = ["category", "merchant_raw", "amount", "transaction_date", "transaction_type"]
+        fields = [
+            "category",
+            "merchant_raw",
+            "amount",
+            "transaction_date",
+            "transaction_type",
+            "is_recurring",
+        ]
 
 
 class AnomalyFlagSerializer(serializers.ModelSerializer):

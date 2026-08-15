@@ -45,10 +45,6 @@ class EventStreamView(APIView):
     """
 
     authentication_classes = [SSETicketAuthentication]
-    # Required, not cosmetic: an EventSource sends `Accept: text/event-stream`,
-    # and DRF negotiates content before authenticating — without a renderer
-    # declaring that media type every browser connection 406s before the ticket
-    # is even read. See core/renderers.py.
     renderer_classes = [ServerSentEventRenderer]
 
     @extend_schema(

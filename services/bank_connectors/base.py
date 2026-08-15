@@ -41,7 +41,10 @@ class BankConnector(ABC):
     @abstractmethod
     def fetch_accounts(self, access_token: str) -> list[dict]:
         """Returns a list of {"external_account_id", "bank_name",
-        "account_type", "masked_account_number", "currency"}."""
+        "account_type", "account_number", "currency"}.
+
+        account_number is the real account number, never a masked hint —
+        """
 
     @abstractmethod
     def fetch_transactions(

@@ -70,9 +70,10 @@ def ingest_synced_transactions(bank_account_id: str, transactions: list[dict]) -
             return
 
         affected_months = {t.transaction_date.strftime("%Y-%m") for t in created}
+        client = ai_service.get_client()
         for month in affected_months:
             try:
-                result = ai_service.run_post_ingestion_analysis(
+                result = client.run_post_ingestion_analysis(
                     str(account.user_id), str(account.id), month
                 )
             except ai_service.AIServiceError:

@@ -11,7 +11,7 @@ Owner: AI team (model choice + weights). DevOps: provides the slot below.
 
 ## Steps
 
-1. Uncomment the `vllm:` service block in `deploy/docker-compose.yml`.
+1. Uncomment the `vllm:` service block in `deploy/docker-compose.prod.yml`.
 2. **Pin an exact `vllm/vllm-openai` image tag/digest** (don't ship `latest` — record the pinned value in this file once chosen).
 3. In `deploy/.env` set:
    ```

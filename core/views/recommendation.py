@@ -49,7 +49,7 @@ class RecommendationsView(APIView):
     def get(self, request):
         query = request.query_params.get("q", "").strip()
         try:
-            response = ai_service.match_recommendations(str(request.user.id), query)
+            response = ai_service.get_client().match_recommendations(str(request.user.id), query)
         except AIServiceError as exc:
             raise AIServiceUnavailable(str(exc)) from exc
 
@@ -68,7 +68,7 @@ class RecommendationsView(APIView):
             product = products_by_id.get(match["product_id"])
             if product is None:
                 continue
-            RecommendationLog.objects.create(
+            log = RecommendationLog.objects.create(
                 user=request.user,
                 product=product,
                 matched_query=query or None,
@@ -76,7 +76,11 @@ class RecommendationsView(APIView):
             )
             results.append(
                 {
-                    "id": product.id,
+                    # The log row's id, NOT product.id — POST .../feedback below
+                    # looks up a RecommendationLog by this id, and a client has
+                    # no other way to learn it (it's created here, not echoed
+                    # back anywhere else).
+                    "id": log.id,
                     "title": product.title,
                     "description": product.description,
                     "categories": product.categories,

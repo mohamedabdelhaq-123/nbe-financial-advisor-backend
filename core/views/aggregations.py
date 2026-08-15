@@ -1,3 +1,4 @@
+import calendar
 from datetime import date
 from decimal import Decimal
 
@@ -142,6 +143,7 @@ class TransactionListCreateView(ListAPIView):
             category=data.get("category"),
             amount=data["amount"],
             transaction_type=data.get("transaction_type"),
+            is_recurring=data.get("is_recurring", False),
         )
         return Response(
             TransactionDetailSerializer(transaction).data, status=status.HTTP_201_CREATED
@@ -153,8 +155,8 @@ class TransactionDetailView(mixins.RetrieveModelMixin, mixins.DestroyModelMixin,
     Retrieve, edit, or delete a single transaction.
 
     PATCH only accepts a restricted field subset (`category`, `merchant_raw`,
-    `amount`, `transaction_date`, `transaction_type`) — `account_id` and
-    `source` are deliberately not patchable, since changing either would
+    `amount`, `transaction_date`, `transaction_type`, `is_recurring`) —
+    `account_id` and `source` are deliberately not patchable, since changing either would
     misrepresent where the transaction actually came from. Built from
     Retrieve+Destroy mixins directly (not RetrieveUpdateDestroyAPIView)
     because PATCH's input shape genuinely differs from GET's response
@@ -255,7 +257,9 @@ class MonthlySummariesView(APIView):
         if request.query_params.get("from"):
             qs = qs.filter(transaction_date__gte=f"{request.query_params['from']}-01")
         if request.query_params.get("to"):
-            qs = qs.filter(transaction_date__lte=f"{request.query_params['to']}-31")
+            to_year, to_month = (int(p) for p in request.query_params["to"].split("-"))
+            to_last_day = calendar.monthrange(to_year, to_month)[1]
+            qs = qs.filter(transaction_date__lte=date(to_year, to_month, to_last_day))
 
         months = (
             qs.annotate(month=TruncMonth("transaction_date"))

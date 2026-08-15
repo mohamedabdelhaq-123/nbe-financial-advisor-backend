@@ -47,12 +47,12 @@ def category(db):
 
 @pytest.fixture
 def account(user):
-    return BankAccount.objects.create(user=user, bank_name="NBE", masked_account_number="1234")
+    return BankAccount.objects.create(user=user, bank_name="NBE", account_number="1234")
 
 
 @pytest.fixture
 def other_account(user):
-    return BankAccount.objects.create(user=user, bank_name="CIB", masked_account_number="5678")
+    return BankAccount.objects.create(user=user, bank_name="CIB", account_number="5678")
 
 
 def _make_txn(user, account, category, *, txn_date, amount, merchant, txn_type="debit"):
@@ -188,14 +188,14 @@ class TestDashboardAccountFilter:
 
     def test_unowned_account_id_404s(self, client, other_user, budget):
         unowned_account = BankAccount.objects.create(
-            user=other_user, bank_name="Other Bank", masked_account_number="0000"
+            user=other_user, bank_name="Other Bank", account_number="0000"
         )
         resp = client.get("/dashboard/", {"account_id": str(unowned_account.id)})
         assert resp.status_code == 404
 
     def test_unowned_account_id_404s_even_without_a_budget(self, client, other_user):
         unowned_account = BankAccount.objects.create(
-            user=other_user, bank_name="Other Bank", masked_account_number="0000"
+            user=other_user, bank_name="Other Bank", account_number="0000"
         )
         resp = client.get("/dashboard/", {"account_id": str(unowned_account.id)})
         assert resp.status_code == 404

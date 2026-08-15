@@ -127,7 +127,7 @@ def test_callback_links_connection_and_creates_synced_accounts(
                 "external_account_id": "acc-1",
                 "bank_name": "Mock National Bank",
                 "account_type": "checking",
-                "masked_account_number": "****1234",
+                "account_number": "1000200030001234",
                 "currency": "EGP",
             }
         ],
@@ -202,7 +202,7 @@ def test_callback_replaces_preexisting_manual_account_under_same_bank_name(
     manual_account = BankAccount.objects.create(
         user=user,
         bank_name="Mock National Bank",
-        masked_account_number="****9999",
+        account_number="1000200030009999",
         link_type=BankAccount.LINK_TYPE_MANUAL,
     )
     Transaction.objects.create(
@@ -216,7 +216,7 @@ def test_callback_replaces_preexisting_manual_account_under_same_bank_name(
     other_bank_account = BankAccount.objects.create(
         user=user,
         bank_name="Some Other Bank",
-        masked_account_number="****0001",
+        account_number="1000200030000001",
         link_type=BankAccount.LINK_TYPE_MANUAL,
     )
 
@@ -226,7 +226,7 @@ def test_callback_replaces_preexisting_manual_account_under_same_bank_name(
                 "external_account_id": "acc-1",
                 "bank_name": "Mock National Bank",
                 "account_type": "checking",
-                "masked_account_number": "****1234",
+                "account_number": "1000200030001234",
                 "currency": "EGP",
             }
         ]

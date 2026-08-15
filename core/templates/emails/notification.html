@@ -1,0 +1,10 @@
+{% extends "emails/base.html" %}
+{% block title %}{{ subject }}{% endblock %}
+{% block content %}
+  <h1 style="margin:0 0 12px;color:#111827;font-size:20px;font-weight:600;">
+    {{ subject }}
+  </h1>
+  <p style="margin:0;color:#4B5563;font-size:14px;line-height:1.6;">
+    {{ body }}
+  </p>
+{% endblock %}

@@ -380,7 +380,7 @@ class Command(BaseCommand):
                     user=user,
                     bank_name=bank_name,
                     account_type=random.choice(["checking", "savings"]),
-                    masked_account_number=f"****{random.randint(1000, 9999)}",
+                    account_number=str(random.randint(10**15, 10**16 - 1)),
                     currency="EGP",
                     is_active=True,
                 )
@@ -441,13 +441,13 @@ class Command(BaseCommand):
             )
             StatementNormalized.objects.create(
                 statement=statement_file,
-                # Mirrors the real normalization shape (bank_name/account_hint
+                # Mirrors the real normalization shape (bank_name/account_number
                 # feed StatementFileSerializer's inline metadata fields) — these
                 # statements are already `processed`, so the ledger, not this
                 # payload, is the source of the transaction rows.
                 normalized_json={
                     "bank_name": account.bank_name,
-                    "account_hint": account.masked_account_number,
+                    "account_number": account.account_number,
                     "period_start": start.isoformat(),
                     "period_end": end.isoformat(),
                     "note": "Synthetic seed data — no backing file in SeaweedFS.",
