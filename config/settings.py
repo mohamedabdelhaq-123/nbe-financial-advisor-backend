@@ -189,6 +189,18 @@ REST_FRAMEWORK = {
     },
 }
 
+# SEC-005 — an app-layer backstop independent of deploy/nginx.conf's
+# client_max_body_size 20m, which only caps the production topology (no
+# equivalent exists when the backend is reached directly, e.g. in dev).
+# Matches nginx's cap and core/serializers/statements.py's
+# MAX_STATEMENT_UPLOAD_BYTES so all three limits agree. Doesn't affect
+# individual uploaded *files* specifically (Django spools those to disk
+# past FILE_UPLOAD_MAX_MEMORY_SIZE regardless, left at Django's own
+# conservative 2.5MB default) — this caps the overall request body,
+# rejecting it outright above the limit rather than assuming any file
+# validation downstream will run first.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024
+
 # rest_framework.W001 warns about PAGE_SIZE with no DEFAULT_PAGINATION_CLASS —
 # that's deliberate here: some endpoints (e.g. GET /accounts, GET
 # /analytics/net-worth) are intentionally unpaginated (small, bounded,

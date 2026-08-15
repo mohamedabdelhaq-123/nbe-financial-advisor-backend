@@ -14,6 +14,47 @@ from core.serializers.aggregations import TransactionListSerializer
 # only through the transaction-approval endpoint, never a status flag.
 _ADVANCE_TARGET_CHOICES = [StatementFile.STATUS_EXTRACTED, StatementFile.STATUS_NORMALIZED]
 
+# SEC-005 — matches deploy/nginx.conf's client_max_body_size 20m (the
+# ticket's own suggestion: "sensible for both limits to agree on the same
+# maximum"), so a file the backend would accept is never later rejected by
+# nginx in a confusing way, and vice versa.
+MAX_STATEMENT_UPLOAD_BYTES = 20 * 1024 * 1024
+ALLOWED_STATEMENT_EXTENSIONS = {"pdf", "png", "jpg", "jpeg"}
+ALLOWED_STATEMENT_CONTENT_TYPES = {"application/pdf", "image/png", "image/jpeg"}
+
+
+def validate_statement_upload(file_obj) -> None:
+    """
+    Shared by StatementUploadRequestSerializer.validate_file() below and
+    core/views/statements.py's create_statement_from_upload() directly —
+    ConversationAttachmentsView (core/views/conversations.py) reads
+    request.FILES itself and never goes through this serializer at all, so
+    create_statement_from_upload() is the one call both paths funnel
+    through and the actual enforcement point; the serializer-level check
+    exists in addition, purely so POST /statements fails fast with a clean
+    422 before the shared function (and its checksum/storage work) even runs.
+
+    Checks file_obj.size, never file_obj.read() — Django's multipart parser
+    already populates .size from the upload metadata, so this rejects an
+    oversized file before a single byte of it is read into memory here.
+    """
+    if file_obj.size > MAX_STATEMENT_UPLOAD_BYTES:
+        raise serializers.ValidationError(
+            f"File is too large ({file_obj.size} bytes) — the maximum is "
+            f"{MAX_STATEMENT_UPLOAD_BYTES} bytes."
+        )
+    extension = file_obj.name.rsplit(".", 1)[-1].lower() if "." in file_obj.name else ""
+    if extension not in ALLOWED_STATEMENT_EXTENSIONS:
+        raise serializers.ValidationError(
+            f"Unsupported file type {extension!r} — only "
+            f"{', '.join(sorted(ALLOWED_STATEMENT_EXTENSIONS))} files are accepted."
+        )
+    content_type = getattr(file_obj, "content_type", None)
+    if content_type and content_type not in ALLOWED_STATEMENT_CONTENT_TYPES:
+        raise serializers.ValidationError(
+            f"Unsupported content type {content_type!r} for a bank statement upload."
+        )
+
 
 @extend_schema_field(OpenApiTypes.BINARY)
 class _BinaryFileField(serializers.FileField):
@@ -171,6 +212,10 @@ class StatementUploadRequestSerializer(serializers.Serializer):
         required=False,
         default=StatementFile.STATUS_NORMALIZED,
     )
+
+    def validate_file(self, value):
+        validate_statement_upload(value)
+        return value
 
 
 class StatementPatchSerializer(serializers.Serializer):

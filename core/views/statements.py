@@ -26,6 +26,7 @@ from core.serializers.statements import (
     StatementUploadRequestSerializer,
     TransactionApprovalRequestSerializer,
     TransactionApprovalResponseSerializer,
+    validate_statement_upload,
 )
 from core.tasks.statements import process_statement_pipeline, validate_advance
 from core.views.profile import assert_account_mutable
@@ -83,6 +84,22 @@ def create_statement_from_upload(user, file_obj, target_status=None) -> Statemen
     """
     if not file_obj:
         raise ValidationError({"file": "This field is required."})
+
+    # SEC-005 — the real enforcement point (size/type checked via
+    # file_obj.size, before any read()): StatementUploadRequestSerializer's
+    # own validate_file() already covers POST /statements, but
+    # ConversationAttachmentsView (core/views/conversations.py) reads
+    # request.FILES directly and calls this function without ever
+    # constructing that serializer, so skipping this check here would leave
+    # that path completely unvalidated.
+    try:
+        validate_statement_upload(file_obj)
+    except ValidationError as exc:
+        # validate_statement_upload() raises a plain (unkeyed) ValidationError
+        # — correct when DRF calls it as StatementUploadRequestSerializer's
+        # validate_file() (DRF nests that under "file" itself automatically),
+        # wrong here where nothing does that nesting for us.
+        raise ValidationError({"file": exc.detail}) from exc
 
     file_bytes = file_obj.read()
     checksum = file_storage.compute_checksum(file_bytes)
