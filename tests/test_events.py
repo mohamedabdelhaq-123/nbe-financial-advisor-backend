@@ -73,17 +73,25 @@ def test_event_stream_accepts_valid_ticket(client, user, fake_redis):
     assert response["Content-Type"] == "text/event-stream"
 
 
-def test_event_stream_accepts_browser_eventsource_accept_header(client, user, fake_redis):
+def test_event_stream_accepts_event_stream_accept_header(client, user, fake_redis):
     """
-    A native EventSource always sends `Accept: text/event-stream` and
-    cannot be made to send anything else — the other tests above use
-    APIClient's default (unset) Accept header, which DRF's content
-    negotiation treats as "accept anything" and so never exercised this
-    path. Without ServerSentEventRenderer (core/views/events.py),
-    perform_content_negotiation() 406s on this Accept header before
-    SSETicketAuthentication or get() ever run, regardless of a valid ticket.
+    The header a real browser sends. Every other test here (and any hand-check
+    with curl) sends `Accept: */*`, which matches JSONRenderer and passes even
+    when the endpoint is completely unreachable from an EventSource — DRF
+    negotiates content before authenticating, so a missing `text/event-stream`
+    renderer 406s the request before the ticket is looked at. Pinned
+    explicitly so core/renderers.py can't be dropped without a failure here.
     """
     ticket = sse_tickets.mint_ticket(user)
     response = client.get(f"/events/stream/?ticket={ticket}", HTTP_ACCEPT="text/event-stream")
     assert response.status_code == 200
     assert response["Content-Type"] == "text/event-stream"
+
+
+def test_event_stream_rejects_invalid_ticket_with_event_stream_accept_header(client, fake_redis):
+    """A bad ticket must still authenticate-fail (401), not 406 — i.e. the
+    renderer widened negotiation without widening access."""
+    response = client.get(
+        "/events/stream/?ticket=totally-bogus-ticket", HTTP_ACCEPT="text/event-stream"
+    )
+    assert response.status_code == 401
