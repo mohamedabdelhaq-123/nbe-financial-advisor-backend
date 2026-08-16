@@ -53,6 +53,7 @@ from core.views.conversations import (
     ConversationDetailView,
     ConversationListCreateView,
     ConversationMessagesView,
+    MessageWidgetView,
 )
 from core.views.events import EventStreamView, SSETicketMintView
 from core.views.feedback import FeedbackCreateView, IssueListCreateView
@@ -127,6 +128,7 @@ __all__ = [
     "ConversationListCreateView",
     "ConversationDetailView",
     "ConversationMessagesView",
+    "MessageWidgetView",
     "ConversationAttachmentsView",
     "SSETicketMintView",
     "EventStreamView",

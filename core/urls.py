@@ -29,6 +29,7 @@ from core.views import (
     ConversationDetailView,
     ConversationListCreateView,
     ConversationMessagesView,
+    MessageWidgetView,
     DashboardGoalView,
     DashboardView,
     EmailVerificationConfirmView,
@@ -151,6 +152,10 @@ urlpatterns = [
     path("chat/conversations/", ConversationListCreateView.as_view()),
     path("chat/conversations/<uuid:conversation_id>/", ConversationDetailView.as_view()),
     path("chat/conversations/<uuid:conversation_id>/messages/", ConversationMessagesView.as_view()),
+    path(
+        "chat/conversations/<uuid:conversation_id>/messages/<uuid:message_id>/widget/",
+        MessageWidgetView.as_view(),
+    ),
     path(
         "chat/conversations/<uuid:conversation_id>/attachments/",
         ConversationAttachmentsView.as_view(),
