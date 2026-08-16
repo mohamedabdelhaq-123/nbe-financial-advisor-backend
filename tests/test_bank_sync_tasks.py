@@ -36,7 +36,7 @@ def account(user):
     return BankAccount.objects.create(
         user=user,
         bank_name="Mock National Bank",
-        masked_account_number="****1234",
+        account_number="1000200030001234",
         link_type=BankAccount.LINK_TYPE_SYNCED,
     )
 
@@ -181,7 +181,10 @@ def test_anomaly_also_sends_a_notification_email(account, fake_redis, monkeypatc
             ]
         }
 
-    monkeypatch.setattr(bank_sync_module.ai_service, "run_post_ingestion_analysis", _fake_analysis)
+    class _FakeClient:
+        run_post_ingestion_analysis = staticmethod(_fake_analysis)
+
+    monkeypatch.setattr(bank_sync_module.ai_service, "get_client", lambda: _FakeClient())
 
     ingest_synced_transactions(str(account.id), [_debit_payload()])
 

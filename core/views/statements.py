@@ -107,7 +107,7 @@ def create_statement_from_upload(user, file_obj, target_status=None) -> Statemen
 
     # No account resolution here — the client never supplies one at upload
     # time (PLAN.md Checkpoint A). core/tasks/statements.py's
-    # run_normalization_phase() infers/creates the account from OCR output
+    # _finalize_normalization_phase() infers/creates the account from OCR output
     # once extraction runs; the user confirms or corrects it at approval
     # time (StatementTransactionApprovalView).
     extension = file_obj.name.rsplit(".", 1)[-1].lower() if "." in file_obj.name else "bin"
@@ -164,7 +164,7 @@ class StatementListCreateView(generics.ListAPIView):
         if getattr(self, "swagger_fake_view", False):
             return StatementFile.objects.none()
         # select_related(account) + prefetch(normalized_records) keep the
-        # newly-inlined metadata fields (bank_name/account_hint/model_used/
+        # newly-inlined metadata fields (bank_name/account_number/model_used/
         # adjusted_at, all funnelling through latest_normalized_record) from
         # turning the list into an N+1 — see StatementFile.latest_normalized_record.
         return (
@@ -376,7 +376,7 @@ class StatementTransactionApprovalView(APIView):
     confirmed or corrected: the optional `account_id` in the request body
     overrides whatever account normalization inferred from OCR — the
     client never supplies one at upload time, only here, once they've seen
-    the inferred `bank_name`/`account_hint` via `GET /statements/{id}`.
+    the inferred `bank_name`/`account_number` via `GET /statements/{id}`.
     """
 
     @extend_schema(
@@ -442,6 +442,9 @@ class StatementTransactionApprovalView(APIView):
                     amount=row["amount"],
                     transaction_type=row.get("transaction_type"),
                     source="statement",
+                    balance=row.get("balance"),
+                    merchant_normalized=row.get("merchant_normalized"),
+                    extra_fields=row.get("extra_fields"),
                 )
                 resolved.append(
                     {

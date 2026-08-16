@@ -20,7 +20,7 @@ class Transaction(models.Model):
         related_name="transactions",
     )
     transaction_date = models.DateField()
-    merchant_raw = models.CharField(max_length=500, blank=True, null=True)
+    merchant_raw = models.CharField(max_length=1024, blank=True, null=True)
     merchant_normalized = models.CharField(max_length=255, blank=True, null=True)
     category = models.ForeignKey(
         "Category",

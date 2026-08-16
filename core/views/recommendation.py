@@ -49,7 +49,7 @@ class RecommendationsView(APIView):
     def get(self, request):
         query = request.query_params.get("q", "").strip()
         try:
-            response = ai_service.match_recommendations(str(request.user.id), query)
+            response = ai_service.get_client().match_recommendations(str(request.user.id), query)
         except AIServiceError as exc:
             raise AIServiceUnavailable(str(exc)) from exc
 

@@ -28,7 +28,7 @@ def _serialize_account(account: MockAccount) -> dict:
         "external_account_id": str(account.id),
         "bank_name": account.bank_name,
         "account_type": account.account_type,
-        "masked_account_number": account.masked_account_number,
+        "account_number": account.account_number,
         "currency": account.currency,
     }
 

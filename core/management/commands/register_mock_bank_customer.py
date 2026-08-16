@@ -80,7 +80,7 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(
                 f"Registered mock bank customer {email!r} with account "
-                f"{account['masked_account_number']} and "
+                f"{account['account_number']} and "
                 f"{_STARTER_TRANSACTION_COUNT} transactions."
             )
         )
