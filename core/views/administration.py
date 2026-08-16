@@ -160,9 +160,7 @@ class AdminRefreshView(APIView):
             raise InvalidToken("This admin refresh token has already been used.") from exc
 
         try:
-            admin_user = AdminUser.objects.get(
-                id=refresh.payload[simplejwt_settings.USER_ID_CLAIM]
-            )
+            admin_user = AdminUser.objects.get(id=refresh.payload[simplejwt_settings.USER_ID_CLAIM])
         except AdminUser.DoesNotExist as exc:
             raise InvalidToken("Admin user not found.") from exc
 
