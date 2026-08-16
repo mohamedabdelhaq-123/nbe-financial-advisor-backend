@@ -8,6 +8,7 @@ from rest_framework import status
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
@@ -132,6 +133,9 @@ class SignupView(APIView):
     """
 
     permission_classes = [AllowAny]
+    # Shared "auth" throttle scope (config/settings.py) — brute-force/spam guard.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth"
 
     @extend_schema(
         request=SignupSerializer,
@@ -158,6 +162,8 @@ class LoginView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth"
 
     @extend_schema(
         request=LoginSerializer,
@@ -434,6 +440,10 @@ class PasswordResetRequestView(APIView):
     """
 
     permission_classes = [AllowAny]
+    # Without this, looping this with someone else's email floods them with
+    # reset emails (harassment + sender-reputation risk).
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth"
 
     @extend_schema(
         request=PasswordResetRequestSerializer,
@@ -512,6 +522,9 @@ class EmailVerificationRequestView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    # Keyed per-user, not per-IP, since the caller's already authenticated.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth"
 
     @extend_schema(
         request=None,

@@ -1,14 +1,21 @@
+from datetime import datetime
+from datetime import timezone as dt_timezone
+
+from django.conf import settings
 from django.contrib.auth.hashers import check_password
+from django.db import IntegrityError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view
-from rest_framework import generics
+from rest_framework import generics, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.settings import api_settings as simplejwt_settings
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -17,7 +24,14 @@ from core.filters.administration import (
     AdminProductFilterSet,
     AdminReactionFilterSet,
 )
-from core.models import AdminUser, ProblemStatement, Product, Reaction, ReportedIssue
+from core.models import (
+    AdminBlacklistedToken,
+    AdminUser,
+    ProblemStatement,
+    Product,
+    Reaction,
+    ReportedIssue,
+)
 from core.openapi import error_responses
 from core.permissions import AdminAuthMixin, IsSuperAdmin
 from core.serializers.administration import (
@@ -33,22 +47,58 @@ from core.serializers.administration import (
 from services import ai_service
 
 
+def _set_admin_refresh_cookie(response, refresh_token: str) -> None:
+    """Same as auth.py's _set_refresh_cookie, under a separate cookie name
+    so an admin session and a user session never collide."""
+    response.set_cookie(
+        settings.ADMIN_REFRESH_TOKEN_COOKIE_NAME,
+        refresh_token,
+        max_age=settings.REFRESH_TOKEN_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=settings.REFRESH_TOKEN_COOKIE_SECURE,
+        samesite=settings.REFRESH_TOKEN_COOKIE_SAMESITE,
+        path="/",
+    )
+
+
+def _admin_token_pair_response(admin_user, status_code) -> Response:
+    """Shared by AdminLoginView/AdminRefreshView: issues a fresh admin
+    token pair (body: access_token/admin_id/role, cookie: refresh_token).
+
+    Not RefreshToken.for_user(): simplejwt's blacklist app hardcodes
+    OutstandingToken.user to AUTH_USER_MODEL (core.User), which rejects an
+    AdminUser. Rotation/revocation goes through AdminBlacklistedToken
+    instead (AdminRefreshView/AdminLogoutView)."""
+    refresh = RefreshToken()
+    refresh[simplejwt_settings.USER_ID_CLAIM] = str(admin_user.id)
+    # Must be set before .access_token is read — it copies claims at that point.
+    refresh["is_admin"] = True
+
+    response = Response(
+        {
+            "access_token": str(refresh.access_token),
+            "admin_id": str(admin_user.id),
+            "role": admin_user.role,
+        },
+        status=status_code,
+    )
+    _set_admin_refresh_cookie(response, str(refresh))
+    return response
+
+
 class AdminLoginView(APIView):
     """
-    Authenticate an admin/internal-staff user. This is a completely
-    separate credential space from end-user auth (`POST /auth/login`) —
-    an admin token is never interchangeable with a user token on any
-    endpoint, and vice versa. Unlike the end-user flow, the refresh token
-    is returned directly in the response body here (no httpOnly cookie),
-    and there is no admin logout/refresh endpoint — admin tokens simply
-    expire on their own schedule. On failure, the error message is
-    deliberately generic ("Invalid email or password") regardless of
-    whether the email is registered, for the same anti-enumeration reason
-    as end-user login.
+    Authenticate an admin/internal-staff user — a separate credential space
+    from end-user auth, never interchangeable. Refresh token is set as an
+    httpOnly cookie (see POST /admin/auth/refresh, POST /admin/auth/logout).
+    Generic error message on failure, same anti-enumeration reasoning as
+    end-user login.
     """
 
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth"
 
     @extend_schema(
         request=AdminLoginSerializer,
@@ -71,35 +121,79 @@ class AdminLoginView(APIView):
             # is registered.
             raise ValidationError("Invalid email or password.")
 
-        # Deliberately NOT RefreshToken.for_user(admin_user): with
-        # rest_framework_simplejwt.token_blacklist installed (needed for
-        # end-user logout — core/views/auth.py), simplejwt's BlacklistMixin
-        # overrides for_user() to also insert an OutstandingToken row via
-        # `OutstandingToken.objects.create(user=user, ...)` — and that
-        # model's `user` FK is hardcoded to AUTH_USER_MODEL (core.User), so
-        # it rejects an AdminUser instance outright (confirmed by hitting
-        # this exact ValueError during smoke testing). Constructing the
-        # token directly replicates the *base* Token.for_user()'s behavior
-        # (set the user_id claim, nothing else) without going through the
-        # blacklist-specific override — meaning admin tokens are also simply
-        # not blacklist-trackable, which is fine: there's no
-        # POST /admin/auth/logout in API_Endpoints_1.md §12 to need it.
-        refresh = RefreshToken()
-        refresh[simplejwt_settings.USER_ID_CLAIM] = str(admin_user.id)
-        # The claim that makes an admin token structurally non-interchangeable
-        # with a user token — see core/authentication.py's module docstring.
-        # Must be set before .access_token is read below, since RefreshToken.
-        # access_token copies the refresh token's claims at that point.
-        refresh["is_admin"] = True
+        return _admin_token_pair_response(admin_user, status.HTTP_200_OK)
 
-        return Response(
-            {
-                "access_token": str(refresh.access_token),
-                "refresh_token": str(refresh),
-                "admin_id": str(admin_user.id),
-                "role": admin_user.role,
-            }
-        )
+
+class AdminRefreshView(APIView):
+    """Admin equivalent of POST /auth/refresh — exchanges the httpOnly
+    admin refresh cookie for a new access token. Can't reuse simplejwt's
+    own rotation (it blacklists via OutstandingToken, which rejects
+    AdminUser); rotates against AdminBlacklistedToken instead."""
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request=None,
+        responses={200: AdminLoginResponseSerializer, **error_responses(401)},
+    )
+    def post(self, request):
+        raw_token = request.COOKIES.get(settings.ADMIN_REFRESH_TOKEN_COOKIE_NAME)
+        if not raw_token:
+            raise InvalidToken("No admin refresh token cookie present.")
+
+        try:
+            refresh = RefreshToken(raw_token)
+        except TokenError as exc:
+            raise InvalidToken(str(exc)) from exc
+
+        if not refresh.payload.get("is_admin"):
+            raise InvalidToken("Not an admin refresh token.")
+
+        # jti's UNIQUE constraint is the real race guard — a replayed or
+        # concurrently-reused token hits IntegrityError, never honored twice.
+        try:
+            AdminBlacklistedToken.objects.create(
+                jti=refresh.payload[simplejwt_settings.JTI_CLAIM],
+                expires_at=datetime.fromtimestamp(refresh.payload["exp"], tz=dt_timezone.utc),
+            )
+        except IntegrityError as exc:
+            raise InvalidToken("This admin refresh token has already been used.") from exc
+
+        try:
+            admin_user = AdminUser.objects.get(id=refresh.payload[simplejwt_settings.USER_ID_CLAIM])
+        except AdminUser.DoesNotExist as exc:
+            raise InvalidToken("Admin user not found.") from exc
+
+        return _admin_token_pair_response(admin_user, status.HTTP_200_OK)
+
+
+class AdminLogoutView(AdminAuthMixin, APIView):
+    """Admin equivalent of POST /auth/logout — blacklists the refresh
+    token and clears the cookie. Idempotent: no cookie is "already logged
+    out" (204), not an error."""
+
+    @extend_schema(
+        request=None,
+        responses={204: None, **error_responses(401)},
+    )
+    def post(self, request):
+        raw_token = request.COOKIES.get(settings.ADMIN_REFRESH_TOKEN_COOKIE_NAME)
+        if raw_token:
+            try:
+                refresh = RefreshToken(raw_token)
+                AdminBlacklistedToken.objects.get_or_create(
+                    jti=refresh.payload[simplejwt_settings.JTI_CLAIM],
+                    defaults={
+                        "expires_at": datetime.fromtimestamp(
+                            refresh.payload["exp"], tz=dt_timezone.utc
+                        )
+                    },
+                )
+            except TokenError:
+                pass  # already malformed/expired, nothing to blacklist
+        response = Response(status=status.HTTP_204_NO_CONTENT)
+        response.delete_cookie(settings.ADMIN_REFRESH_TOKEN_COOKIE_NAME, path="/")
+        return response
 
 
 class AdminFeedbackListView(AdminAuthMixin, generics.ListAPIView):

@@ -26,6 +26,7 @@ from core.serializers.statements import (
     StatementUploadRequestSerializer,
     TransactionApprovalRequestSerializer,
     TransactionApprovalResponseSerializer,
+    validate_statement_upload,
 )
 from core.tasks.statements import process_statement_pipeline, validate_advance
 from core.views.profile import assert_account_mutable
@@ -83,6 +84,13 @@ def create_statement_from_upload(user, file_obj, target_status=None) -> Statemen
     """
     if not file_obj:
         raise ValidationError({"file": "This field is required."})
+
+    # Real enforcement point — ConversationAttachmentsView bypasses the
+    # serializer's validate_file() entirely, so this must run here too.
+    try:
+        validate_statement_upload(file_obj)
+    except ValidationError as exc:
+        raise ValidationError({"file": exc.detail}) from exc  # re-key under "file"
 
     file_bytes = file_obj.read()
     checksum = file_storage.compute_checksum(file_bytes)

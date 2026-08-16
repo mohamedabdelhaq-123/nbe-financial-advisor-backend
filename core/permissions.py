@@ -39,3 +39,7 @@ class AdminAuthMixin:
 
     authentication_classes = [AdminJWTAuthentication]
     permission_classes = [IsAdminUser]
+    # Global DEFAULT_THROTTLE_CLASSES assumes request.user.is_authenticated,
+    # which AdminUser deliberately lacks (see IsAdminUser above) — crashes
+    # otherwise. Already gated by IsAdminUser, so no throttling gap in practice.
+    throttle_classes = []

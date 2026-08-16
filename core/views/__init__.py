@@ -3,8 +3,10 @@ from core.views.administration import (
     AdminIssueListView,
     AdminIssueUpdateView,
     AdminLoginView,
+    AdminLogoutView,
     AdminProductDetailView,
     AdminProductListCreateView,
+    AdminRefreshView,
 )
 from core.views.aggregations import (
     AnomaliesView,
@@ -133,6 +135,8 @@ __all__ = [
     "RecommendationsView",
     "RecommendationFeedbackView",
     "AdminLoginView",
+    "AdminLogoutView",
+    "AdminRefreshView",
     "AdminFeedbackListView",
     "AdminIssueListView",
     "AdminIssueUpdateView",

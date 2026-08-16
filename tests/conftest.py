@@ -16,6 +16,19 @@ def _no_signup_dns_check(settings):
 
 
 @pytest.fixture(autouse=True)
+def _locmem_cache(settings):
+    """Overrides CACHES to LocMemCache for tests (prod points it at Redis,
+    unreachable from host-run pytest). Explicit .clear() matters:
+    LocMemCache's storage is a process-global dict keyed by LOCATION, so
+    reassigning settings.CACHES alone doesn't reset it — throttle counts
+    would otherwise leak across test functions."""
+    settings.CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+    from django.core.cache import cache
+
+    cache.clear()
+
+
+@pytest.fixture(autouse=True)
 def _celery_eager_mode(monkeypatch):
     """
     Forces every task (core/tasks/statements.py, core/tasks/conversations.py)

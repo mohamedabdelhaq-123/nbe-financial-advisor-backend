@@ -30,7 +30,7 @@ environ.Env.read_env(BASE_DIR / ".env")
 # Each read below has no default, so django-environ raises ImproperlyConfigured
 # immediately if any is missing — surfacing misconfigurations at startup rather
 # than at first DB query or API call. They're consumed elsewhere
-# (services/storage_backends.py, core/ask_view.py) but are read here too so
+# (services/storage_backends.py, services/ai_service.py) but are read here too so
 # every required var is validated in one place. AI_READONLY_PASSWORD is
 # intentionally NOT required here: only core/migrations/0009_grant_ai_readonly_role.py
 # consumes it (during `migrate`), reading os.environ directly then — so
@@ -39,7 +39,7 @@ SEAWEED_S3_ENDPOINT = env.str("SEAWEED_S3_ENDPOINT")
 SEAWEED_ACCESS_KEY = env.str("SEAWEED_ACCESS_KEY")
 SEAWEED_SECRET_KEY = env.str("SEAWEED_SECRET_KEY")
 AI_SERVICE_TOKEN = env.str("AI_SERVICE_TOKEN")
-# Has a default; consumed by core/ask_view.py.
+# Has a default; consumed by services/ai_service.py.
 AI_SERVICE_URL = env.str("AI_SERVICE_URL", "http://ai-service:8001")
 # Toggles services/ai_service.py's dispatch functions between an in-process
 # mock and a real HTTP call to AI_SERVICE_URL — same pattern as the AI
@@ -145,7 +145,7 @@ AUTH_USER_MODEL = "core.User"
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     # Every endpoint requires a valid JWT by default (API Design Guidelines §8);
-    # individual views (signup/login/refresh, and the health/ping/ask dev probes)
+    # individual views (signup/login/refresh, and the health/ping dev probes)
     # opt out explicitly with AllowAny rather than the API being open by default.
     # UserJWTAuthentication (not simplejwt's raw JWTAuthentication) explicitly
     # rejects admin tokens — see core/authentication.py's module docstring —
@@ -172,7 +172,22 @@ REST_FRAMEWORK = {
     # paginated by default, matching every endpoint documented as
     # "Pagination: Offset" in the Data Shapes docs.
     "PAGE_SIZE": 20,
+    # Project-wide rate limit, per-IP/per-user. "auth" is a tighter scope
+    # opted into explicitly by signup/login/password-reset/admin-login.
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "60/min",
+        "user": "120/min",
+        "auth": "5/min",
+    },
 }
+
+# App-layer backstop independent of nginx's client_max_body_size (which
+# only applies in prod) — matches it and MAX_STATEMENT_UPLOAD_BYTES.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024
 
 # rest_framework.W001 warns about PAGE_SIZE with no DEFAULT_PAGINATION_CLASS —
 # that's deliberate here: some endpoints (e.g. GET /accounts, GET
@@ -238,6 +253,10 @@ REFRESH_TOKEN_COOKIE_NAME = "refresh_token"
 REFRESH_TOKEN_COOKIE_SECURE = not DEBUG
 REFRESH_TOKEN_COOKIE_SAMESITE = "Lax"
 REFRESH_TOKEN_COOKIE_MAX_AGE = int(SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"].total_seconds())
+
+# Separate cookie name from REFRESH_TOKEN_COOKIE_NAME so an admin login and
+# a user login in the same browser never overwrite each other's cookie.
+ADMIN_REFRESH_TOKEN_COOKIE_NAME = "admin_refresh_token"
 
 MIDDLEWARE = [
     # CorsMiddleware must be first — before any middleware that can generate
@@ -388,6 +407,15 @@ STORAGES = {
 # services/sse_tickets.py) — not added to _REQUIRED_ENV above since it has a
 # working default, same pattern as POSTGRES_HOST.
 REDIS_URL = env.str("REDIS_URL", "redis://redis:6379/0")
+
+# Backs DRF's throttle counters — LocMemCache is per-process, which
+# wouldn't count correctly across gunicorn's multiple workers.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL.rsplit("/", 1)[0] + "/1",
+    }
+}
 
 CELERY_BROKER_URL = env.str("CELERY_BROKER_URL", REDIS_URL)
 # No result backend: task completion is communicated to callers via the

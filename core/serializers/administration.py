@@ -9,8 +9,11 @@ class AdminLoginSerializer(serializers.Serializer):
 
 
 class AdminLoginResponseSerializer(serializers.Serializer):
+    """Shared by POST /admin/auth/login and /admin/auth/refresh — no
+    refresh_token field, it's an httpOnly cookie. admin_id/role included on
+    both so the UI can permission-gate right after a reload restore."""
+
     access_token = serializers.CharField()
-    refresh_token = serializers.CharField()
     admin_id = serializers.UUIDField()
     role = serializers.CharField()
 

@@ -1,6 +1,5 @@
 from django.urls import path
 
-from core.ask_view import ask
 from core.views import (
     AdminCategoryDetailView,
     AdminCategoryListCreateView,
@@ -8,8 +7,10 @@ from core.views import (
     AdminIssueListView,
     AdminIssueUpdateView,
     AdminLoginView,
+    AdminLogoutView,
     AdminProductDetailView,
     AdminProductListCreateView,
+    AdminRefreshView,
     AnomaliesView,
     AnomalyResolveView,
     BankAccountDetailView,
@@ -70,11 +71,12 @@ from core.views import (
 
 urlpatterns = [
     # Dev/ops probes — deliberately outside DRF (plain Django views), so the
-    # DEFAULT_PERMISSION_CLASSES = IsAuthenticated default doesn't apply to them.
+    # DEFAULT_PERMISSION_CLASSES = IsAuthenticated default doesn't apply to
+    # them. (There used to be a 4th, `ask/` — an unauthenticated AI proxy,
+    # removed. Don't re-add an AllowAny AI-invoking route here.)
     path("health/", health),
     path("db/", db_check),
     path("ping/", ping),
-    path("ask/", ask),
     # 1. Auth & Onboarding (docs/API_GUIDE/API_Endpoints_1.md §1)
     path("auth/signup/", SignupView.as_view()),
     path("auth/login/", LoginView.as_view()),
@@ -175,6 +177,8 @@ urlpatterns = [
     ),
     # 12. Administration [admin] (API_Endpoints_1.md §12)
     path("admin/auth/login/", AdminLoginView.as_view()),
+    path("admin/auth/refresh/", AdminRefreshView.as_view()),
+    path("admin/auth/logout/", AdminLogoutView.as_view()),
     path("admin/feedback/", AdminFeedbackListView.as_view()),
     path("admin/issues/", AdminIssueListView.as_view()),
     path("admin/issues/<uuid:issue_id>/", AdminIssueUpdateView.as_view()),

@@ -14,6 +14,34 @@ from core.serializers.aggregations import TransactionListSerializer
 # only through the transaction-approval endpoint, never a status flag.
 _ADVANCE_TARGET_CHOICES = [StatementFile.STATUS_EXTRACTED, StatementFile.STATUS_NORMALIZED]
 
+# Matches deploy/nginx.conf's client_max_body_size 20m.
+MAX_STATEMENT_UPLOAD_BYTES = 20 * 1024 * 1024
+ALLOWED_STATEMENT_EXTENSIONS = {"pdf", "png", "jpg", "jpeg"}
+ALLOWED_STATEMENT_CONTENT_TYPES = {"application/pdf", "image/png", "image/jpeg"}
+
+
+def validate_statement_upload(file_obj) -> None:
+    """Shared by validate_file() below and create_statement_from_upload()
+    directly (the ConversationAttachmentsView path never touches this
+    serializer). Checks file_obj.size, never .read() — no bytes touched
+    for an oversized file."""
+    if file_obj.size > MAX_STATEMENT_UPLOAD_BYTES:
+        raise serializers.ValidationError(
+            f"File is too large ({file_obj.size} bytes) — the maximum is "
+            f"{MAX_STATEMENT_UPLOAD_BYTES} bytes."
+        )
+    extension = file_obj.name.rsplit(".", 1)[-1].lower() if "." in file_obj.name else ""
+    if extension not in ALLOWED_STATEMENT_EXTENSIONS:
+        raise serializers.ValidationError(
+            f"Unsupported file type {extension!r} — only "
+            f"{', '.join(sorted(ALLOWED_STATEMENT_EXTENSIONS))} files are accepted."
+        )
+    content_type = getattr(file_obj, "content_type", None)
+    if content_type and content_type not in ALLOWED_STATEMENT_CONTENT_TYPES:
+        raise serializers.ValidationError(
+            f"Unsupported content type {content_type!r} for a bank statement upload."
+        )
+
 
 @extend_schema_field(OpenApiTypes.BINARY)
 class _BinaryFileField(serializers.FileField):
@@ -174,6 +202,10 @@ class StatementUploadRequestSerializer(serializers.Serializer):
         required=False,
         default=StatementFile.STATUS_NORMALIZED,
     )
+
+    def validate_file(self, value):
+        validate_statement_upload(value)
+        return value
 
 
 class StatementPatchSerializer(serializers.Serializer):
