@@ -9,20 +9,9 @@ class AdminLoginSerializer(serializers.Serializer):
 
 
 class AdminLoginResponseSerializer(serializers.Serializer):
-    """
-    Response shape shared by POST /admin/auth/login and POST
-    /admin/auth/refresh (AdminRefreshView reuses this serializer directly —
-    the two responses are identical in shape, unlike the end-user flow
-    where TokenPairResponseSerializer/RefreshResponseSerializer genuinely
-    differ). SEC-009: no `refresh_token` field — it's set as an httpOnly
-    cookie instead (ADMIN_REFRESH_TOKEN_COOKIE_NAME), the same reasoning as
-    TokenPairResponseSerializer (core/serializers/auth.py). `admin_id`/
-    `role` are included on both responses (unlike the end-user refresh,
-    which returns access_token alone) because the admin UI needs `role`
-    synchronously for permission-gating (e.g. AdminDashboard's canWrite
-    check) right after a reload-triggered restore, and there's no separate
-    "fetch my profile" call in the admin panel to source it from otherwise.
-    """
+    """Shared by POST /admin/auth/login and /admin/auth/refresh — no
+    refresh_token field, it's an httpOnly cookie. admin_id/role included on
+    both so the UI can permission-gate right after a reload restore."""
 
     access_token = serializers.CharField()
     admin_id = serializers.UUIDField()

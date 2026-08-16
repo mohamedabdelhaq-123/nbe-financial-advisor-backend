@@ -17,25 +17,11 @@ def _no_signup_dns_check(settings):
 
 @pytest.fixture(autouse=True)
 def _locmem_cache(settings):
-    """
-    Overrides CACHES to Django's in-process LocMemCache for the whole test
-    suite (including integration tests — this fixture is autouse, so it
-    applies regardless of marker). config.settings points CACHES at a real
-    Redis instance in normal operation, needed so DRF's throttle counters
-    (REST_FRAMEWORK's DEFAULT_THROTTLE_CLASSES) are shared across gunicorn's
-    multiple prod worker processes — but pytest runs single-process, and a
-    host-run test can't resolve the `redis` hostname anyway (Docker-internal
-    only). No throttle test needs cross-process behavior, so LocMemCache is
-    exactly correct here, not just a workaround.
-
-    Explicitly cleared below, not just reassigned: LocMemCache's actual
-    storage is a process-global dict keyed by LOCATION (django/core/cache/
-    backends/locmem.py), shared by every backend instance pointed at the
-    same (here: default/unset) location — reassigning settings.CACHES alone
-    rebuilds the handler but not that underlying dict, so without an
-    explicit clear, throttle counts (and anything else cached) would leak
-    across test functions within one pytest session.
-    """
+    """Overrides CACHES to LocMemCache for tests (prod points it at Redis,
+    unreachable from host-run pytest). Explicit .clear() matters:
+    LocMemCache's storage is a process-global dict keyed by LOCATION, so
+    reassigning settings.CACHES alone doesn't reset it — throttle counts
+    would otherwise leak across test functions."""
     settings.CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
     from django.core.cache import cache
 

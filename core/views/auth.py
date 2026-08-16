@@ -133,9 +133,7 @@ class SignupView(APIView):
     """
 
     permission_classes = [AllowAny]
-    # SEC-004 — shares the "auth" scope (config/settings.py's
-    # DEFAULT_THROTTLE_RATES) with every other credential-guessing/spam
-    # target below, keyed per-IP since there's no user yet at signup time.
+    # Shared "auth" throttle scope (config/settings.py) — brute-force/spam guard.
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "auth"
 
@@ -164,8 +162,6 @@ class LoginView(APIView):
     """
 
     permission_classes = [AllowAny]
-    # SEC-004 — see SignupView's throttle comment above; this is the actual
-    # brute-force target the ticket calls out.
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "auth"
 
@@ -444,9 +440,8 @@ class PasswordResetRequestView(APIView):
     """
 
     permission_classes = [AllowAny]
-    # SEC-004 — without this, POST-ing someone else's email here in a loop
-    # floods them with reset emails (harassment + sender-reputation risk for
-    # the GMAIL_ADDRESS account) with no per-caller limit.
+    # Without this, looping this with someone else's email floods them with
+    # reset emails (harassment + sender-reputation risk).
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "auth"
 
@@ -527,9 +522,7 @@ class EmailVerificationRequestView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
-    # SEC-004 — same spam-email concern as PasswordResetRequestView; keyed
-    # per-user here (ScopedRateThrottle falls back to the authenticated
-    # user's pk once IsAuthenticated has already run) rather than per-IP.
+    # Keyed per-user, not per-IP, since the caller's already authenticated.
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "auth"
 

@@ -1,8 +1,4 @@
-"""
-Tests for the admin refresh/logout flow added to close SEC-009 (the admin
-bearer token used to have no way to be revoked or silently restored after
-a reload, which is why the frontend persisted it in sessionStorage).
-"""
+"""Tests for the admin refresh/logout flow (SEC-009)."""
 
 import pytest
 from django.contrib.auth.hashers import make_password
@@ -84,8 +80,7 @@ class TestAdminRefresh:
         first_refresh = client.post("/admin/auth/refresh/")
         assert first_refresh.status_code == 200
 
-        # Present the ORIGINAL (now-rotated-away) token again, simulating a
-        # stolen/replayed cookie or a second racing tab.
+        # Replay the rotated-away token (stolen cookie / racing tab).
         client.cookies[COOKIE_NAME] = old_cookie_value
         second_refresh = client.post("/admin/auth/refresh/")
 
@@ -93,16 +88,10 @@ class TestAdminRefresh:
         assert "already been used" in str(second_refresh.data).lower()
 
     def test_end_user_refresh_token_is_not_accepted_here(self, client, admin_user, db):
-        from django.contrib.auth.hashers import make_password as make_pw
-
         from core.models import User
 
         User.objects.create_user(email="enduser@example.com", password="x", name="X")
-        # Log in as an end user to get a real end-user refresh cookie under
-        # its OWN cookie name (refresh_token, not admin_refresh_token) —
-        # simulates someone manually copying that cookie's value into the
-        # admin cookie to see if the endpoint is naive about which credential
-        # space a token belongs to.
+        # Copy a real end-user refresh cookie into the admin cookie slot.
         end_user_login = client.post(
             "/auth/login/", {"email": "enduser@example.com", "password": "x"}, format="json"
         )
@@ -129,8 +118,6 @@ class TestAdminLogout:
         logout_resp = client.post("/admin/auth/logout/")
 
         assert logout_resp.status_code == 204
-        # jti extracted the same way AdminRefreshView/AdminLogoutView do,
-        # just to assert the row landed — not re-deriving the endpoint logic.
         import jwt as pyjwt
 
         payload = pyjwt.decode(refresh_value, options={"verify_signature": False})

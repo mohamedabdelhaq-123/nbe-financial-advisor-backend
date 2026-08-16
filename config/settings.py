@@ -172,12 +172,8 @@ REST_FRAMEWORK = {
     # paginated by default, matching every endpoint documented as
     # "Pagination: Offset" in the Data Shapes docs.
     "PAGE_SIZE": 20,
-    # Project-wide baseline (SEC-004) — every DRF view gets a rate limit by
-    # default, keyed per-IP for anonymous callers and per-user once
-    # authenticated. "auth" is a separate, much tighter scope opted into
-    # explicitly (throttle_classes/throttle_scope) by the handful of views
-    # a brute-force/spam attempt would actually target — signup, login,
-    # password-reset-request, email-verification-request, admin login.
+    # Project-wide rate limit, per-IP/per-user. "auth" is a tighter scope
+    # opted into explicitly by signup/login/password-reset/admin-login.
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.UserRateThrottle",
@@ -189,16 +185,8 @@ REST_FRAMEWORK = {
     },
 }
 
-# SEC-005 — an app-layer backstop independent of deploy/nginx.conf's
-# client_max_body_size 20m, which only caps the production topology (no
-# equivalent exists when the backend is reached directly, e.g. in dev).
-# Matches nginx's cap and core/serializers/statements.py's
-# MAX_STATEMENT_UPLOAD_BYTES so all three limits agree. Doesn't affect
-# individual uploaded *files* specifically (Django spools those to disk
-# past FILE_UPLOAD_MAX_MEMORY_SIZE regardless, left at Django's own
-# conservative 2.5MB default) — this caps the overall request body,
-# rejecting it outright above the limit rather than assuming any file
-# validation downstream will run first.
+# App-layer backstop independent of nginx's client_max_body_size (which
+# only applies in prod) — matches it and MAX_STATEMENT_UPLOAD_BYTES.
 DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024
 
 # rest_framework.W001 warns about PAGE_SIZE with no DEFAULT_PAGINATION_CLASS —
@@ -266,12 +254,8 @@ REFRESH_TOKEN_COOKIE_SECURE = not DEBUG
 REFRESH_TOKEN_COOKIE_SAMESITE = "Lax"
 REFRESH_TOKEN_COOKIE_MAX_AGE = int(SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"].total_seconds())
 
-# SEC-009 — admin credential space's own httpOnly refresh cookie, separate
-# name from REFRESH_TOKEN_COOKIE_NAME above so an admin login and an
-# end-user login in the same browser never overwrite each other's cookie
-# (both use path="/" — see core/views/administration.py's
-# _set_admin_refresh_cookie). Same Secure/SameSite/MaxAge attributes as the
-# end-user cookie; no reason for those to differ between the two spaces.
+# Separate cookie name from REFRESH_TOKEN_COOKIE_NAME so an admin login and
+# a user login in the same browser never overwrite each other's cookie.
 ADMIN_REFRESH_TOKEN_COOKIE_NAME = "admin_refresh_token"
 
 MIDDLEWARE = [
@@ -424,13 +408,8 @@ STORAGES = {
 # working default, same pattern as POSTGRES_HOST.
 REDIS_URL = env.str("REDIS_URL", "redis://redis:6379/0")
 
-# Backs DRF's rate-limiting throttle counters (REST_FRAMEWORK's
-# DEFAULT_THROTTLE_CLASSES above) — the default LocMemCache is per-process,
-# so with gunicorn's multiple worker processes (docker-compose.prod.yml's
-# --workers 2) each worker would count requests independently and the
-# configured rate would only be enforced ~1/workers as strictly. A separate
-# DB index (not REDIS_URL's) keeps cache traffic logically apart from
-# Celery's own broker queue data on the same Redis instance.
+# Backs DRF's throttle counters — LocMemCache is per-process, which
+# wouldn't count correctly across gunicorn's multiple workers.
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
