@@ -310,9 +310,15 @@ class BudgetProgressView(APIView):
                 transaction_type__in=["debit", "fee"],
             ).aggregate(t=Sum("amount"))["t"] or Decimal("0")
 
-            percentage_used = (
-                float(actual / alloc.allocated_amount * 100) if alloc.allocated_amount else 0.0
-            )
+            if alloc.allocated_amount:
+                percentage_used = float(actual / alloc.allocated_amount * 100)
+            elif actual:
+                # Zero allocation but money was still spent in this category —
+                # that's already over budget, not the untouched 0% a bare
+                # divide-by-zero guard would otherwise report.
+                percentage_used = 100.0
+            else:
+                percentage_used = 0.0
             if percentage_used >= 100:
                 category_status = "over_budget"
             elif percentage_used >= self.APPROACHING_LIMIT_THRESHOLD:
@@ -693,9 +699,15 @@ class DashboardView(APIView):
             actual = window_txns.filter(
                 category=alloc.category, transaction_type__in=["debit", "fee"]
             ).aggregate(t=Sum("amount"))["t"] or Decimal("0")
-            percentage_used = (
-                float(actual / alloc.allocated_amount * 100) if alloc.allocated_amount else 0.0
-            )
+            if alloc.allocated_amount:
+                percentage_used = float(actual / alloc.allocated_amount * 100)
+            elif actual:
+                # Zero allocation but money was still spent in this category —
+                # that's already over budget, not the untouched 0% a bare
+                # divide-by-zero guard would otherwise report.
+                percentage_used = 100.0
+            else:
+                percentage_used = 0.0
             allocations_summary.append(
                 {
                     "category": alloc.category.name,
