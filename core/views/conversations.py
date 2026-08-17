@@ -18,6 +18,7 @@ from core.serializers.conversations import (
     ConversationSerializer,
     MessageCreateSerializer,
     MessageSerializer,
+    MessageWidgetUpdateSerializer,
 )
 from core.tasks.conversations import generate_chat_reply
 from core.views.statements import create_statement_from_upload
@@ -157,6 +158,38 @@ class ConversationMessagesView(mixins.ListModelMixin, GenericAPIView):
         generate_chat_reply.delay(str(conversation.id), str(user_message.id))
 
         return Response(MessageSerializer(user_message).data, status=status.HTTP_202_ACCEPTED)
+
+
+class MessageWidgetView(APIView):
+    """
+    Overwrites the payload of an assistant message's already-attached
+    widget — lets the widget itself become the source of truth for its own
+    result once the user acts on it (e.g. AllocationSliderTool baking in the
+    confirmed allocations and a `confirmed: true` flag on submit), the same
+    way assistant-ui's `addResult` treats a renderer as authoritative over a
+    tool call's result. Without this, that confirmed state only ever lived
+    in the frontend's in-memory query cache and reverted to the model's
+    original proposal on a real page reload. Only `widget_json.payload` is
+    replaceable — `type` and every other message field are untouched.
+    """
+
+    @extend_schema(
+        request=MessageWidgetUpdateSerializer,
+        responses={200: MessageSerializer, **error_responses(404, 422)},
+    )
+    def patch(self, request, conversation_id, message_id):
+        conversation = get_object_or_404(Conversation, id=conversation_id, user=request.user)
+        message = get_object_or_404(
+            Message, id=message_id, conversation=conversation, sender="assistant"
+        )
+        if not message.widget_json:
+            raise ValidationError({"widget": "This message has no widget to update."})
+
+        serializer = MessageWidgetUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        message.widget_json["payload"] = serializer.validated_data["payload"]
+        message.save(update_fields=["widget_json"])
+        return Response(MessageSerializer(message).data)
 
 
 class ConversationAttachmentsView(APIView):

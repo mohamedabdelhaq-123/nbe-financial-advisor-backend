@@ -58,6 +58,13 @@ class MessageCreateSerializer(serializers.Serializer):
     content = serializers.CharField(max_length=CHAT_MESSAGE_MAX_LENGTH)
 
 
+class MessageWidgetUpdateSerializer(serializers.Serializer):
+    """PATCH .../messages/<id>/widget/ body — replaces just the widget's
+    payload, not its type."""
+
+    payload = serializers.JSONField()
+
+
 class WidgetSerializer(serializers.Serializer):
     type = serializers.CharField(allow_null=True)
     payload = serializers.JSONField(allow_null=True)
