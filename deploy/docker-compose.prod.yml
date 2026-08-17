@@ -65,6 +65,14 @@ services:
       # dev value (:5173) — explicit override here to the address nginx
       # actually serves the frontend on in this stack.
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
+      # Same reasoning as FRONTEND_URL above — GMAIL_*/DJANGO_CORS_ALLOWED_ORIGINS
+      # have no compose default, so without an explicit line here they'd
+      # silently fall back to whatever's baked into this image's own
+      # nbe-financial-advisor-backend/.env (Dockerfile's COPY . .) instead of
+      # this stack's --env-file.
+      GMAIL_ADDRESS: ${GMAIL_ADDRESS}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD}
+      DJANGO_CORS_ALLOWED_ORIGINS: ${DJANGO_CORS_ALLOWED_ORIGINS:-http://localhost:8080}
       AI_SERVICE_URL: http://ai-service:8001
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
       # Consumed by core/migrations/0009_grant_ai_readonly_role.py to
@@ -133,6 +141,9 @@ services:
       POSTGRES_PORT: 5432
       API_URL_PREFIX: /api
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
+      GMAIL_ADDRESS: ${GMAIL_ADDRESS}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD}
+      DJANGO_CORS_ALLOWED_ORIGINS: ${DJANGO_CORS_ALLOWED_ORIGINS:-http://localhost:8080}
       AI_SERVICE_URL: http://ai-service:8001
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
       AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-change-me-readonly-pass}
@@ -172,6 +183,14 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apppass}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
+      # See backend's own block above — GMAIL_*/DJANGO_CORS_ALLOWED_ORIGINS
+      # have no compose default, so this process (which also loads
+      # config.settings at import time) needs them wired explicitly too, or
+      # it'd silently fall back to whatever's baked into this image's own
+      # nbe-financial-advisor-backend/.env instead of this stack's --env-file.
+      GMAIL_ADDRESS: ${GMAIL_ADDRESS}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD}
+      DJANGO_CORS_ALLOWED_ORIGINS: ${DJANGO_CORS_ALLOWED_ORIGINS:-http://localhost:8080}
       AI_SERVICE_URL: http://ai-service:8001
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
       AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-change-me-readonly-pass}
