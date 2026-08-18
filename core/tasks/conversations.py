@@ -23,8 +23,9 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
     envelope: each "token" event is forwarded immediately as a chat_token SSE
     event (a genuine relay of the AI service's own stream, mock or real —
     see services/ai_service.py), then the terminal "done" event's content is
-    persisted as the assistant Message (+ its references) exactly as the old
-    inline code did, and published as one terminal chat_message event
+    persisted as the assistant Message (+ its references, + its follow-up
+    suggestions) exactly as the old inline code did, and published as one
+    terminal chat_message event
     carrying the same fields MessageDoneEventSerializer already documents,
     plus conversation_id since the connection is multiplexed across all of a
     user's conversations. An "error" event — or a request-level failure —
@@ -77,6 +78,7 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
         content=result["content"],
         stage="general",
         widget_json=result["widget"],
+        suggestions_json=result.get("suggestions") or [],
     )
     for ref in result["references"]:
         assistant_message.add_reference(ref["target_type"], ref["target_id"])
@@ -98,5 +100,6 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
                 {"target_type": r.target_type, "target_id": str(r.target_id)}
                 for r in assistant_message.references.all()
             ],
+            "suggestions": assistant_message.suggestions_json or [],
         },
     )

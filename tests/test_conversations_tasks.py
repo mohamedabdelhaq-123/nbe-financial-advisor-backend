@@ -53,6 +53,7 @@ def test_post_message_enqueues_reply_and_persists_assistant_message(
     assert messages[0].sender == "user"
     assert messages[1].sender == "assistant"
     assert messages[1].content  # the mock's canned reply, non-empty
+    assert messages[1].suggestions_json  # the mock's canned suggestions, non-empty
 
 
 def test_post_message_mentioning_budget_produces_allocation_widget(

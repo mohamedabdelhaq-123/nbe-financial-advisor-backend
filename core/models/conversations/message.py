@@ -22,6 +22,11 @@ class Message(models.Model):
     # only ever present in the live SSE response. Added here as the smallest
     # schema change that satisfies the documented contract.
     widget_json = models.JSONField(blank=True, null=True)
+    # Up to 3 follow-up prompt suggestions the AI service generated alongside
+    # this reply (see widget_json above for the same "persist, don't just
+    # stream" rationale) — null on user messages and on any assistant message
+    # from before this field existed.
+    suggestions_json = models.JSONField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

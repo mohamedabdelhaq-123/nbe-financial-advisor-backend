@@ -212,7 +212,8 @@ def test_stream_chat_mock_yields_token_events_then_one_done_event(client, user):
     assert [e["event"] for e in envelopes[:-1]] == ["token"] * len(envelopes[:-1])
     assert envelopes[-1]["event"] == "done"
     done_data = envelopes[-1]["data"]
-    assert set(done_data) == {"content", "widget", "references"}
+    assert set(done_data) == {"content", "widget", "references", "suggestions"}
+    assert done_data["suggestions"]
 
 
 def test_stream_chat_mock_budget_keyword_produces_allocation_widget(client, user):
@@ -534,6 +535,7 @@ def test_stream_chat_real_parses_sse_envelope(real_client, monkeypatch):
         "content": "Hi there",
         "widget": {"type": None, "payload": None},
         "references": [],
+        "suggestions": ["What did I spend this week?", "Show my budget", "Any tips for me?"],
     }
     lines = [
         'data: {"event": "token", "data": "Hi "}',
