@@ -12,6 +12,8 @@ from datetime import date
 from celery import shared_task
 
 from core.models import AnomalyFlag, BankAccount, Transaction
+from core.models.categories.merchant_keywords import guess_category_from_merchant
+from core.models.categories.resolution import resolve_category
 from services import ai_service, event_bus, notification_service
 
 
@@ -50,6 +52,8 @@ def ingest_synced_transactions(bank_account_id: str, transactions: list[dict]) -
             account.user_id, account.id, transaction_date, txn["amount"], txn.get("merchant_raw")
         ):
             continue
+        merchant_raw = txn.get("merchant_raw")
+        transaction_type = txn.get("transaction_type")
         created.append(
             Transaction.objects.create(
                 user=account.user,
@@ -57,9 +61,17 @@ def ingest_synced_transactions(bank_account_id: str, transactions: list[dict]) -
                 source="synced",
                 currency=txn.get("currency") or account.currency,
                 transaction_date=transaction_date,
-                merchant_raw=txn.get("merchant_raw"),
+                merchant_raw=merchant_raw,
+                # No LLM pass runs over synced transactions the way it does
+                # for statement ones — guess_category_from_merchant() is this
+                # path's substitute source of a raw category guess, resolved
+                # the same way an LLM's guess would be.
+                category=resolve_category(
+                    guess_category_from_merchant(merchant_raw, transaction_type),
+                    transaction_type,
+                ),
                 amount=txn["amount"],
-                transaction_type=txn.get("transaction_type"),
+                transaction_type=transaction_type,
                 balance=txn.get("balance"),
             )
         )

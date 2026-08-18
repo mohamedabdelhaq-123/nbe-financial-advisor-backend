@@ -36,13 +36,30 @@ def _generate_account_number() -> str:
     return "".join(str(random.randint(0, 9)) for _ in range(_ACCOUNT_NUMBER_DIGITS))
 
 
-_SAMPLE_MERCHANTS = [
+_EXPENSE_MERCHANTS = [
     "Carrefour",
     "Talabat",
     "Uber",
     "Vodafone",
     "Amazon.eg",
     "Cairo Metro",
+]
+# Income-side merchant names, grouped by what they actually represent
+# (payroll, freelance work, an incoming transfer) rather than drawn from the
+# same pool as the expense merchants above — a random "Carrefour" credit
+# reads as nonsense, and the Django side's categorizer
+# (core/models/categories/merchant_keywords.py) would resolve it to an
+# expense category (food) despite the money coming in. Picking the merchant
+# from the pool that matches the chosen direction keeps every simulated
+# transaction internally consistent.
+_INCOME_MERCHANTS = [
+    "ACME Corp Payroll",
+    "Nile Software Payroll",
+    "Cairo Consulting Salary",
+    "Freelance Client Payment",
+    "Upwork Freelance Payout",
+    "Bank Transfer",
+    "Family Transfer",
 ]
 _SAMPLE_TRANSACTION_TYPES = ["debit", "credit"]
 
@@ -95,14 +112,18 @@ def simulate_transaction(body: SimulateTransactionRequest, db: Session = Depends
             )
         account = random.choice(candidates)
 
-    # 2. Insert the new transaction into the mock ledger.
+    # 2. Insert the new transaction into the mock ledger. Direction is
+    # decided first so the merchant (when not caller-supplied) is drawn from
+    # the pool that actually matches it — see _INCOME_MERCHANTS above.
+    transaction_type = body.transaction_type or random.choice(_SAMPLE_TRANSACTION_TYPES)
+    merchant_pool = _INCOME_MERCHANTS if transaction_type == "credit" else _EXPENSE_MERCHANTS
     transaction = MockTransaction(
         id=uuid.uuid4(),
         account_id=account.id,
         transaction_date=body.transaction_date or datetime.now(timezone.utc),
-        merchant=body.merchant or random.choice(_SAMPLE_MERCHANTS),
+        merchant=body.merchant or random.choice(merchant_pool),
         amount=body.amount if body.amount is not None else _random_amount(),
-        transaction_type=body.transaction_type or random.choice(_SAMPLE_TRANSACTION_TYPES),
+        transaction_type=transaction_type,
         balance=None,
     )
     db.add(transaction)
