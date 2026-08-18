@@ -7,6 +7,12 @@ TransactionDetailView.patch/delete.
 
 A manual-account counterpart is asserted for each, to confirm this doesn't
 regress the pre-existing manual-account write flow.
+
+TransactionDetailView.patch is the one call site that ISN'T a flat
+assert_account_mutable() gate: a synced transaction stays patchable for
+`category`/`is_recurring` specifically (see
+test_patch_synced_transaction_category_allowed and friends below) — every
+other field, and DELETE outright, are still fully blocked.
 """
 
 import pytest
@@ -197,11 +203,40 @@ def test_manual_entry_against_manual_account_still_allowed(client, manual_accoun
 # ============================================================================
 
 
-def test_patch_transaction_on_synced_account_rejected(client, synced_transaction):
+def test_patch_synced_transaction_category_allowed(client, synced_transaction):
     response = client.patch(f"/transactions/{synced_transaction.id}/", {"category": "food"})
-    _assert_read_only_422(response)
+    assert response.status_code == 200
+    synced_transaction.refresh_from_db()
+    assert synced_transaction.category.name == "food"
+
+
+def test_patch_synced_transaction_is_recurring_allowed(client, synced_transaction):
+    response = client.patch(f"/transactions/{synced_transaction.id}/", {"is_recurring": True})
+    assert response.status_code == 200
+    synced_transaction.refresh_from_db()
+    assert synced_transaction.is_recurring is True
+
+
+def test_patch_synced_transaction_other_field_rejected(client, synced_transaction):
+    response = client.patch(f"/transactions/{synced_transaction.id}/", {"amount": "999.00"})
+    assert response.status_code == 422
+    assert response.data["error"]["code"] == "synced_transaction_limited_edit"
+    synced_transaction.refresh_from_db()
+    assert str(synced_transaction.amount) == "150.00"
+
+
+def test_patch_synced_transaction_mixed_payload_rejected_entirely(client, synced_transaction):
+    # category is allowed on its own, but paired with a disallowed field the
+    # whole request is rejected rather than applying the allowed half.
+    response = client.patch(
+        f"/transactions/{synced_transaction.id}/",
+        {"category": "food", "merchant_raw": "Renamed"},
+    )
+    assert response.status_code == 422
+    assert response.data["error"]["code"] == "synced_transaction_limited_edit"
     synced_transaction.refresh_from_db()
     assert synced_transaction.category is None
+    assert synced_transaction.merchant_raw == "Carrefour"
 
 
 def test_delete_transaction_on_synced_account_rejected(client, synced_transaction):

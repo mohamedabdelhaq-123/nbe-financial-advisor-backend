@@ -39,6 +39,7 @@ from core.serializers.aggregations import (
     RecurringChargeSerializer,
     SpendingPatternInsightSerializer,
     StabilityScoreResponseSerializer,
+    SyncedTransactionPatchSerializer,
     TransactionCreateRequestSerializer,
     TransactionDetailSerializer,
     TransactionListSerializer,
@@ -157,10 +158,15 @@ class TransactionDetailView(mixins.RetrieveModelMixin, mixins.DestroyModelMixin,
     PATCH only accepts a restricted field subset (`category`, `merchant_raw`,
     `amount`, `transaction_date`, `transaction_type`, `is_recurring`) —
     `account_id` and `source` are deliberately not patchable, since changing either would
-    misrepresent where the transaction actually came from. Built from
-    Retrieve+Destroy mixins directly (not RetrieveUpdateDestroyAPIView)
-    because PATCH's input shape genuinely differs from GET's response
-    shape, rather than being a partial version of it.
+    misrepresent where the transaction actually came from. A synced
+    (source="synced") transaction is restricted further, to just `category`/
+    `is_recurring` — every other field mirrors the bank's own record, which
+    the user can't override — and skips assert_account_mutable() entirely
+    (see patch() below), since that would otherwise block the two fields that
+    ARE meant to be user-editable. Built from Retrieve+Destroy mixins
+    directly (not RetrieveUpdateDestroyAPIView) because PATCH's input shape
+    genuinely differs from GET's response shape, rather than being a partial
+    version of it.
     """
 
     serializer_class = TransactionDetailSerializer
@@ -182,8 +188,24 @@ class TransactionDetailView(mixins.RetrieveModelMixin, mixins.DestroyModelMixin,
     )
     def patch(self, request, *args, **kwargs):
         instance = self.get_object()
-        assert_account_mutable(instance.account)
-        serializer = TransactionPatchSerializer(instance, data=request.data, partial=True)
+        if instance.source == "synced":
+            # Deliberately does NOT call assert_account_mutable() — that
+            # would block category/is_recurring too, the two fields a synced
+            # transaction is meant to stay editable for. Any other field in
+            # the payload is rejected outright rather than silently ignored,
+            # so a client relying on the general PATCH shape finds out
+            # immediately rather than having its edit quietly no-op.
+            disallowed_fields = set(request.data) - {"category", "is_recurring"}
+            if disallowed_fields:
+                raise BusinessRuleError(
+                    "Synced transactions only allow editing category and recurring status.",
+                    code="synced_transaction_limited_edit",
+                    fields={"fields": sorted(disallowed_fields)},
+                )
+            serializer = SyncedTransactionPatchSerializer(instance, data=request.data, partial=True)
+        else:
+            assert_account_mutable(instance.account)
+            serializer = TransactionPatchSerializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(TransactionDetailSerializer(instance).data)

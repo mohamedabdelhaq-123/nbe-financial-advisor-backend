@@ -119,6 +119,22 @@ class TransactionPatchSerializer(serializers.ModelSerializer):
         ]
 
 
+class SyncedTransactionPatchSerializer(TransactionPatchSerializer):
+    """PATCH /transactions/{id} for a synced (source="synced") transaction.
+
+    Every other field describes the bank's own record of the transaction, so
+    letting a user edit it would just make the ledger disagree with the
+    account it's supposed to mirror — only `category` and `is_recurring` are
+    genuinely the user's call. Reuses TransactionPatchSerializer's `category`
+    field as-is (same declared field, still a full ModelSerializer subclass —
+    just a smaller Meta.fields subset), so the two never validate `category`
+    differently.
+    """
+
+    class Meta(TransactionPatchSerializer.Meta):
+        fields = ["category", "is_recurring"]
+
+
 class AnomalyFlagSerializer(serializers.ModelSerializer):
     transaction_id = serializers.PrimaryKeyRelatedField(source="transaction", read_only=True)
     account_id = serializers.PrimaryKeyRelatedField(source="account", read_only=True)
