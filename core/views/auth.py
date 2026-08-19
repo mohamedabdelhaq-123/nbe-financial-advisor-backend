@@ -12,6 +12,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework_simplejwt.settings import api_settings as simplejwt_settings
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -31,6 +32,7 @@ from core.serializers.auth import (
     SignupSerializer,
     TokenPairResponseSerializer,
 )
+from core.tasks.notifications import send_password_reset_email
 from services import bank_login_states, link_tickets, notification_service
 from services.bank_connectors import BankConnectorError, get_connector
 from services.bank_connectors.sync import apply_synced_accounts
@@ -415,16 +417,55 @@ class BankLoginCallbackView(APIView):
         return _token_pair_response(user, status.HTTP_201_CREATED)
 
 
-def _blacklist_all_outstanding_tokens(user):
+def _blacklist_all_outstanding_tokens(user, exclude_jti=None):
     """
     Invalidates every refresh token ever issued to this user, not just the
     one in the current request's cookie (LogoutView only blacklists that
-    one) — a password reset should end every other session too, in case the
-    password was compromised and a stale refresh token is still live
-    somewhere.
+    one) — used by a password reset (should end every other session too, in
+    case the password was compromised and a stale refresh token is still
+    live somewhere) and by LogoutAllDevicesView ("log out of all other
+    devices" — there, `exclude_jti` is set to the caller's own current
+    refresh token so the session that requested this doesn't get logged out
+    too).
     """
-    for outstanding in OutstandingToken.objects.filter(user=user):
-        BlacklistedToken.objects.get_or_create(token=outstanding)
+    outstanding = OutstandingToken.objects.filter(user=user)
+    if exclude_jti:
+        outstanding = outstanding.exclude(jti=exclude_jti)
+    for token in outstanding:
+        BlacklistedToken.objects.get_or_create(token=token)
+
+
+class LogoutAllDevicesView(APIView):
+    """
+    Ends every OTHER session for the current user — blacklists every
+    outstanding refresh token except the one behind this request's own
+    cookie (identified by its `jti` claim), so the device that asked for
+    this stays signed in. If the current cookie is missing or unreadable,
+    there's nothing to exclude, so every session (including this one) ends
+    up blacklisted — a safe fallback, not a special case to guard against.
+
+    Unlike LogoutView, this doesn't clear the caller's own cookie or
+    require one to be present — it's callable from an authenticated session
+    that only has a live access token (e.g. right after signing in
+    elsewhere and this session's refresh cookie hasn't been re-issued yet).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=None,
+        responses={204: None, **error_responses(401)},
+    )
+    def post(self, request):
+        current_jti = None
+        refresh_token = request.COOKIES.get(settings.REFRESH_TOKEN_COOKIE_NAME)
+        if refresh_token:
+            try:
+                current_jti = RefreshToken(refresh_token)[simplejwt_settings.JTI_CLAIM]
+            except TokenError:
+                pass
+        _blacklist_all_outstanding_tokens(request.user, exclude_jti=current_jti)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class PasswordResetRequestView(APIView):
@@ -434,6 +475,14 @@ class PasswordResetRequestView(APIView):
     same enumeration-avoidance reasoning as LoginView's generic error
     message. If it does match, emails a one-time reset link (best-effort;
     see PasswordResetConfirmView for what that link contains).
+
+    The send itself happens off-request, via
+    core.tasks.notifications.send_password_reset_email — inline sending
+    would make the "match" branch measurably slower than the "no match"
+    one (an SMTP round-trip vs. nothing), which leaks account existence
+    through response timing even though both branches return the same 202.
+    Dispatching a Celery task keeps both branches doing the same fast,
+    constant-time work: either nothing, or an enqueue.
 
     Not for AdminUser or bank-linked accounts — see core/auth_tokens.py and
     PLAN.md Checkpoint 5's scope note.
@@ -456,20 +505,7 @@ class PasswordResetRequestView(APIView):
         if user is not None:
             token = password_reset_token_generator.make_token(user)
             link = _reset_password_link(user, token)
-            try:
-                notification_service.send_email(
-                    user.email,
-                    "Reset your password",
-                    "Reset your password by visiting the link below:\n\n"
-                    f"{link}\n\n"
-                    "If you didn't request this, you can ignore this email.",
-                    html_body=render_to_string("emails/reset_password.html", {"link": link}),
-                )
-            except notification_service.NotificationServiceError:
-                # Same reasoning as every other best-effort send in this
-                # file — and doubly so here: a visible failure would also
-                # leak whether `email` matched a real account.
-                pass
+            send_password_reset_email.delay(user.email, link)
         return Response(status=status.HTTP_202_ACCEPTED)
 
 

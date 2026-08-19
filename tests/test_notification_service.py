@@ -23,6 +23,23 @@ def test_send_email_happy_path():
     assert sent.body == "123456"
 
 
+def test_send_email_with_attachment():
+    notification_service.send_email(
+        "customer@example.com",
+        "Your data export",
+        "See attached.",
+        attachments=[("export.json", b'{"a": 1}', "application/json")],
+    )
+
+    assert len(mail.outbox) == 1
+    sent = mail.outbox[0]
+    assert len(sent.attachments) == 1
+    filename, content, mimetype = sent.attachments[0]
+    assert filename == "export.json"
+    assert content == b'{"a": 1}'
+    assert mimetype == "application/json"
+
+
 def test_send_email_raises_notification_service_error_on_smtp_failure(monkeypatch):
     def _raise(*args, **kwargs):
         raise SMTPException("connection refused")
