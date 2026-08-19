@@ -194,8 +194,11 @@ class BudgetView(APIView):
             "yet — POST /budget creates it first). If `allocations` is "
             "included, it fully replaces the existing category set rather "
             "than merging with it, and must still sum to 100 (422 "
-            "otherwise). Every change is snapshotted into GET /budget/history "
-            "before being applied."
+            "otherwise). `selected_template_key` can be changed independently "
+            "(or alongside `allocations`, e.g. switching to a different "
+            "starter template) — it's just recorded, not cross-validated "
+            "against GET /budget/starter-templates. Every change is "
+            "snapshotted into GET /budget/history before being applied."
         ),
         request=BudgetUpdateSerializer,
         responses={200: BudgetResponseSerializer, **error_responses(404, 422)},
@@ -217,6 +220,8 @@ class BudgetView(APIView):
 
         if "name" in data:
             budget.name = data["name"]
+        if "selected_template_key" in data:
+            budget.selected_template_key = data["selected_template_key"]
         budget.save()
 
         if "allocations" in data:

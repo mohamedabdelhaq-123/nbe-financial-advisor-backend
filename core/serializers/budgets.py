@@ -75,6 +75,15 @@ class BudgetUpdateSerializer(serializers.Serializer):
 
     name = serializers.CharField(max_length=255, required=False)
     allocations = AllocationInputSerializer(many=True, required=False)
+    # Lets a user switch which starter template their plan is based on (e.g.
+    # "Change plan template" on the dashboard) — same convention as
+    # BudgetCreateSerializer's field: the frontend resolves the template's
+    # allocations client-side (from GET /budget/starter-templates, same as
+    # onboarding) and sends both together, so this is just recorded, not
+    # cross-validated against the reference-data store.
+    selected_template_key = serializers.CharField(
+        max_length=50, required=False, allow_null=True
+    )
     # "chat", not "chat_hitl" — the chat allocation-confirmation widget
     # (AllocationSliderTool on the frontend) sends changed_via: "chat"; that
     # was previously rejected here since "chat_hitl" (never sent by any real
@@ -169,6 +178,52 @@ class StarterTemplateSerializer(serializers.Serializer):
     description = serializers.CharField()
     is_suggested = serializers.BooleanField()
     allocations = StarterTemplateAllocationSerializer(many=True)
+
+
+# ---------------------------------------------------------------------------
+# Admin write shapes for /admin/onboarding-templates — see
+# core/views/administration.py's AdminOnboardingTemplateListCreateView/
+# AdminOnboardingTemplateDetailView. Same category/percentage validation as
+# a real budget's allocations (AllocationInputSerializer above), just against
+# reference-data JSON objects (services/file_storage.py) instead of a
+# BudgetAllocation row.
+# ---------------------------------------------------------------------------
+
+
+class AdminTemplateAllocationInputSerializer(serializers.Serializer):
+    category = serializers.SlugRelatedField(
+        slug_field="name", queryset=Category.objects.filter(category_type="expense")
+    )
+    allocated_percentage = serializers.DecimalField(max_digits=5, decimal_places=2)
+
+
+class AdminTemplateCreateSerializer(serializers.Serializer):
+    # SlugField (not CharField) since template_key doubles as the JSON
+    # object's filename (services/file_storage.py's
+    # _onboarding_template_key()) — restricting it to letters/digits/
+    # hyphens/underscores up front means a create can never produce a key
+    # that isn't a safe, unambiguous S3 object key.
+    template_key = serializers.SlugField(max_length=50)
+    name = serializers.CharField(max_length=255)
+    description = serializers.CharField(allow_blank=True, required=False, default="")
+    allocations = AdminTemplateAllocationInputSerializer(many=True)
+
+    def validate_allocations(self, allocations):
+        return _validate_allocations_sum_100(allocations)
+
+
+class AdminTemplateUpdateSerializer(serializers.Serializer):
+    """PATCH body — every field optional; `template_key` is never
+    reassignable (it's the object's identity/filename), and `allocations`,
+    if present, fully replaces the existing set rather than merging with it,
+    same convention as BudgetUpdateSerializer."""
+
+    name = serializers.CharField(max_length=255, required=False)
+    description = serializers.CharField(allow_blank=True, required=False)
+    allocations = AdminTemplateAllocationInputSerializer(many=True, required=False)
+
+    def validate_allocations(self, allocations):
+        return _validate_allocations_sum_100(allocations)
 
 
 class DashboardBudgetSerializer(serializers.Serializer):

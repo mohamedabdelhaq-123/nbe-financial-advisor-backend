@@ -3,10 +3,11 @@ One-time seed for pfm-reference-data/onboarding-templates/*.json
 (File_System_Structure.md §4) — the 3 starter templates backing
 GET /budget/starter-templates (services/file_storage.py::get_onboarding_templates).
 
-Skips any template that already exists rather than overwriting it: reference
-data is edited out-of-band by whoever owns it (File_System_Structure.md §4 —
-"read-only from the application's perspective at request time"), so a rerun
-of this command must never clobber a team member's manual edit.
+Skips any template that already exists rather than overwriting it: these are
+now editable through the admin panel (POST/PATCH/DELETE
+/admin/onboarding-templates, core/views/administration.py), so a rerun of
+this command must never clobber an admin's edit with the hardcoded starter
+values below.
 """
 
 import json

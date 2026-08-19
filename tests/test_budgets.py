@@ -96,6 +96,41 @@ class TestChangedVia:
         assert latest.changed_via == "dashboard"
 
 
+class TestSelectedTemplateKey:
+    """PATCH /budget's `selected_template_key` — lets a user switch which
+    starter template their plan is recorded as based on (e.g. the dashboard's
+    "Change plan template" action), independent of or alongside changing
+    `allocations`."""
+
+    def test_updating_selected_template_key_alone(self, client, existing_budget, food):
+        resp = client.patch(
+            "/budget/", {"selected_template_key": "aggressive_savings"}, format="json"
+        )
+        assert resp.status_code == 200
+        assert resp.data["selected_template_key"] == "aggressive_savings"
+        # allocations untouched by a selected_template_key-only update.
+        assert resp.data["allocations"][0]["category"] == "food"
+
+    def test_updating_selected_template_key_alongside_allocations(
+        self, client, existing_budget, food
+    ):
+        resp = client.patch(
+            "/budget/",
+            {
+                "selected_template_key": "comfortable",
+                "allocations": [{"category": "food", "allocated_percentage": "100.00"}],
+            },
+            format="json",
+        )
+        assert resp.status_code == 200
+        assert resp.data["selected_template_key"] == "comfortable"
+
+    def test_selected_template_key_can_be_cleared(self, client, existing_budget, food):
+        resp = client.patch("/budget/", {"selected_template_key": None}, format="json")
+        assert resp.status_code == 200
+        assert resp.data["selected_template_key"] is None
+
+
 class TestBudgetChangeEmail:
     def test_patch_emails_the_user(self, client, user, existing_budget, food):
         mail.outbox.clear()
