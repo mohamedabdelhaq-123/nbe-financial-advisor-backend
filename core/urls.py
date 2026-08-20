@@ -197,9 +197,7 @@ urlpatterns = [
     path("admin/products/<uuid:product_id>/", AdminProductDetailView.as_view()),
     path("admin/categories/", AdminCategoryListCreateView.as_view()),
     path("admin/categories/<uuid:category_id>/", AdminCategoryDetailView.as_view()),
-    path(
-        "admin/onboarding-templates/", AdminOnboardingTemplateListCreateView.as_view()
-    ),
+    path("admin/onboarding-templates/", AdminOnboardingTemplateListCreateView.as_view()),
     path(
         "admin/onboarding-templates/<slug:template_key>/",
         AdminOnboardingTemplateDetailView.as_view(),

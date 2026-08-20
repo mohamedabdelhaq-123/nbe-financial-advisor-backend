@@ -411,7 +411,10 @@ class AdminOnboardingTemplateListCreateView(AdminAuthMixin, APIView):
             "name": data["name"],
             "description": data.get("description", ""),
             "allocations": [
-                {"category": a["category"].name, "allocated_percentage": float(a["allocated_percentage"])}
+                {
+                    "category": a["category"].name,
+                    "allocated_percentage": float(a["allocated_percentage"]),
+                }
                 for a in data["allocations"]
             ],
         }
@@ -447,7 +450,10 @@ class AdminOnboardingTemplateDetailView(AdminAuthMixin, APIView):
             template["description"] = data["description"]
         if "allocations" in data:
             template["allocations"] = [
-                {"category": a["category"].name, "allocated_percentage": float(a["allocated_percentage"])}
+                {
+                    "category": a["category"].name,
+                    "allocated_percentage": float(a["allocated_percentage"]),
+                }
                 for a in data["allocations"]
             ]
 

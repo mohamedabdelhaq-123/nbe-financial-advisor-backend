@@ -27,9 +27,9 @@ def _gather_user_data(user) -> dict:
             "email": user.email,
             "phone": user.phone,
             "employment_status": user.employment_status,
-            "monthly_income": float(user.monthly_income)
-            if user.monthly_income is not None
-            else None,
+            "monthly_income": (
+                float(user.monthly_income) if user.monthly_income is not None else None
+            ),
             "income_steadiness": user.income_steadiness,
             "dependents_count": user.dependents_count,
             "created_at": user.created_at.isoformat(),

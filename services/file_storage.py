@@ -189,6 +189,4 @@ def delete_onboarding_template(template_key: str) -> None:
     delete path. A no-op (not an error) if it's already gone."""
     storage = _STORAGE_BY_BUCKET["pfm-reference-data"]
     client = storage.connection.meta.client
-    client.delete_object(
-        Bucket=storage.bucket_name, Key=_onboarding_template_key(template_key)
-    )
+    client.delete_object(Bucket=storage.bucket_name, Key=_onboarding_template_key(template_key))

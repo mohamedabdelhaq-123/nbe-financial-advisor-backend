@@ -12,7 +12,15 @@ import pytest
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from core.models import Budget, BudgetAllocation, Category, Conversation, ConsentRecord, Message, User
+from core.models import (
+    Budget,
+    BudgetAllocation,
+    Category,
+    ConsentRecord,
+    Conversation,
+    Message,
+    User,
+)
 from core.tasks.conversations import generate_chat_reply
 from services import ai_service
 

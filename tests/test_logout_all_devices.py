@@ -53,7 +53,9 @@ class TestLogoutAllDevices:
     def test_no_cookie_still_blacklists_every_session(self, db):
         # No current-device token to identify/exclude — safe fallback is to
         # blacklist everything rather than guess.
-        user = User.objects.create_user(email="no-cookie-device@example.com", password="x", name="X")
+        user = User.objects.create_user(
+            email="no-cookie-device@example.com", password="x", name="X"
+        )
         device_a = RefreshToken.for_user(user)
         device_b = RefreshToken.for_user(user)
 

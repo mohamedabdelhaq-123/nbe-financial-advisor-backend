@@ -81,9 +81,7 @@ class BudgetUpdateSerializer(serializers.Serializer):
     # allocations client-side (from GET /budget/starter-templates, same as
     # onboarding) and sends both together, so this is just recorded, not
     # cross-validated against the reference-data store.
-    selected_template_key = serializers.CharField(
-        max_length=50, required=False, allow_null=True
-    )
+    selected_template_key = serializers.CharField(max_length=50, required=False, allow_null=True)
     # "chat", not "chat_hitl" — the chat allocation-confirmation widget
     # (AllocationSliderTool on the frontend) sends changed_via: "chat"; that
     # was previously rejected here since "chat_hitl" (never sent by any real

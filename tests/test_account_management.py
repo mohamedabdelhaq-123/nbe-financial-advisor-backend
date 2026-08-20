@@ -75,7 +75,9 @@ class TestDataExport:
             allocated_percentage="100.00",
             allocated_amount="10000.00",
         )
-        Goal.objects.create(user=user, name="Emergency fund", target_amount="5000.00", timeline_months=6)
+        Goal.objects.create(
+            user=user, name="Emergency fund", target_amount="5000.00", timeline_months=6
+        )
         ConsentRecord.objects.create(user=user, consent_type="terms", policy_version="v1")
 
         resp = _client(user).post("/users/me/data-export/")
