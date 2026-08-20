@@ -9,18 +9,26 @@ reply only exists once you look at persisted Message rows afterward.
 """
 
 import pytest
+from django.utils import timezone
 from rest_framework.test import APIClient
 
-from core.models import Budget, BudgetAllocation, Category, Conversation, Message, User
+from core.models import Budget, BudgetAllocation, Category, Conversation, ConsentRecord, Message, User
 from core.tasks.conversations import generate_chat_reply
 from services import ai_service
 
 
 @pytest.fixture
 def user(db):
-    return User.objects.create_user(
+    user = User.objects.create_user(
         email="conversations-test@example.com", password="x", name="Conversations Test"
     )
+    # Sending a message requires data_processing consent (core/permissions.py's
+    # HasDataProcessingConsent) — granted here to match what onboarding does
+    # for a real signup, so these tests exercise the normal-consent path.
+    ConsentRecord.objects.create(
+        user=user, consent_type="data_processing", policy_version="v2.0", granted_at=timezone.now()
+    )
+    return user
 
 
 @pytest.fixture

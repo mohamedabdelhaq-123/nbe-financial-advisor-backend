@@ -31,9 +31,10 @@ from unittest.mock import Mock
 
 import pytest
 from celery.exceptions import Retry
+from django.utils import timezone
 from rest_framework.test import APIClient
 
-from core.models import StatementFile, User
+from core.models import ConsentRecord, StatementFile, User
 from core.tasks import statements as statements_module
 from core.tasks.statements import (
     MAX_POLL_ATTEMPTS,
@@ -45,9 +46,16 @@ from services.ai_service import AIServiceError
 
 @pytest.fixture
 def user(db):
-    return User.objects.create_user(
+    user = User.objects.create_user(
         email="statements-test@example.com", password="x", name="Statements Test"
     )
+    # Uploading requires data_processing consent (core/permissions.py's
+    # HasDataProcessingConsent) — granted here to match what onboarding does
+    # for a real signup, so these tests exercise the normal-consent path.
+    ConsentRecord.objects.create(
+        user=user, consent_type="data_processing", policy_version="v2.0", granted_at=timezone.now()
+    )
+    return user
 
 
 @pytest.fixture

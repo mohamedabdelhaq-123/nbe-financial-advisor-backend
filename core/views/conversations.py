@@ -5,12 +5,14 @@ from rest_framework import generics, mixins, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import GenericAPIView
 from rest_framework.pagination import CursorPagination, LimitOffsetPagination
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.filters.conversations import ConversationFilterSet, MessageFilterSet
 from core.models import Conversation, Message
 from core.openapi import error_responses
+from core.permissions import HasDataProcessingConsent
 from core.serializers.conversations import (
     ConversationAttachmentRequestSerializer,
     ConversationAttachmentResponseSerializer,
@@ -111,6 +113,15 @@ class ConversationMessagesView(mixins.ListModelMixin, GenericAPIView):
     filter_backends = [DjangoFilterBackend]
     filterset_class = MessageFilterSet
 
+    def get_permissions(self):
+        # Sending a message hands new content to the AI service; reading
+        # past messages doesn't process anything new — only the former
+        # needs the consent gate.
+        permissions = super().get_permissions()
+        if self.request.method == "POST":
+            permissions.append(HasDataProcessingConsent())
+        return permissions
+
     def _get_conversation(self, request, conversation_id):
         return get_object_or_404(Conversation, id=conversation_id, user=request.user)
 
@@ -133,7 +144,7 @@ class ConversationMessagesView(mixins.ListModelMixin, GenericAPIView):
 
     @extend_schema(
         request=MessageCreateSerializer,
-        responses={202: MessageSerializer, **error_responses(404, 422)},
+        responses={202: MessageSerializer, **error_responses(403, 404, 422)},
     )
     def post(self, request, conversation_id):
         conversation = self._get_conversation(request, conversation_id)
@@ -203,9 +214,12 @@ class ConversationAttachmentsView(APIView):
     from.
     """
 
+    # Same OCR entry point as StatementListCreateView's POST — same consent gate.
+    permission_classes = [IsAuthenticated, HasDataProcessingConsent]
+
     @extend_schema(
         request=ConversationAttachmentRequestSerializer,
-        responses={202: ConversationAttachmentResponseSerializer, **error_responses(404, 422)},
+        responses={202: ConversationAttachmentResponseSerializer, **error_responses(403, 404, 422)},
     )
     def post(self, request, conversation_id):
         conversation = get_object_or_404(Conversation, id=conversation_id, user=request.user)
