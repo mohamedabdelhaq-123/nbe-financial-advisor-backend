@@ -335,6 +335,23 @@ DATABASES = {
 }
 
 
+# Password hashing
+# https://docs.djangoproject.com/en/6.0/topics/auth/passwords/#using-argon2-with-django
+#
+# Argon2id first: memory-hard (expensive to parallelize on GPU/ASIC), unlike
+# the CPU-only-hard PBKDF2 Django defaults to. The rest of Django's default
+# list stays behind it so any password already hashed with one of them still
+# verifies — Django transparently re-hashes to Argon2 on that user's next
+# successful login, no migration needed.
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.Argon2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+    "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
+    "django.contrib.auth.hashers.ScryptPasswordHasher",
+]
+
+
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
 
