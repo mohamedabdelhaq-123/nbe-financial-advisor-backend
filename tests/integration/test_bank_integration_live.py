@@ -95,6 +95,7 @@ def mock_customer():
         json={
             "customer_bank_id": customer_bank_id,
             "email": "integration-test-customer@example.com",
+            "phone": "+201001234567",
             "name": "Integration Test Customer",
         },
         timeout=_REQUEST_TIMEOUT_SECONDS,

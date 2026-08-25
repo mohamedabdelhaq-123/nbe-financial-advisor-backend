@@ -72,9 +72,32 @@ _STYLE = """
     font-size: 1rem;
     font-weight: 600;
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.55rem;
   }
-  button:hover {
+  button:hover:not(:disabled) {
     background: #f57c00;
+  }
+  button:disabled {
+    cursor: wait;
+    opacity: 0.78;
+  }
+  .button-spinner {
+    display: none;
+    width: 0.9rem;
+    height: 0.9rem;
+    border: 2px solid rgba(255, 255, 255, 0.45);
+    border-top-color: #ffffff;
+    border-radius: 50%;
+    animation: button-spin 0.7s linear infinite;
+  }
+  button[aria-busy="true"] .button-spinner {
+    display: inline-block;
+  }
+  @keyframes button-spin {
+    to { transform: rotate(360deg); }
   }
 </style>
 """

@@ -98,12 +98,13 @@ Form/body: `challenge_id`, `customer_bank_id`.
 1. Looks up the challenge; `404` if missing/expired.
 2. Calls `GET {MOCK_BANK_SYNC_SERVICE_URL}/internal/customers/lookup?customer_bank_id=<value>`
    with header `X-Internal-Secret: <MOCK_BANK_INTERNAL_SECRET>`. Expects
-   `{"customer_id": "...", "email": "..."}` on success. A `404` from
+   `{"customer_id": "...", "email": "...", "phone": "+201001234567", "name": "..."}`
+   on success. A `404` from
    mock-bank-sync surfaces as "customer not found" — no OTP is generated,
    no further steps run.
 3. On success, generates a cryptographically random 6-digit OTP
    (`secrets.randbelow`), stores it against the challenge with a 5-minute
-   expiry, and attaches the resolved `customer_id`/`email`.
+   expiry, and attaches the resolved `customer_id`/`email`/`phone`/`name`.
 4. Emails the OTP directly via this service's own Gmail SMTP account
    (`app/notification.py`, `MOCK_BANK_OAUTH_GMAIL_ADDRESS`/
    `MOCK_BANK_OAUTH_GMAIL_APP_PASSWORD`). A failure here (SMTP auth,
@@ -143,7 +144,7 @@ Standard RFC 6749 authorization_code grant, form-encoded:
    with claims `{"sub": customer_id, "provider": "mock_bank", "iat": ..., "exp": ...}`
    (1 hour lifetime), plus an opaque random `refresh_token` (not a JWT,
    stored in-memory).
-4. Returns `200 {"access_token": ..., "token_type": "bearer", "expires_in": 3600, "refresh_token": ..., "external_customer_id": ...}`.
+4. Returns `200 {"access_token": ..., "token_type": "bearer", "expires_in": 3600, "refresh_token": ..., "external_customer_id": ..., "email": ..., "phone": ..., "name": ...}`.
    `external_customer_id` appears in two places for two different readers:
    embedded in `access_token`'s JWT `sub` claim (mock-bank-sync's reader),
    and here in plaintext (the Django backend's reader — it treats the

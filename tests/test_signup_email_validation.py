@@ -20,7 +20,12 @@ class TestSignupEmailSyntax:
     def test_malformed_email_is_rejected(self, db):
         resp = _client().post(
             "/auth/signup/",
-            {"email": "not-an-email", "password": "a-real-password", "name": "New User"},
+            {
+                "email": "not-an-email",
+                "password": "a-real-password",
+                "name": "New User",
+                "phone": "+201001234567",
+            },
             format="json",
         )
         assert resp.status_code == 422
@@ -29,11 +34,36 @@ class TestSignupEmailSyntax:
     def test_valid_email_still_succeeds(self, db):
         resp = _client().post(
             "/auth/signup/",
-            {"email": "valid-signup@example.com", "password": "a-real-password", "name": "X"},
+            {
+                "email": "valid-signup@example.com",
+                "password": "a-real-password",
+                "name": "X",
+                "phone": "+201001234567",
+            },
             format="json",
         )
         assert resp.status_code == 201
         assert User.objects.filter(email="valid-signup@example.com").exists()
+
+    def test_phone_is_required_and_format_only(self, db):
+        missing = _client().post(
+            "/auth/signup/",
+            {"email": "missing-phone@example.com", "password": "a-real-password", "name": "X"},
+            format="json",
+        )
+        malformed = _client().post(
+            "/auth/signup/",
+            {
+                "email": "bad-phone@example.com",
+                "password": "a-real-password",
+                "name": "X",
+                "phone": "01001234567",
+            },
+            format="json",
+        )
+
+        assert missing.status_code == 422
+        assert malformed.status_code == 422
 
 
 class TestSignupEmailDeliverability:

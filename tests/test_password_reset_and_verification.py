@@ -48,7 +48,12 @@ class TestSignupSendsVerificationEmail:
     def test_signup_sends_exactly_one_verification_email(self, db):
         resp = _client().post(
             "/auth/signup/",
-            {"email": "new-signup@example.com", "password": "a-real-password", "name": "New User"},
+            {
+                "email": "new-signup@example.com",
+                "password": "a-real-password",
+                "name": "New User",
+                "phone": "+201001234567",
+            },
             format="json",
         )
         assert resp.status_code == 201
@@ -64,7 +69,12 @@ class TestSignupSendsVerificationEmail:
     def test_verification_email_has_an_html_alternative(self, db):
         resp = _client().post(
             "/auth/signup/",
-            {"email": "html-signup@example.com", "password": "a-real-password", "name": "New User"},
+            {
+                "email": "html-signup@example.com",
+                "password": "a-real-password",
+                "name": "New User",
+                "phone": "+201001234567",
+            },
             format="json",
         )
         assert resp.status_code == 201

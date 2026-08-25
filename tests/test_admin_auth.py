@@ -4,6 +4,7 @@ import pytest
 from django.contrib.auth.hashers import make_password
 from rest_framework.test import APIClient
 
+import core.views.administration as administration_views
 from core.models import AdminBlacklistedToken, AdminUser
 
 COOKIE_NAME = "admin_refresh_token"
@@ -52,6 +53,20 @@ class TestAdminLogin:
     def test_unknown_email_is_the_same_generic_422(self, client, db):
         response = _login(client, email="nobody@example.com", password="whatever")
         assert response.status_code == 422
+
+    def test_unknown_email_still_checks_a_dummy_hash(self, client, db, monkeypatch):
+        checked_hashes = []
+
+        def fake_check_password(password, encoded):
+            checked_hashes.append(encoded)
+            return False
+
+        monkeypatch.setattr(administration_views, "check_password", fake_check_password)
+
+        response = _login(client, email="nobody@example.com", password="whatever")
+
+        assert response.status_code == 422
+        assert checked_hashes == [administration_views._ADMIN_LOGIN_DUMMY_HASH]
 
 
 class TestAdminRefresh:

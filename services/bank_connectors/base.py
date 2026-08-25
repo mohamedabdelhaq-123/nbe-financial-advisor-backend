@@ -35,7 +35,7 @@ class BankConnector(ABC):
         """Redeem an authorization code for an access token, after the
         provider's own redirect has handed one back to us. Returns
         {"access_token", "refresh_token", "expires_in", "external_customer_id",
-        "email", "name"} — email/name back a first-time bank login's User
+        "email", "phone", "name"} — email/phone/name back a first-time bank login's User
         provisioning (core/views/auth.py's BankLoginCallbackView)."""
 
     @abstractmethod

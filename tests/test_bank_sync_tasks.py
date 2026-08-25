@@ -21,7 +21,7 @@ from django.core import mail
 
 from core.models import AnomalyFlag, BankAccount, Transaction, User
 from core.tasks.bank_sync import ingest_synced_transactions
-from services import event_bus
+from services import ai_service, event_bus
 
 
 @pytest.fixture
@@ -161,6 +161,26 @@ def test_publishes_transaction_synced_event(account, fake_redis):
     assert f'"account_id": "{account.id}"' in frame
     assert '"count": 1' in frame
     gen.close()
+
+
+def test_publishes_transaction_event_before_optional_analysis(account, monkeypatch):
+    order = []
+
+    def record_event(_user_id, event_type, _payload):
+        if event_type == "transaction_synced":
+            order.append("transaction_synced")
+
+    class AnalysisClient:
+        def run_post_ingestion_analysis(self, *_args, **_kwargs):
+            order.append("analysis")
+            return {"anomalies": []}
+
+    monkeypatch.setattr(event_bus, "publish_user_event", record_event)
+    monkeypatch.setattr(ai_service, "get_client", lambda: AnalysisClient())
+
+    ingest_synced_transactions(str(account.id), [_debit_payload()])
+
+    assert order == ["transaction_synced", "analysis"]
 
 
 def test_no_new_transactions_still_publishes_zero_count_event(account, user, fake_redis):

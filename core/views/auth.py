@@ -314,11 +314,9 @@ class BankLoginCallbackView(APIView):
 
     Identity is resolved by (provider_slug, external_customer_id): a
     repeat login for the same bank customer always logs into the same app
-    user. On a first-ever login, if the bank's email matches an existing
-    app user, that user is reused (their manual data under this same
-    bank's name is replaced by the real, synced data — see
-    services/bank_connectors/sync.py's apply_synced_accounts) rather than
-    creating a duplicate account.
+    user. A first-ever bank customer must provision a new app user. If its
+    email already belongs to any app user, the callback fails explicitly;
+    this demo does not merge identities or replace local account data.
     """
 
     permission_classes = [AllowAny]
@@ -357,6 +355,9 @@ class BankLoginCallbackView(APIView):
             # there's no other way in for a bank-provisioned user — so this
             # is best-effort, same tolerance the ongoing webhook push has.
             user = connection.user
+            if not user.phone:
+                user.phone = token["phone"]
+                user.save(update_fields=["phone", "updated_at"])
             connection.access_token = token["access_token"]
             connection.refresh_token = token.get("refresh_token")
             connection.save(update_fields=["access_token", "refresh_token"])
@@ -366,6 +367,12 @@ class BankLoginCallbackView(APIView):
             except BankConnectorError:
                 pass
             return _token_pair_response(user, status.HTTP_200_OK)
+
+        if User.objects.filter(email=token["email"]).exists():
+            raise BusinessRuleError(
+                "An app account already uses this bank email. Sign in with that account instead.",
+                code="bank_login_email_conflict",
+            )
 
         # First time this bank customer has ever logged in. Fetch accounts
         # before writing anything — if the bank can't be reached, nothing
@@ -377,16 +384,15 @@ class BankLoginCallbackView(APIView):
                 "Failed to complete the bank login.", code="bank_login_failed"
             ) from exc
 
-        user = User.objects.filter(email=token["email"]).first()
         new_connection = None
         try:
             with transaction.atomic():
-                if user is None:
-                    user = User.objects.create_user(
-                        email=token["email"],
-                        name=token.get("name") or "Bank Customer",
-                        password=None,
-                    )
+                user = User.objects.create_user(
+                    email=token["email"],
+                    name=token.get("name") or "Bank Customer",
+                    phone=token["phone"],
+                    password=None,
+                )
                 connection = BankConnection.objects.create(
                     user=user,
                     provider_slug=provider_slug,
@@ -398,11 +404,22 @@ class BankLoginCallbackView(APIView):
                 )
             new_connection = connection
         except IntegrityError:
-            # A concurrent callback for the same bank customer won the
-            # race — log into the winner's user rather than erroring.
-            connection = BankConnection.objects.select_related("user").get(
-                provider_slug=provider_slug, external_customer_id=token["external_customer_id"]
+            # A concurrent callback for this exact provider/customer may
+            # have won the race. An email collision with any other identity
+            # is not a merge signal and must fail explicitly.
+            connection = (
+                BankConnection.objects.select_related("user")
+                .filter(
+                    provider_slug=provider_slug, external_customer_id=token["external_customer_id"]
+                )
+                .first()
             )
+            if connection is None:
+                raise BusinessRuleError(
+                    "An app account already uses this bank email. "
+                    "Sign in with that account instead.",
+                    code="bank_login_email_conflict",
+                )
             user = connection.user
 
         if new_connection is not None:

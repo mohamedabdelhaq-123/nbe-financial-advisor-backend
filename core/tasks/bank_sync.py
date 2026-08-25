@@ -76,11 +76,25 @@ def ingest_synced_transactions(bank_account_id: str, transactions: list[dict]) -
             )
         )
 
+    # The ledger rows are committed at this point, so notify the browser now.
+    # Post-ingestion AI analysis below is optional and can take several
+    # seconds; making the transaction event wait for it leaves the visible
+    # transaction list stale even though the new rows are already readable.
+    event_bus.publish_user_event(
+        account.user_id,
+        "transaction_synced",
+        {
+            "account_id": str(account.id),
+            "count": len(created),
+            "transaction_ids": [str(t.id) for t in created],
+        },
+    )
+
+    if not created:
+        return
+
     anomalies_found = []
     try:
-        if not created:
-            return
-
         affected_months = {t.transaction_date.strftime("%Y-%m") for t in created}
         client = ai_service.get_client()
         for month in affected_months:
@@ -122,15 +136,6 @@ def ingest_synced_transactions(bank_account_id: str, transactions: list[dict]) -
             f"{len(created)} new transaction(s) were synced from {account.bank_name}.",
         )
     finally:
-        event_bus.publish_user_event(
-            account.user_id,
-            "transaction_synced",
-            {
-                "account_id": str(account.id),
-                "count": len(created),
-                "transaction_ids": [str(t.id) for t in created],
-            },
-        )
         if anomalies_found:
             event_bus.publish_user_event(
                 account.user_id,

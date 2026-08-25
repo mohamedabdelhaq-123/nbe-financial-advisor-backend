@@ -29,6 +29,11 @@ class Command(BaseCommand):
         parser.add_argument(
             "--email", required=True, help="Customer email — also used as customer_bank_id."
         )
+        parser.add_argument(
+            "--phone",
+            default="+201000000000",
+            help="Customer phone in international format (default: +201000000000).",
+        )
 
     def handle(self, *args, **options):
         if not settings.DEBUG:
@@ -37,12 +42,13 @@ class Command(BaseCommand):
             )
 
         email = options["email"]
+        phone = options["phone"]
 
         self._check_service_health(settings.MOCK_BANK_SYNC_SERVICE_URL, "mock-bank-sync")
 
         response = requests.post(
             f"{settings.MOCK_BANK_SYNC_SERVICE_URL}/simulate/customer",
-            json={"customer_bank_id": email, "email": email},
+            json={"customer_bank_id": email, "email": email, "phone": phone},
             timeout=self._TIMEOUT_SECONDS,
         )
         if response.status_code == 409:
@@ -54,7 +60,7 @@ class Command(BaseCommand):
             self._delete_existing_customer(email)
             response = requests.post(
                 f"{settings.MOCK_BANK_SYNC_SERVICE_URL}/simulate/customer",
-                json={"customer_bank_id": email, "email": email},
+                json={"customer_bank_id": email, "email": email, "phone": phone},
                 timeout=self._TIMEOUT_SECONDS,
             )
         if response.status_code != 201:
@@ -85,8 +91,8 @@ class Command(BaseCommand):
             )
         )
         self.stdout.write(
-            "Next: in the app (logged in as the NBE user who should own this "
-            "link), use 'Connect bank' — the mock bank login screen takes "
+            "Next: start the bank sign-in from the app's sign-in page — the "
+            "mock bank login screen takes "
             f"customer_bank_id={email!r}, and the OTP will be sent for real "
             f"to {email}."
         )

@@ -15,7 +15,7 @@ import pytest
 from rest_framework.test import APIClient
 
 import core.views.auth as auth_view_module
-from core.models import BankAccount, BankConnection, Transaction, User
+from core.models import BankAccount, BankConnection, User
 from services.bank_connectors import BankConnectorError
 
 
@@ -30,6 +30,7 @@ class _FakeConnector:
         fetch_accounts_error=None,
         external_customer_id="cust-1",
         email="bank-customer@example.com",
+        phone="+201001234567",
         name="Bank Customer",
     ):
         self._accounts = accounts if accounts is not None else []
@@ -38,6 +39,7 @@ class _FakeConnector:
         self._fetch_accounts_error = fetch_accounts_error
         self._external_customer_id = external_customer_id
         self._email = email
+        self._phone = phone
         self._name = name
 
     def get_authorize_url(self, state, redirect_uri):
@@ -52,6 +54,7 @@ class _FakeConnector:
             "expires_in": 3600,
             "external_customer_id": self._external_customer_id,
             "email": self._email,
+            "phone": self._phone,
             "name": self._name,
         }
 
@@ -124,6 +127,7 @@ def test_callback_first_login_provisions_user_and_returns_tokens(
     assert "access_token" in response.data
     user = User.objects.get(id=response.data["user_id"])
     assert user.email == "bank-customer@example.com"
+    assert user.phone == "+201001234567"
     assert not user.has_usable_password()
 
     connection = BankConnection.objects.get(
@@ -240,11 +244,11 @@ def test_callback_repeat_login_fetch_accounts_failure_still_logs_in(
 
 
 # ============================================================================
-# POST /auth/bank-login/callback/ — email collision / merge
+# POST /auth/bank-login/callback/ — email collision
 # ============================================================================
 
 
-def test_callback_email_collision_merges_into_existing_user_and_replaces_manual_data(
+def test_callback_email_collision_is_rejected_without_changing_existing_user_data(
     client, monkeypatch, fake_redis, db
 ):
     existing_user = User.objects.create_user(
@@ -256,21 +260,6 @@ def test_callback_email_collision_merges_into_existing_user_and_replaces_manual_
         account_number="1000200030009999",
         link_type=BankAccount.LINK_TYPE_MANUAL,
     )
-    Transaction.objects.create(
-        user=existing_user,
-        account=manual_account,
-        source="manual",
-        transaction_date="2026-07-01",
-        merchant_raw="Old Entry",
-        amount="10.00",
-    )
-    other_manual_account = BankAccount.objects.create(
-        user=existing_user,
-        bank_name="Some Other Bank",
-        account_number="1000200030000001",
-        link_type=BankAccount.LINK_TYPE_MANUAL,
-    )
-
     connector = _FakeConnector(accounts=_DEFAULT_ACCOUNTS, email="bank-customer@example.com")
     initiate = _initiate(client, monkeypatch, connector)
 
@@ -278,17 +267,11 @@ def test_callback_email_collision_merges_into_existing_user_and_replaces_manual_
         "/auth/bank-login/callback/", {"code": "auth-code-1", "state": initiate["state"]}
     )
 
-    assert response.status_code == 201
-    assert response.data["user_id"] == str(existing_user.id)
+    assert response.status_code == 422
+    assert response.data["error"]["code"] == "bank_login_email_conflict"
     assert User.objects.count() == 1
-    assert not BankAccount.objects.filter(id=manual_account.id).exists()
-    assert not Transaction.objects.filter(account_id=manual_account.id).exists()
-    assert BankAccount.objects.filter(id=other_manual_account.id).exists()
-
-    synced_account = BankAccount.objects.get(
-        user=existing_user, bank_name="Mock National Bank", link_type=BankAccount.LINK_TYPE_SYNCED
-    )
-    assert synced_account.external_account_id == "acc-1"
+    assert BankAccount.objects.filter(id=manual_account.id).exists()
+    assert not BankConnection.objects.exists()
 
 
 # ============================================================================
@@ -296,7 +279,9 @@ def test_callback_email_collision_merges_into_existing_user_and_replaces_manual_
 # ============================================================================
 
 
-def test_callback_login_via_second_bank_keeps_both_connections(client, monkeypatch, fake_redis, db):
+def test_callback_second_bank_with_same_email_does_not_merge_identities(
+    client, monkeypatch, fake_redis, db
+):
     first_connector = _FakeConnector(
         accounts=_DEFAULT_ACCOUNTS, external_customer_id="cust-1", email="multi-bank@example.com"
     )
@@ -325,10 +310,7 @@ def test_callback_login_via_second_bank_keeps_both_connections(client, monkeypat
         "/auth/bank-login/callback/", {"code": "auth-code-2", "state": second_initiate["state"]}
     )
 
-    assert second.status_code == 201
-    assert second.data["user_id"] == user_id
+    assert second.status_code == 422
+    assert second.data["error"]["code"] == "bank_login_email_conflict"
     assert User.objects.count() == 1
-    assert (
-        BankConnection.objects.filter(user_id=user_id, status=BankConnection.STATUS_LINKED).count()
-        == 2
-    )
+    assert BankConnection.objects.filter(user_id=user_id).count() == 1

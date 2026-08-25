@@ -68,11 +68,18 @@ def login_start(challenge_id: str = Form(...), customer_bank_id: str = Form(...)
     body = lookup_response.json()
     customer_id = body.get("customer_id")
     email = body.get("email")
+    phone = body.get("phone")
     name = body.get("name")
-    if not customer_id or not email:
+    if not customer_id or not email or not phone:
         return _error_page("Customer directory returned an incomplete record.", status_code=502)
 
-    otp = store.set_challenge_otp(challenge_id, customer_id=customer_id, email=email, name=name)
+    otp = store.set_challenge_otp(
+        challenge_id,
+        customer_id=customer_id,
+        email=email,
+        phone=phone,
+        name=name,
+    )
 
     # Send the OTP by email directly. If this fails, surface it explicitly
     # rather than silently proceeding to a code the user has no way to
@@ -114,6 +121,7 @@ def login_verify(challenge_id: str = Form(...), otp: str = Form(...)):
     if (
         challenge.otp is None
         or challenge.customer_id is None
+        or challenge.phone is None
         or challenge.otp_is_expired()
         or otp.strip() != challenge.otp
     ):
@@ -124,6 +132,7 @@ def login_verify(challenge_id: str = Form(...), otp: str = Form(...)):
         redirect_uri=challenge.redirect_uri,
         customer_id=challenge.customer_id,
         email=challenge.email,
+        phone=challenge.phone,
         name=challenge.name,
     )
 

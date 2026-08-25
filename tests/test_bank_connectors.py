@@ -95,6 +95,7 @@ def test_exchange_code_for_token_posts_to_token_endpoint(connector_settings, mon
                 "expires_in": 3600,
                 "external_customer_id": "cust-1",
                 "email": "customer@example.com",
+                "phone": "+201001234567",
                 "name": "Test Customer",
             }
         )
@@ -116,6 +117,7 @@ def test_exchange_code_for_token_posts_to_token_endpoint(connector_settings, mon
         "expires_in": 3600,
         "external_customer_id": "cust-1",
         "email": "customer@example.com",
+        "phone": "+201001234567",
         "name": "Test Customer",
     }
 
