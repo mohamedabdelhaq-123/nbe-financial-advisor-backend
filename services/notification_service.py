@@ -22,20 +22,32 @@ class NotificationServiceError(Exception):
     instead of smtplib's own exception hierarchy."""
 
 
-def send_email(to: str, subject: str, body: str, html_body: str | None = None) -> None:
+def send_email(
+    to: str,
+    subject: str,
+    body: str,
+    html_body: str | None = None,
+    attachments: list[tuple[str, bytes, str]] | None = None,
+) -> None:
     """
     Sends an email via the configured Gmail SMTP account. `body` is always
     sent (either as the whole plain-text email, or as the plain-text
     fallback part of a multipart message when `html_body` is given — every
     client that can't/won't render HTML, plus spam filters that weigh a
     missing text part negatively, still gets a readable message).
-    Raises NotificationServiceError on any send failure.
+    `attachments`, if given, is a list of (filename, content_bytes,
+    mimetype) tuples (e.g. the data-export JSON file — see
+    core/tasks/data_export.py). Raises NotificationServiceError on any send
+    failure.
     """
     try:
-        if html_body is not None:
+        if html_body is not None or attachments:
             # from_email=None -> settings.DEFAULT_FROM_EMAIL.
             message = EmailMultiAlternatives(subject, body, None, [to])
-            message.attach_alternative(html_body, "text/html")
+            if html_body is not None:
+                message.attach_alternative(html_body, "text/html")
+            for filename, content, mimetype in attachments or []:
+                message.attach(filename, content, mimetype)
             message.send(fail_silently=False)
         else:
             send_mail(subject, body, None, [to], fail_silently=False)
@@ -46,22 +58,30 @@ def send_email(to: str, subject: str, body: str, html_body: str | None = None) -
         raise NotificationServiceError(f"Failed to send email to {to}: {exc}") from exc
 
 
-def notify(user, subject: str, body: str) -> None:
+def notify(
+    user,
+    subject: str,
+    body: str,
+    attachments: list[tuple[str, bytes, str]] | None = None,
+) -> None:
     """
     Best-effort email to a core.User — every "let the user know something
     happened" call site (budget changes, detected anomalies, a finished
-    statement upload: PLAN.md Checkpoint 6) wants the exact same "don't fail
-    the parent action over a notification that couldn't be sent" behavior
-    that core/tasks/bank_sync.py implemented inline before this existed.
-    Collected here once instead of repeating the try/except at every site.
+    statement upload, a finished data export: PLAN.md Checkpoint 6) wants
+    the exact same "don't fail the parent action over a notification that
+    couldn't be sent" behavior that core/tasks/bank_sync.py implemented
+    inline before this existed. Collected here once instead of repeating
+    the try/except at every site.
 
     `body` is still sent as the plain-text part (see send_email's docstring
     for why), but every call site also gets the same branded HTML card as
     the OTP/verify-email/reset-password emails for free, via
     emails/notification.html, instead of arriving as a bare plain-text email.
+    `attachments` passes straight through to send_email (e.g. the data
+    export's JSON file — core/tasks/data_export.py).
     """
     try:
         html_body = render_to_string("emails/notification.html", {"subject": subject, "body": body})
-        send_email(user.email, subject, body, html_body=html_body)
+        send_email(user.email, subject, body, html_body=html_body, attachments=attachments)
     except NotificationServiceError:
         pass

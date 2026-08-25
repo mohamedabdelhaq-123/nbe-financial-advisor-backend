@@ -95,8 +95,8 @@ class BaseAIServiceClient(ABC):
         """
         Yields the shared {"event", "data"} envelope: zero or more
         {"event": "token", "data": <str>} chunks, then exactly one terminal
-        {"event": "done", "data": {"content", "widget", "references"}} or
-        {"event": "error", "data": {"message"}}.
+        {"event": "done", "data": {"content", "widget", "references", "suggestions"}}
+        or {"event": "error", "data": {"message"}}.
         """
 
     # ========================================================================

@@ -125,13 +125,18 @@ def delete_prefix(prefix: str) -> None:
             client.delete_objects(Bucket=storage.bucket_name, Delete={"Objects": objects})
 
 
+def _onboarding_template_key(template_key: str) -> str:
+    return f"onboarding-templates/{template_key}.json"
+
+
 def get_onboarding_templates() -> list[dict]:
     """
     Reads pfm-reference-data/onboarding-templates/*.json
     (File_System_Structure.md §4) — the 3-5 hand-authored starter templates
-    backing GET /budget/starter-templates. Edited out-of-band by whoever owns
-    the reference data (never through this app's write paths — seeded once by
-    `manage.py seed_onboarding_templates` if not already present); this
+    backing GET /budget/starter-templates. Seeded once by
+    `manage.py seed_onboarding_templates` if not already present; from then
+    on the only write path is the admin panel (POST/PATCH/DELETE
+    /admin/onboarding-templates, core/views/administration.py) — this
     function only reads what's already there.
     """
     storage = _STORAGE_BY_BUCKET["pfm-reference-data"]
@@ -145,3 +150,43 @@ def get_onboarding_templates() -> list[dict]:
             body = client.get_object(Bucket=storage.bucket_name, Key=obj["Key"])["Body"].read()
             templates.append(json.loads(body))
     return templates
+
+
+def get_onboarding_template(template_key: str) -> dict | None:
+    """Reads a single onboarding-templates/{template_key}.json object, or
+    None if it doesn't exist yet — the existence check behind the admin
+    template endpoints' create-conflict/update-404/delete-404 handling."""
+    storage = _STORAGE_BY_BUCKET["pfm-reference-data"]
+    client = storage.connection.meta.client
+    try:
+        body = client.get_object(
+            Bucket=storage.bucket_name, Key=_onboarding_template_key(template_key)
+        )["Body"].read()
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
+            return None
+        raise
+    return json.loads(body)
+
+
+def put_onboarding_template(template: dict) -> None:
+    """Creates or overwrites onboarding-templates/{template['template_key']}.json
+    — the admin panel's write path (core/views/administration.py's
+    AdminOnboardingTemplateListCreateView/AdminOnboardingTemplateDetailView).
+    """
+    storage = _STORAGE_BY_BUCKET["pfm-reference-data"]
+    client = storage.connection.meta.client
+    client.put_object(
+        Bucket=storage.bucket_name,
+        Key=_onboarding_template_key(template["template_key"]),
+        Body=json.dumps(template, indent=2).encode(),
+        ContentType="application/json",
+    )
+
+
+def delete_onboarding_template(template_key: str) -> None:
+    """Deletes onboarding-templates/{template_key}.json — the admin panel's
+    delete path. A no-op (not an error) if it's already gone."""
+    storage = _STORAGE_BY_BUCKET["pfm-reference-data"]
+    client = storage.connection.meta.client
+    client.delete_object(Bucket=storage.bucket_name, Key=_onboarding_template_key(template_key))

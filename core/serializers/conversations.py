@@ -40,17 +40,29 @@ class MessageSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Message
-        fields = ["id", "sender", "content", "stage", "widget_json", "references", "created_at"]
+        fields = [
+            "id",
+            "sender",
+            "content",
+            "stage",
+            "widget_json",
+            "references",
+            "suggestions_json",
+            "created_at",
+        ]
         read_only_fields = fields
 
     def to_representation(self, instance):
         # Renamed from the model's widget_json (see Message model's docstring
         # comment on why that column exists) to the documented `widget` key,
         # with the documented {type: null, payload: null} fallback when no
-        # widget was attached to this message.
+        # widget was attached to this message. suggestions_json gets the same
+        # treatment, falling back to an empty list.
         data = super().to_representation(instance)
         widget = data.pop("widget_json")
         data["widget"] = widget or {"type": None, "payload": None}
+        suggestions = data.pop("suggestions_json")
+        data["suggestions"] = suggestions or []
         return data
 
 
@@ -87,6 +99,7 @@ class MessageDoneEventSerializer(serializers.Serializer):
     content = serializers.CharField()
     widget = WidgetSerializer()
     references = MessageReferenceSerializer(many=True)
+    suggestions = serializers.ListField(child=serializers.CharField())
 
 
 class ChatErrorEventSerializer(serializers.Serializer):

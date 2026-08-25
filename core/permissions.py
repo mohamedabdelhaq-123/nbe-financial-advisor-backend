@@ -27,6 +27,24 @@ class IsSuperAdmin(BasePermission):
         return isinstance(request.user, AdminUser) and request.user.is_super_admin
 
 
+class HasDataProcessingConsent(BasePermission):
+    """
+    Gates any endpoint that runs OCR on a new document or sends the user's
+    financial data to the AI service — both are "processing" in the
+    data_processing consent's sense (see ConsentRecord / MeConsentView),
+    so both stop once that consent is revoked. Only guards the
+    *new-processing* entry points (statement upload, sending a chat
+    message) — reading data already processed before the revoke, or
+    starting an empty chat session, stays available same as the rest of
+    the account.
+    """
+
+    message = "Data processing consent is required for this action."
+
+    def has_permission(self, request, view):
+        return request.user.has_active_consent("data_processing")
+
+
 class AdminAuthMixin:
     """
     Applied to every /admin/* view. Swaps the project-wide default

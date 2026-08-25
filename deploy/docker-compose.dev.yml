@@ -10,6 +10,11 @@
 #   docker compose -f docker-compose.dev.yml up -d --build
 #   docker compose -f docker-compose.dev.yml down          # keep data
 #   docker compose -f docker-compose.dev.yml down -v       # wipe data too
+#
+# `up --build` builds all 6 images in parallel by default. On a machine
+# already under load this can starve BuildKit's own process and crash the
+# build ("frontend grpc server closed unexpectedly"). If that happens, cap
+# concurrency: COMPOSE_PARALLEL_LIMIT=2 docker compose -f docker-compose.dev.yml up -d --build
 
 name: nbe-financial-advisor-dev
 
@@ -62,6 +67,8 @@ services:
   backend:
     build:
       context: ..
+      provenance: false
+      sbom: false
       args:
         BUILD_ENV: development
     command: >
@@ -104,6 +111,8 @@ services:
   celery-worker:
     build:
       context: ..
+      provenance: false
+      sbom: false
       args:
         BUILD_ENV: development
     command: sh -c "celery -A config worker --loglevel=info --concurrency=2"
@@ -143,6 +152,8 @@ services:
   mock-bank-oauth:
     build:
       context: ../mock-bank-oauth
+      provenance: false
+      sbom: false
     env_file:
       - ../.env
     environment:
@@ -155,6 +166,8 @@ services:
   mock-bank-sync:
     build:
       context: ../mock-bank-sync
+      provenance: false
+      sbom: false
     env_file:
       - ../.env
     environment:
@@ -171,6 +184,8 @@ services:
     build:
       context: ../../nbe-financial-advisor-ai-service
       target: dev
+      provenance: false
+      sbom: false
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload"
     env_file:
       - ../../nbe-financial-advisor-ai-service/.env
@@ -193,6 +208,8 @@ services:
     build:
       context: ../../nbe-financial-advisor-frontend
       dockerfile: Dockerfile.dev
+      provenance: false
+      sbom: false
     env_file:
       - ../../nbe-financial-advisor-frontend/.env
     volumes:

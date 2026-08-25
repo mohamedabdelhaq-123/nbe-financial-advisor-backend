@@ -9,7 +9,7 @@ from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, status
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -19,6 +19,7 @@ from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.settings import api_settings as simplejwt_settings
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from core.exceptions import ConflictError
 from core.filters.administration import (
     AdminIssueFilterSet,
     AdminProductFilterSet,
@@ -44,7 +45,12 @@ from core.serializers.administration import (
     AdminProductUpdateSerializer,
     AdminReactionSerializer,
 )
-from services import ai_service
+from core.serializers.budgets import (
+    AdminTemplateCreateSerializer,
+    AdminTemplateUpdateSerializer,
+    StarterTemplateSerializer,
+)
+from services import ai_service, file_storage
 
 
 def _set_admin_refresh_cookie(response, refresh_token: str) -> None:
@@ -353,4 +359,110 @@ class AdminProductDetailView(AdminAuthMixin, APIView):
     def delete(self, request, product_id):
         product = get_object_or_404(Product, id=product_id)
         product.delete()
+        return Response(status=204)
+
+
+@extend_schema_view(
+    post=extend_schema(
+        request=AdminTemplateCreateSerializer,
+        responses={201: StarterTemplateSerializer, **error_responses(403, 409, 422)},
+    )
+)
+class AdminOnboardingTemplateListCreateView(AdminAuthMixin, APIView):
+    """
+    List every onboarding starter template (GET — any admin role) or add a
+    new one (POST — super_admin only, 403 for any other admin role). Backed
+    by pfm-reference-data/onboarding-templates/*.json
+    (services/file_storage.py), not a DB table, since GET
+    /budget/starter-templates reads that same reference data directly — a
+    template created/edited here is immediately what onboarding shows, no
+    separate publish step. `is_suggested` (present on the public endpoint's
+    response) isn't part of the stored object — it's computed per-request
+    from the signed-in admin's own profile there, which is meaningless for
+    an admin session, so it's omitted here entirely rather than showing a
+    misleading value.
+    """
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [IsSuperAdmin()]
+        return super().get_permissions()
+
+    @extend_schema(responses={200: StarterTemplateSerializer(many=True)})
+    def get(self, request):
+        templates = file_storage.get_onboarding_templates()
+        templates.sort(key=lambda t: t["template_key"])
+        return Response(templates)
+
+    def post(self, request):
+        serializer = AdminTemplateCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        template_key = data["template_key"]
+
+        if file_storage.get_onboarding_template(template_key) is not None:
+            raise ConflictError(
+                f"A template with key '{template_key}' already exists. Use "
+                f"PATCH /admin/onboarding-templates/{template_key}/ to update it."
+            )
+
+        template = {
+            "template_key": template_key,
+            "name": data["name"],
+            "description": data.get("description", ""),
+            "allocations": [
+                {
+                    "category": a["category"].name,
+                    "allocated_percentage": float(a["allocated_percentage"]),
+                }
+                for a in data["allocations"]
+            ],
+        }
+        file_storage.put_onboarding_template(template)
+        return Response(template, status=201)
+
+
+class AdminOnboardingTemplateDetailView(AdminAuthMixin, APIView):
+    """Update or remove a single onboarding starter template. Both
+    operations are super_admin only — any other admin role gets 403.
+    `template_key` itself is never reassignable through PATCH — it's the
+    object's identity (and filename); delete and re-create under a new key
+    instead."""
+
+    permission_classes = [IsSuperAdmin]
+
+    @extend_schema(
+        request=AdminTemplateUpdateSerializer,
+        responses={200: StarterTemplateSerializer, **error_responses(403, 404, 422)},
+    )
+    def patch(self, request, template_key):
+        template = file_storage.get_onboarding_template(template_key)
+        if template is None:
+            raise NotFound(f"No template with key '{template_key}'.")
+
+        serializer = AdminTemplateUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        if "name" in data:
+            template["name"] = data["name"]
+        if "description" in data:
+            template["description"] = data["description"]
+        if "allocations" in data:
+            template["allocations"] = [
+                {
+                    "category": a["category"].name,
+                    "allocated_percentage": float(a["allocated_percentage"]),
+                }
+                for a in data["allocations"]
+            ]
+
+        file_storage.put_onboarding_template(template)
+        return Response(template)
+
+    @extend_schema(responses={204: None, **error_responses(403, 404)})
+    def delete(self, request, template_key):
+        if file_storage.get_onboarding_template(template_key) is None:
+            raise NotFound(f"No template with key '{template_key}'.")
+        file_storage.delete_onboarding_template(template_key)
         return Response(status=204)

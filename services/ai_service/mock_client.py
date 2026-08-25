@@ -209,6 +209,11 @@ def _mock_stream_chat(conversation_id: str, user_id: str, message: str):
             },
         }
         references = [{"target_type": "budget", "target_id": str(budget.id)}]
+        suggestions = [
+            "Why this split?",
+            "Suggest a more aggressive savings split",
+            "Revert to my last confirmed allocation",
+        ]
     else:
         content = (
             "I can help with spending analysis, planning, or product recommendations — "
@@ -216,13 +221,23 @@ def _mock_stream_chat(conversation_id: str, user_id: str, message: str):
         )
         widget = {"type": None, "payload": None}
         references = []
+        suggestions = [
+            "Show my spending breakdown",
+            "What are my recent transactions?",
+            "Help me plan my savings",
+        ]
 
     for word in content.split(" "):
         yield {"event": "token", "data": word + " "}
 
     yield {
         "event": "done",
-        "data": {"content": content, "widget": widget, "references": references},
+        "data": {
+            "content": content,
+            "widget": widget,
+            "references": references,
+            "suggestions": suggestions,
+        },
     }
 
 

@@ -63,6 +63,68 @@ def test_creates_synced_transaction(account):
     assert transaction.merchant_raw == "Carrefour"
     assert str(transaction.amount) == "150.00"
     assert transaction.transaction_type == "debit"
+    # "Carrefour" matches the "groceries" keyword, which resolve_category()
+    # aliases onto the real "food" category — see
+    # core/models/categories/merchant_keywords.py.
+    assert transaction.category is not None
+    assert transaction.category.name == "food"
+
+
+def test_unrecognised_merchant_lands_on_the_type_fallback_category(account):
+    ingest_synced_transactions(
+        str(account.id), [_debit_payload(merchant_raw="Some Unknown Merchant Ltd")]
+    )
+
+    transaction = Transaction.objects.get(account=account)
+    assert transaction.category is not None
+    assert transaction.category.name == "other"
+
+
+def test_unrecognised_merchant_credit_lands_on_the_income_fallback_category(account):
+    ingest_synced_transactions(
+        str(account.id),
+        [_debit_payload(merchant_raw="Some Unknown Merchant Ltd", transaction_type="credit")],
+    )
+
+    transaction = Transaction.objects.get(account=account)
+    assert transaction.category is not None
+    assert transaction.category.name == "other_income"
+
+
+def test_credit_transaction_from_an_expense_keyword_merchant_never_gets_an_expense_category(
+    account,
+):
+    # "Uber" matches the "transportation" expense keyword, but a payout/refund
+    # from Uber is still incoming money — the guess must come from the income
+    # keyword list (or its fallback), never bleed an expense category like
+    # "transport" onto a credit transaction. See
+    # core/models/categories/merchant_keywords.py's direction split.
+    ingest_synced_transactions(
+        str(account.id), [_debit_payload(merchant_raw="Uber", transaction_type="credit")]
+    )
+
+    transaction = Transaction.objects.get(account=account)
+    assert transaction.category is not None
+    assert transaction.category.category_type == "income"
+    assert transaction.category.name == "other_income"
+
+
+def test_credit_transaction_matching_an_income_keyword_gets_the_income_category(account):
+    ingest_synced_transactions(
+        str(account.id),
+        [_debit_payload(merchant_raw="ACME Corp Payroll", transaction_type="credit")],
+    )
+
+    transaction = Transaction.objects.get(account=account)
+    assert transaction.category is not None
+    assert transaction.category.name == "salary"
+
+
+def test_missing_merchant_name_leaves_transaction_uncategorised(account):
+    ingest_synced_transactions(str(account.id), [_debit_payload(merchant_raw=None)])
+
+    transaction = Transaction.objects.get(account=account)
+    assert transaction.category is None
 
 
 def test_dedupes_against_an_existing_transaction(account, user):

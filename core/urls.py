@@ -8,6 +8,8 @@ from core.views import (
     AdminIssueUpdateView,
     AdminLoginView,
     AdminLogoutView,
+    AdminOnboardingTemplateDetailView,
+    AdminOnboardingTemplateListCreateView,
     AdminProductDetailView,
     AdminProductListCreateView,
     AdminRefreshView,
@@ -38,9 +40,11 @@ from core.views import (
     GoalView,
     IssueListCreateView,
     LoginView,
+    LogoutAllDevicesView,
     LogoutView,
     MeConsentRevokeView,
     MeConsentView,
+    MeDataExportView,
     MePreferencesView,
     MessageWidgetView,
     MeView,
@@ -83,6 +87,7 @@ urlpatterns = [
     path("auth/login/", LoginView.as_view()),
     path("auth/refresh/", RefreshView.as_view()),
     path("auth/logout/", LogoutView.as_view()),
+    path("auth/logout-all/", LogoutAllDevicesView.as_view()),
     # Bank login — a secondary sign-in path alongside signup/login above:
     # authenticate as a bank customer via OAuth+OTP instead of an app
     # password (services/bank_connectors/, mock-bank-oauth/). POST initiate/
@@ -100,6 +105,7 @@ urlpatterns = [
     path("users/me/preferences/", MePreferencesView.as_view()),
     path("users/me/consent/", MeConsentView.as_view()),
     path("users/me/consent/<uuid:consent_id>/", MeConsentRevokeView.as_view()),
+    path("users/me/data-export/", MeDataExportView.as_view()),
     # 3. Bank Accounts (API_Endpoints_1.md §3)
     path("accounts/", BankAccountListCreateView.as_view()),
     path("accounts/<uuid:account_id>/", BankAccountDetailView.as_view()),
@@ -191,4 +197,9 @@ urlpatterns = [
     path("admin/products/<uuid:product_id>/", AdminProductDetailView.as_view()),
     path("admin/categories/", AdminCategoryListCreateView.as_view()),
     path("admin/categories/<uuid:category_id>/", AdminCategoryDetailView.as_view()),
+    path("admin/onboarding-templates/", AdminOnboardingTemplateListCreateView.as_view()),
+    path(
+        "admin/onboarding-templates/<slug:template_key>/",
+        AdminOnboardingTemplateDetailView.as_view(),
+    ),
 ]

@@ -3,7 +3,9 @@ from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, mixins, status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from core.exceptions import BusinessRuleError
@@ -17,6 +19,7 @@ from core.serializers.profile import (
     UserPreferenceSerializer,
     UserSerializer,
 )
+from core.tasks.data_export import send_account_data_export
 
 
 class MeView(APIView):
@@ -88,10 +91,16 @@ class MePreferencesView(APIView):
 
 
 class MeConsentView(APIView):
-    """Record that the user granted consent (e.g. to a specific policy
-    version) — appends a new consent-record row rather than updating any
-    existing one, since the full grant/revoke history is kept, not just
-    the latest state."""
+    """GET the user's full consent grant/revoke history (newest first — see
+    MeConsentRevokeView's docstring for why this is a flat append-only log
+    rather than one row per consent_type), or POST to record that the user
+    granted consent (e.g. to a specific policy version) — appends a new
+    consent-record row rather than updating any existing one."""
+
+    @extend_schema(responses={200: ConsentRecordSerializer(many=True)})
+    def get(self, request):
+        records = ConsentRecord.objects.filter(user=request.user).order_by("-created_at")
+        return Response(ConsentRecordSerializer(records, many=True).data)
 
     @extend_schema(
         request=ConsentGrantSerializer,
@@ -129,6 +138,43 @@ class MeConsentRevokeView(APIView):
             revoked_at=timezone.now(),
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class MeDataExportView(APIView):
+    """
+    "Request my account data" (profile page's Account Management section).
+    Kicks off an async export of everything the product stores about the
+    current user — profile, budget/allocations, goal, bank accounts,
+    transactions, consent history, reported issues, feedback
+    (core.tasks.data_export.send_account_data_export) — and emails it as a
+    JSON attachment. Never generated inline: walking a user's full
+    transaction history isn't bounded the way most request/response work
+    here is, so this endpoint's job is done the moment the job is enqueued,
+    not when the export actually finishes.
+
+    Requires a verified email UNLESS the account has no usable password
+    (a bank-login account, whose identity was already proven by bank OTP —
+    same has_password check UserSerializer/VerifyEmailBanner use). Every
+    other account could have signed up with an email typo or someone
+    else's address; mailing a full financial data dump to an unconfirmed
+    inbox would hand it to whoever actually controls that address, not
+    necessarily this user.
+    """
+
+    # Same scope/rate as the other email-sending auth endpoints — cheap
+    # enough to reuse rather than defining a dedicated scope for one view.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth"
+
+    @extend_schema(request=None, responses={202: None, **error_responses(401, 403)})
+    def post(self, request):
+        if not request.user.email_verified and request.user.has_usable_password():
+            raise PermissionDenied(
+                "Verify your email before requesting a data export — this "
+                "makes sure it's sent to an address you actually control."
+            )
+        send_account_data_export.delay(str(request.user.id))
+        return Response(status=status.HTTP_202_ACCEPTED)
 
 
 @extend_schema_view(

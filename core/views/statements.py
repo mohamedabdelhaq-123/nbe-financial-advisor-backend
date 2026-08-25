@@ -18,6 +18,7 @@ from core.filters.statements import StatementFileFilterSet
 from core.models import BankAccount, StatementFile, Transaction, UserPreference
 from core.models.categories.resolution import resolve_category
 from core.openapi import error_responses
+from core.permissions import HasDataProcessingConsent
 from core.serializers.statements import (
     StatementDetailSerializer,
     StatementFileSerializer,
@@ -158,6 +159,15 @@ class StatementListCreateView(generics.ListAPIView):
     filter_backends = [DjangoFilterBackend]
     filterset_class = StatementFileFilterSet
 
+    def get_permissions(self):
+        # Uploading kicks off OCR (new processing); listing just reads
+        # statements already processed before any revoke — only the former
+        # needs the consent gate.
+        permissions = super().get_permissions()
+        if self.request.method == "POST":
+            permissions.append(HasDataProcessingConsent())
+        return permissions
+
     def get_queryset(self):
         # swagger_fake_view: see core/views/aggregations.py's
         # TransactionListCreateView.get_queryset().
@@ -176,7 +186,7 @@ class StatementListCreateView(generics.ListAPIView):
 
     @extend_schema(
         request=StatementUploadRequestSerializer,
-        responses={202: StatementDetailSerializer, **error_responses(422)},
+        responses={202: StatementDetailSerializer, **error_responses(403, 422)},
     )
     def post(self, request, *args, **kwargs):
         upload = StatementUploadRequestSerializer(data=request.data)

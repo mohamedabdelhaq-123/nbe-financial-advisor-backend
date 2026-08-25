@@ -128,10 +128,19 @@ class User(AbstractBaseUser, PermissionsMixin):
         # `status` field instead of adding a redundant is_active column.
         return self.status == "active"
 
-    @property
-    def has_active_consent(self):
-        """Quick check to see if the user's latest consent state is valid."""
-        latest_consent = self.consent_records.order_by("-created_at").first()
+    def has_active_consent(self, consent_type):
+        """
+        Whether this user's most recent consent record *for this type* is
+        granted and not revoked. Per-type, not global: consent_records is a
+        flat append-only log across every type (ConsentRecord docstring /
+        MeConsentRevokeView), so this must filter to one type before taking
+        "latest" — otherwise granting `terms_of_service` after revoking
+        `data_processing` would make a data_processing check pass again just
+        because a newer row for a different type exists.
+        """
+        latest_consent = (
+            self.consent_records.filter(consent_type=consent_type).order_by("-created_at").first()
+        )
         return (
             latest_consent is not None
             and latest_consent.granted_at is not None
