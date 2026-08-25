@@ -87,7 +87,9 @@ class TransactionListCreateView(ListAPIView):
             return Transaction.objects.none()
         # Default order when no `sort` param is given — OrderingFilter
         # leaves the queryset's existing order alone otherwise.
-        return Transaction.objects.filter(user=self.request.user).order_by("-transaction_date")
+        return Transaction.objects.filter(user=self.request.user).order_by(
+            "-transaction_date", "-created_at"
+        )
 
     @extend_schema(
         description=(
@@ -97,7 +99,7 @@ class TransactionListCreateView(ListAPIView):
             "other validation problem returns 422. `source` is always set "
             'to `"manual"` server-side and can\'t be overridden by the '
             "client. A transaction matching an existing one's date, "
-            "amount, and merchant is rejected as a likely duplicate (422, "
+            "amount, merchant, and direction is rejected as a likely duplicate (422, "
             '`error.code: "duplicate_transaction"`, with the existing '
             "row's id in `error.fields.transaction_id`)."
         ),
@@ -124,12 +126,13 @@ class TransactionListCreateView(ListAPIView):
             transaction_date=data["transaction_date"],
             amount=data["amount"],
             merchant_raw=data.get("merchant_raw"),
+            transaction_type=data.get("transaction_type"),
         ).first()
         if duplicate is not None:
             # Duplicate-prevention guardrail applies to manual entry exactly
             # as it does to statement bulk-insert.
             raise BusinessRuleError(
-                "A transaction matching this date, amount, and merchant already exists.",
+                "A transaction matching this date, amount, merchant, and direction already exists.",
                 code="duplicate_transaction",
                 fields={"transaction_id": str(duplicate.id)},
             )

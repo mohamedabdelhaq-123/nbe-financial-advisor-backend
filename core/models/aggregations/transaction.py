@@ -52,6 +52,7 @@ class Transaction(models.Model):
                     "transaction_date",
                     "amount",
                     "merchant_raw",
+                    "transaction_type",
                 ],
                 name="unique_ledger_transaction_match",
             )
@@ -75,10 +76,16 @@ class Transaction(models.Model):
         return f"{self.transaction_date} - {merchant}: {self.amount}"
 
     @classmethod
-    def is_duplicate(cls, user_id, account_id, date, amount, merchant_raw):
+    def is_duplicate(
+        cls, user_id, account_id, date, amount, merchant_raw, transaction_type
+    ):
         """
         Enforces transaction-level duplicate checking across the engine.
         Can be quickly called by ingestion tasks or dashboard entry views.
+
+        Direction is part of the identity: a debit and a credit with the
+        same merchant, amount, and date represent opposite movements and
+        must never suppress one another.
         """
         return cls.objects.filter(
             user_id=user_id,
@@ -86,4 +93,5 @@ class Transaction(models.Model):
             transaction_date=date,
             amount=amount,
             merchant_raw=merchant_raw,
+            transaction_type=transaction_type,
         ).exists()

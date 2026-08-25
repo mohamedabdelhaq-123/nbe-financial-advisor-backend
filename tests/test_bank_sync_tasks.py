@@ -143,6 +143,27 @@ def test_dedupes_against_an_existing_transaction(account, user):
     assert Transaction.objects.filter(account=account).count() == 1
 
 
+def test_opposite_direction_is_not_treated_as_a_duplicate(account, user):
+    Transaction.objects.create(
+        user=user,
+        account=account,
+        source="manual",
+        transaction_date="2026-07-01",
+        merchant_raw="Carrefour",
+        amount="150.00",
+        transaction_type="debit",
+    )
+
+    ingest_synced_transactions(
+        str(account.id), [_debit_payload(transaction_type="credit")]
+    )
+
+    transactions = Transaction.objects.filter(account=account)
+    assert transactions.count() == 2
+    assert transactions.filter(transaction_type="debit").count() == 1
+    assert transactions.filter(transaction_type="credit").count() == 1
+
+
 def test_unknown_account_is_a_noop(db):
     # Doesn't raise, doesn't create anything, doesn't publish (no account to
     # scope an SSE event to at all).

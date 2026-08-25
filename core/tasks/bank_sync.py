@@ -49,7 +49,12 @@ def ingest_synced_transactions(bank_account_id: str, transactions: list[dict]) -
             else date.fromisoformat(txn["transaction_date"][:10])
         )
         if Transaction.is_duplicate(
-            account.user_id, account.id, transaction_date, txn["amount"], txn.get("merchant_raw")
+            account.user_id,
+            account.id,
+            transaction_date,
+            txn["amount"],
+            txn.get("merchant_raw"),
+            txn.get("transaction_type"),
         ):
             continue
         merchant_raw = txn.get("merchant_raw")

@@ -4,6 +4,30 @@ from django.db.models import Q
 from core.models import AnomalyFlag, RecurringCharge, SpendingPatternInsight, Transaction
 
 
+class TransactionOrderingFilter(filters.OrderingFilter):
+    """Keep same-day transaction ordering deterministic and visibly recent.
+
+    Transaction dates intentionally have day precision, while live sync can
+    create many rows on that same day. When callers sort by date, use the
+    row creation timestamp as a same-direction tie-breaker so a newly synced
+    transaction does not land unpredictably on a later page.
+    """
+
+    def filter(self, queryset, value):
+        if not value:
+            return queryset
+
+        ordering = [self.get_ordering_value(param) for param in value]
+        date_ordering = next(
+            (field for field in ordering if field.lstrip("-") == "transaction_date"),
+            None,
+        )
+        if date_ordering and not any(field.lstrip("-") == "created_at" for field in ordering):
+            direction = "-" if date_ordering.startswith("-") else ""
+            ordering.append(f"{direction}created_at")
+        return queryset.order_by(*ordering)
+
+
 class TransactionFilterSet(filters.FilterSet):
     """GET /transactions — PLAN.md Checkpoints B/F. `sort` replaces the
     former hand-rolled ALLOWED_SORT_FIELDS allowlist; default ordering
@@ -35,7 +59,7 @@ class TransactionFilterSet(filters.FilterSet):
     search = filters.CharFilter(method="filter_search")
     min_amount = filters.NumberFilter(field_name="amount", lookup_expr="gte")
     max_amount = filters.NumberFilter(field_name="amount", lookup_expr="lte")
-    sort = filters.OrderingFilter(
+    sort = TransactionOrderingFilter(
         fields=(
             ("amount", "amount"),
             ("transaction_date", "transaction_date"),
