@@ -154,9 +154,7 @@ def test_opposite_direction_is_not_treated_as_a_duplicate(account, user):
         transaction_type="debit",
     )
 
-    ingest_synced_transactions(
-        str(account.id), [_debit_payload(transaction_type="credit")]
-    )
+    ingest_synced_transactions(str(account.id), [_debit_payload(transaction_type="credit")])
 
     transactions = Transaction.objects.filter(account=account)
     assert transactions.count() == 2

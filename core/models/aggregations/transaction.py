@@ -76,9 +76,7 @@ class Transaction(models.Model):
         return f"{self.transaction_date} - {merchant}: {self.amount}"
 
     @classmethod
-    def is_duplicate(
-        cls, user_id, account_id, date, amount, merchant_raw, transaction_type
-    ):
+    def is_duplicate(cls, user_id, account_id, date, amount, merchant_raw, transaction_type):
         """
         Enforces transaction-level duplicate checking across the engine.
         Can be quickly called by ingestion tasks or dashboard entry views.
