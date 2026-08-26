@@ -22,9 +22,8 @@ ALLOWED_STATEMENT_CONTENT_TYPES = {"application/pdf", "image/png", "image/jpeg"}
 
 def validate_statement_upload(file_obj) -> None:
     """Shared by validate_file() below and create_statement_from_upload()
-    directly (the ConversationAttachmentsView path never touches this
-    serializer). Checks file_obj.size, never .read() — no bytes touched
-    for an oversized file."""
+    directly. Checks file_obj.size, never .read() — no bytes touched for an
+    oversized file."""
     if file_obj.size > MAX_STATEMENT_UPLOAD_BYTES:
         raise serializers.ValidationError(
             f"File is too large ({file_obj.size} bytes) — the maximum is "
@@ -290,3 +289,17 @@ class TransactionApprovalResultSerializer(serializers.Serializer):
 class TransactionApprovalResponseSerializer(serializers.Serializer):
     statement_status = serializers.CharField()
     resolved = TransactionApprovalResultSerializer(many=True)
+
+
+class StatementBulkDeleteRequestSerializer(serializers.Serializer):
+    ids = serializers.ListField(child=serializers.UUIDField(), allow_empty=False)
+
+
+class StatementBulkDeleteResultSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    reason = serializers.CharField()
+
+
+class StatementBulkDeleteResponseSerializer(serializers.Serializer):
+    deleted = serializers.ListField(child=serializers.CharField())
+    skipped = StatementBulkDeleteResultSerializer(many=True)
