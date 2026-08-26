@@ -2,11 +2,17 @@ from django.contrib.auth import authenticate
 from rest_framework import serializers
 
 from core.models import User
-from core.validators import validate_signup_email
+from core.validators import validate_phone_format, validate_signup_email
 
 
 class SignupSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)
+    phone = serializers.CharField(
+        required=True,
+        allow_blank=False,
+        allow_null=False,
+        validators=[validate_phone_format],
+    )
 
     class Meta:
         model = User

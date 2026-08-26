@@ -56,6 +56,11 @@ def test_authorize_serves_login_form(client):
     )
     assert response.status_code == 200
     assert "customer_bank_id" in response.text
+    assert 'id="continue-button"' in response.text
+    assert 'class="button-spinner"' in response.text
+    assert "continueButton.disabled = true" in response.text
+    assert 'continueButton.setAttribute("aria-busy", "true")' in response.text
+    assert 'textContent = "Sending OTP..."' in response.text
     assert _extract_challenge_id(response.text)
     assert "frame-ancestors" in response.headers["content-security-policy"]
 
@@ -125,7 +130,11 @@ def test_login_start_unknown_customer_404s(client):
 def test_login_start_generates_otp_and_sends_email(client):
     challenge_id = _authorize(client)
     lookup_response = _FakeResponse(
-        json_data={"customer_id": "cust-uuid-1", "email": "customer@example.com"}
+        json_data={
+            "customer_id": "cust-uuid-1",
+            "email": "customer@example.com",
+            "phone": "+201001234567",
+        }
     )
 
     with patch("app.routes_login.requests.get", return_value=lookup_response) as mock_get, patch(
@@ -147,12 +156,34 @@ def test_login_start_generates_otp_and_sends_email(client):
     assert challenge.otp is not None
     assert len(challenge.otp) == 6
     assert challenge.customer_id == "cust-uuid-1"
+    assert challenge.phone == "+201001234567"
+
+
+def test_login_start_rejects_customer_record_without_phone(client):
+    challenge_id = _authorize(client)
+    lookup_response = _FakeResponse(
+        json_data={"customer_id": "cust-uuid-1", "email": "customer@example.com"}
+    )
+
+    with patch("app.routes_login.requests.get", return_value=lookup_response), patch(
+        "app.routes_login.notification.send_email"
+    ) as mock_send_email:
+        response = client.post(
+            "/login/start", data={"challenge_id": challenge_id, "customer_bank_id": "cust-001"}
+        )
+
+    assert response.status_code == 502
+    mock_send_email.assert_not_called()
 
 
 def test_login_start_returns_502_when_notification_fails(client):
     challenge_id = _authorize(client)
     lookup_response = _FakeResponse(
-        json_data={"customer_id": "cust-uuid-1", "email": "customer@example.com"}
+        json_data={
+            "customer_id": "cust-uuid-1",
+            "email": "customer@example.com",
+            "phone": "+201001234567",
+        }
     )
     from app.notification import NotificationError
 
@@ -170,11 +201,18 @@ def test_login_start_returns_502_when_notification_fails(client):
 # ============================================================================
 
 
-def _authorize_and_start_login(client, customer_id="cust-uuid-1", email="customer@example.com"):
+def _authorize_and_start_login(
+    client,
+    customer_id="cust-uuid-1",
+    email="customer@example.com",
+    phone="+201001234567",
+):
     challenge_id = _authorize(client)
     with patch(
         "app.routes_login.requests.get",
-        return_value=_FakeResponse(json_data={"customer_id": customer_id, "email": email}),
+        return_value=_FakeResponse(
+            json_data={"customer_id": customer_id, "email": email, "phone": phone}
+        ),
     ), patch("app.routes_login.notification.send_email"):
         client.post(
             "/login/start", data={"challenge_id": challenge_id, "customer_bank_id": "cust-001"}
@@ -241,6 +279,7 @@ def test_token_issues_jwt_and_external_customer_id(client):
     body = response.json()
     assert body["token_type"] == "bearer"
     assert body["external_customer_id"] == "cust-uuid-1"
+    assert body["phone"] == "+201001234567"
     assert body["refresh_token"]
 
     claims = jwt.decode(body["access_token"], "test-jwt-secret")

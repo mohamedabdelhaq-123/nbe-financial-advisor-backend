@@ -45,12 +45,24 @@ def authorize(
     body = f"""
         <h1>Mock Bank Login</h1>
         <p>Enter your bank customer ID to continue.</p>
-        <form method="post" action="/login/start">
+        <form id="customer-login-form" method="post" action="/login/start">
             <input type="hidden" name="challenge_id" value="{challenge.challenge_id}" />
             <label for="customer_bank_id">Customer ID</label>
             <input type="text" id="customer_bank_id" name="customer_bank_id" required />
-            <button type="submit">Continue</button>
+            <button id="continue-button" type="submit">
+                <span class="button-label">Continue</span>
+                <span class="button-spinner" aria-hidden="true"></span>
+            </button>
         </form>
+        <script>
+            const loginForm = document.getElementById("customer-login-form");
+            const continueButton = document.getElementById("continue-button");
+            loginForm.addEventListener("submit", () => {{
+                continueButton.disabled = true;
+                continueButton.setAttribute("aria-busy", "true");
+                continueButton.querySelector(".button-label").textContent = "Sending OTP...";
+            }});
+        </script>
     """
     response = HTMLResponse(render_page("Mock Bank Login", body))
     response.headers["Content-Security-Policy"] = csp_frame_ancestors_header()

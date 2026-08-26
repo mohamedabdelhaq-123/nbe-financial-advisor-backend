@@ -7,10 +7,11 @@ instead of its name; no `type` param at all) plus a regression test for
 account_id, which was already correct.
 """
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from core.models import BankAccount, Category, Transaction, User
@@ -134,3 +135,19 @@ class TestAccountIdFilter:
         assert resp.status_code == 200
         merchants = {row["merchant_raw"] for row in resp.data["results"]}
         assert merchants == {"a1"}
+
+
+class TestTransactionOrdering:
+    def test_descending_date_sort_shows_newest_same_day_transaction_first(
+        self, client, user, account
+    ):
+        older = _make_txn(user, account, merchant="older")
+        newer = _make_txn(user, account, merchant="newer")
+        now = timezone.now()
+        Transaction.objects.filter(id=older.id).update(created_at=now - timedelta(minutes=1))
+        Transaction.objects.filter(id=newer.id).update(created_at=now)
+
+        resp = client.get("/transactions/", {"sort": "-transaction_date"})
+
+        assert resp.status_code == 200
+        assert [row["merchant_raw"] for row in resp.data["results"]] == ["newer", "older"]

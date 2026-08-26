@@ -13,10 +13,12 @@ import random
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
+from html import escape
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import config
@@ -82,6 +84,7 @@ class SimulateAccountRequest(BaseModel):
 class SimulateCustomerRequest(BaseModel):
     customer_bank_id: str
     email: str
+    phone: str = Field(pattern=r"^\+[1-9]\d{7,14}$")
     name: str | None = None
     accounts: list[SimulateAccountRequest] | None = None
 
@@ -166,6 +169,115 @@ def _deliver_webhook(payload: dict) -> dict:
         return {"success": False, "status_code": None, "error": str(exc)}
 
 
+@router.get("/demo", response_class=HTMLResponse)
+def demo_controls(db: Session = Depends(get_db)):
+    """Presenter-friendly operator page for the real simulation endpoint.
+
+    The page does not write to either database itself. Its form calls
+    POST /simulate/transaction, which records the mock-bank ledger event and
+    delivers the normal webhook to Django.
+    """
+    accounts = db.query(MockAccount).order_by(MockAccount.created_at, MockAccount.id).all()
+    options = "".join(
+        (
+            f'<option value="{account.id}">'
+            f"{escape(account.bank_name)} · "
+            f"{escape(account.account_number or str(account.id))}</option>"
+        )
+        for account in accounts
+    )
+    empty_message = (
+        ""
+        if accounts
+        else '<p class="warning">No mock accounts exist. Seed demo data before presenting.</p>'
+    )
+    submit_disabled = "" if accounts else " disabled"
+
+    return HTMLResponse(f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mock Bank Demo Controls</title>
+  <style>
+    body {{ font: 16px system-ui, sans-serif; max-width: 720px; margin: 3rem auto;
+      padding: 0 1rem; color: #172033; }}
+    form {{ display: grid; gap: 1rem; padding: 1.5rem;
+      border: 1px solid #d7dce5; border-radius: 12px; }}
+    label {{ display: grid; gap: .35rem; font-weight: 600; }}
+    input, select, button {{ font: inherit; padding: .7rem; }}
+    button {{ cursor: pointer; font-weight: 700; }}
+    #result {{ margin-top: 1rem; padding: 1rem; border-radius: 8px;
+      background: #f3f5f8; white-space: pre-wrap; }}
+    .success {{ color: #087443; }} .failure, .warning {{ color: #a32929; }}
+  </style>
+</head>
+<body>
+  <h1>Mock Bank Demo Controls</h1>
+  <p>Operator tool: this creates a real mock-ledger transaction and sends the
+    normal webhook to the application.</p>
+  {empty_message}
+  <form id="transaction-form">
+    <label>Account<select id="account-id" required>{options}</select></label>
+    <label>Type<select id="transaction-type">
+      <option value="debit">Expense</option>
+      <option value="credit">Income</option>
+    </select></label>
+    <label>Merchant<input id="merchant" value="Carrefour Demo Purchase" required /></label>
+    <label>Amount (EGP)<input id="amount" type="number" min="0.01" step="0.01"
+      value="125.00" required /></label>
+    <button id="submit" type="submit"{submit_disabled}>Send transaction</button>
+  </form>
+  <p>Reset: restore merchant to <code>Carrefour Demo Purchase</code> and amount
+    to <code>125.00</code>. If webhook delivery fails, do not submit again:
+    restore service health and reset/reseed the demo first, so a second ledger
+    transaction is not created.</p>
+  <div id="result" role="status" aria-live="polite">Ready.</div>
+  <script>
+    const form = document.getElementById("transaction-form");
+    const button = document.getElementById("submit");
+    const result = document.getElementById("result");
+    form.addEventListener("submit", async (event) => {{
+      event.preventDefault();
+      button.disabled = true;
+      result.className = "";
+      result.textContent = "Sending through the mock-bank webhook path...";
+      try {{
+        const response = await fetch("/simulate/transaction", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{
+            account_id: document.getElementById("account-id").value,
+            transaction_type: document.getElementById("transaction-type").value,
+            merchant: document.getElementById("merchant").value,
+            amount: document.getElementById("amount").value,
+          }}),
+        }});
+        const payload = await response.json();
+        if (!response.ok) {{
+          throw new Error(payload.detail || `Request failed (${{response.status}})`);
+        }}
+        const delivered = payload.webhook_delivery && payload.webhook_delivery.success;
+        result.className = delivered ? "success" : "failure";
+        result.textContent = delivered
+          ? `Delivered. Transaction ${{payload.external_transaction_id}}
+             should now appear in the app.`
+          : `Created in the mock ledger, but webhook delivery failed.
+Do not submit again until service health and demo data are reset.\n${{
+              JSON.stringify(payload.webhook_delivery, null, 2)
+            }}`;
+      }} catch (error) {{
+        result.className = "failure";
+        result.textContent = `Failed: ${{error instanceof Error ? error.message : String(error)}}`;
+      }} finally {{
+        button.disabled = false;
+      }}
+    }});
+  </script>
+</body>
+</html>""")
+
+
 @router.post("/customer", status_code=status.HTTP_201_CREATED)
 def simulate_customer(body: SimulateCustomerRequest, db: Session = Depends(get_db)):
     """Dev/demo trigger: seeds a new mock bank customer and starter
@@ -185,6 +297,7 @@ def simulate_customer(body: SimulateCustomerRequest, db: Session = Depends(get_d
         id=uuid.uuid4(),
         customer_bank_id=body.customer_bank_id,
         email=body.email,
+        phone=body.phone,
         name=body.name,
     )
     db.add(customer)
@@ -212,6 +325,7 @@ def simulate_customer(body: SimulateCustomerRequest, db: Session = Depends(get_d
         "customer_id": str(customer.id),
         "customer_bank_id": customer.customer_bank_id,
         "email": customer.email,
+        "phone": customer.phone,
         "name": customer.name,
         "accounts": [_serialize_account(account) for account in accounts],
     }

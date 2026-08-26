@@ -184,7 +184,12 @@ class Command(BaseCommand):
         directly against the mock-bank-sync ledger."""
         response = requests.post(
             f"{settings.MOCK_BANK_SYNC_SERVICE_URL}/simulate/customer",
-            json={"customer_bank_id": customer_bank_id, "email": email, "name": name},
+            json={
+                "customer_bank_id": customer_bank_id,
+                "email": email,
+                "phone": "+201000000000",
+                "name": name,
+            },
             timeout=self._TIMEOUT_SECONDS,
         )
         if response.status_code != 201:

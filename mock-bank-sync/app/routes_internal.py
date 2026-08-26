@@ -18,9 +18,9 @@ router = APIRouter(prefix="/internal", tags=["internal"])
 
 @router.get("/customers/lookup", dependencies=[Depends(require_internal_secret)])
 def lookup_customer(customer_bank_id: str, db: Session = Depends(get_db)):
-    """Resolves an opaque bank-login identifier to a customer id, email, and
-    name — the email is where mock-bank-oauth sends the OTP; both email and
-    name flow on through to the Django backend for provisioning a user on a
+    """Resolves an opaque bank-login identifier to a customer id, email, phone,
+    and name — the email is where mock-bank-oauth sends the OTP; the profile
+    fields flow on through to the Django backend for provisioning a user on a
     first-time bank login."""
     customer = (
         db.query(MockCustomer).filter(MockCustomer.customer_bank_id == customer_bank_id).first()
@@ -31,4 +31,9 @@ def lookup_customer(customer_bank_id: str, db: Session = Depends(get_db)):
             detail=f"No mock customer found for customer_bank_id={customer_bank_id!r}",
         )
 
-    return {"customer_id": str(customer.id), "email": customer.email, "name": customer.name}
+    return {
+        "customer_id": str(customer.id),
+        "email": customer.email,
+        "phone": customer.phone,
+        "name": customer.name,
+    }

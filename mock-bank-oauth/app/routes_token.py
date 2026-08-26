@@ -81,6 +81,7 @@ def token(
             # concept of a Django user itself, it just forwards what
             # mock-bank-sync's customer directory already resolved.
             "email": record.email,
+            "phone": record.phone,
             "name": record.name,
         }
     )

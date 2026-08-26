@@ -429,6 +429,7 @@ class StatementTransactionApprovalView(APIView):
                     transaction_date=row["transaction_date"],
                     amount=row["amount"],
                     merchant_raw=merchant_raw,
+                    transaction_type=row.get("transaction_type"),
                 ).first()
                 if existing is not None:
                     resolved.append(

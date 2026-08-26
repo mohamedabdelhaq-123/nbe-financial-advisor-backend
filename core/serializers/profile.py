@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from core.models import BankAccount, ConsentRecord, User, UserPreference
+from core.validators import validate_phone_format
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -14,6 +15,15 @@ class UserSerializer(serializers.ModelSerializer):
     # nudge for that case specifically, since bank OTP already proved the
     # identity behind the email.
     has_password = serializers.SerializerMethodField()
+    # Existing rows may still contain null while this late-stage change is
+    # rolled out, but clients cannot create or edit a profile to an empty or
+    # malformed number. Signup itself requires the field.
+    phone = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        allow_null=False,
+        validators=[validate_phone_format],
+    )
 
     class Meta:
         model = User

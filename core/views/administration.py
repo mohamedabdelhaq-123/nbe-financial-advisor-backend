@@ -2,7 +2,7 @@ from datetime import datetime
 from datetime import timezone as dt_timezone
 
 from django.conf import settings
-from django.contrib.auth.hashers import check_password
+from django.contrib.auth.hashers import check_password, make_password
 from django.db import IntegrityError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -51,6 +51,12 @@ from core.serializers.budgets import (
     StarterTemplateSerializer,
 )
 from services import ai_service, file_storage
+
+# Built once at process startup with the same configured preferred hasher as
+# real admin passwords. Unknown-email attempts still perform one expensive
+# password verification, so the early timing does not disclose whether an
+# admin address exists.
+_ADMIN_LOGIN_DUMMY_HASH = make_password("not-a-real-admin-password")
 
 
 def _set_admin_refresh_cookie(response, refresh_token: str) -> None:
@@ -117,11 +123,11 @@ class AdminLoginView(APIView):
         password = serializer.validated_data["password"]
 
         admin_user = AdminUser.objects.filter(email=email).first()
-        # check_password() against a fixed dummy hash when admin_user is None
-        # would be the textbook timing-attack-resistant move; skipped here as
-        # disproportionate for a mocked-services/routes checkpoint — noted,
-        # not silently overlooked.
-        if admin_user is None or not check_password(password, admin_user.password_hash):
+        password_hash = (
+            admin_user.password_hash if admin_user is not None else _ADMIN_LOGIN_DUMMY_HASH
+        )
+        password_matches = check_password(password, password_hash)
+        if admin_user is None or not password_matches:
             # Deliberately generic — same reasoning as end-user login
             # (core/serializers/auth.py): doesn't reveal whether the email
             # is registered.

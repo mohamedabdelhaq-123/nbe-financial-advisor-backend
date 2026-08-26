@@ -63,7 +63,7 @@ Internal-secret protected (`X-Internal-Secret` header, must equal
 `MOCK_BANK_INTERNAL_SECRET`). Called only by mock-bank-oauth as the
 identity-resolution step before it sends an OTP.
 
-- `200 {"customer_id": "<uuid>", "email": "<email>"}`
+- `200 {"customer_id": "<uuid>", "email": "<email>", "phone": "+201001234567", "name": "..."}`
 - `401` — missing header. `403` — header present but wrong.
 - `404 {"detail": "No mock customer found for customer_bank_id=...'"}` — no
   such customer.
@@ -192,7 +192,7 @@ Behavior:
 
 No auth, same rationale as above. Seeds a new test bank customer (and
 starter account(s)) without touching the DB directly — useful for exercising
-multi-bank/multiple-account linking scenarios in demos.
+the mock-bank sign-in and initial synchronization path in demos.
 
 Request body:
 
@@ -200,6 +200,7 @@ Request body:
 {
   "customer_bank_id": "cust-001",
   "email": "test@example.com",
+  "phone": "+201001234567",
   "name": "Test Customer",
   "accounts": [
     {
@@ -222,6 +223,7 @@ Response:
   "customer_id": "<uuid>",
   "customer_bank_id": "cust-001",
   "email": "test@example.com",
+  "phone": "+201001234567",
   "name": "Test Customer",
   "accounts": [
     {
@@ -236,6 +238,17 @@ Response:
 ```
 
 - `201` on success. `409` if `customer_bank_id` already exists.
+
+### `GET /simulate/demo`
+
+No auth, same trusted dev/demo-network constraint as the other `/simulate/*`
+routes. Serves the presenter-facing **Mock Bank Demo Controls** page. Its
+deterministic default form calls the real `POST /simulate/transaction`
+endpoint, displays webhook delivery success/failure, and includes reset and
+safe failure instructions. A failed webhook happens after the mock ledger
+write, so the operator is explicitly told not to submit again until service
+health and demo data are reset/reseeded. The page never writes directly to the
+Django application database.
 
 ### `DELETE /simulate/customer/{customer_bank_id}`
 
@@ -255,7 +268,9 @@ service's *own* test suite.
 - `MockCustomer` — `id` (UUID PK), `customer_bank_id` (string, unique,
   not null — opaque bank-login identifier: customer number, username,
   whatever; not assumed to be an email), `email` (string, not null — used
-  for OTP delivery by mock-bank-oauth), `name` (string, nullable).
+  for OTP delivery by mock-bank-oauth), `phone` (international-format string,
+  not null — forwarded when bank sign-in provisions an app user), `name`
+  (string, nullable).
 - `MockAccount` — `id` (UUID PK), `customer_id` (FK -> `MockCustomer.id`),
   `bank_name` (string, default `"Mock National Bank"`), `account_type`
   (string, nullable, e.g. checking/savings/credit_card),
@@ -317,8 +332,12 @@ with:
 ```bash
 curl -X POST http://localhost:8003/simulate/customer \
   -H "Content-Type: application/json" \
-  -d '{"customer_bank_id": "cust-001", "email": "test@example.com", "name": "Test Customer"}'
+  -d '{"customer_bank_id": "cust-001", "email": "test@example.com", "phone": "+201001234567", "name": "Test Customer"}'
 ```
+
+For the presentation, open `http://localhost:8003/simulate/demo` instead of
+typing the transaction command below. It uses the same endpoint and webhook
+path while showing delivery feedback in the browser.
 
 Then fire a simulated live transaction against one of that customer's
 accounts (pushes to the Django backend's webhook):

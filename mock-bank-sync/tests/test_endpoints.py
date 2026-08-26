@@ -34,10 +34,20 @@ class _FakeWebhookResponse:
     text = ""
 
 
-def _seed_customer(client, customer_bank_id="cust-001", email="customer@example.com"):
+def _seed_customer(
+    client,
+    customer_bank_id="cust-001",
+    email="customer@example.com",
+    phone="+201001234567",
+):
     response = client.post(
         "/simulate/customer",
-        json={"customer_bank_id": customer_bank_id, "email": email, "name": "Test Customer"},
+        json={
+            "customer_bank_id": customer_bank_id,
+            "email": email,
+            "phone": phone,
+            "name": "Test Customer",
+        },
     )
     assert response.status_code == 201
     return response.json()
@@ -73,6 +83,7 @@ def test_simulate_customer_creates_customer_and_default_account(client):
 
     assert body["customer_bank_id"] == "cust-001"
     assert body["email"] == "customer@example.com"
+    assert body["phone"] == "+201001234567"
     assert len(body["accounts"]) == 1
     assert body["accounts"][0]["account_type"] == "checking"
 
@@ -81,9 +92,31 @@ def test_simulate_customer_duplicate_bank_id_conflicts(client):
     _seed_customer(client)
     response = client.post(
         "/simulate/customer",
-        json={"customer_bank_id": "cust-001", "email": "other@example.com"},
+        json={
+            "customer_bank_id": "cust-001",
+            "email": "other@example.com",
+            "phone": "+201001234568",
+        },
     )
     assert response.status_code == 409
+
+
+def test_simulate_customer_requires_valid_phone(client):
+    missing = client.post(
+        "/simulate/customer",
+        json={"customer_bank_id": "missing-phone", "email": "missing@example.com"},
+    )
+    malformed = client.post(
+        "/simulate/customer",
+        json={
+            "customer_bank_id": "bad-phone",
+            "email": "bad@example.com",
+            "phone": "01001234567",
+        },
+    )
+
+    assert missing.status_code == 422
+    assert malformed.status_code == 422
 
 
 def test_delete_simulated_customer_cascades_to_accounts(client):
@@ -127,6 +160,7 @@ def test_internal_lookup_resolves_known_customer(client):
     assert response.status_code == 200
     body = response.json()
     assert body["email"] == "customer@example.com"
+    assert body["phone"] == "+201001234567"
     assert body["customer_id"]
 
 
@@ -223,6 +257,20 @@ def test_transactions_for_another_customers_account_404s(client):
 # ============================================================================
 # POST /simulate/transaction
 # ============================================================================
+
+
+def test_demo_controls_list_seeded_account_and_real_simulation_endpoint(client):
+    body = _seed_customer(client)
+    account_id = body["accounts"][0]["external_account_id"]
+
+    response = client.get("/simulate/demo")
+
+    assert response.status_code == 200
+    assert "Mock Bank Demo Controls" in response.text
+    assert account_id in response.text
+    assert "Carrefour Demo Purchase" in response.text
+    assert 'fetch("/simulate/transaction"' in response.text
+    assert "do not submit again" in response.text
 
 
 def test_simulate_transaction_creates_transaction_and_attempts_webhook(client):
