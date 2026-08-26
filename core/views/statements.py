@@ -319,9 +319,7 @@ class StatementBulkDeleteView(APIView):
         serializer.is_valid(raise_exception=True)
         ids = serializer.validated_data["ids"]
 
-        found_by_id = {
-            s.id: s for s in StatementFile.objects.filter(id__in=ids, user=request.user)
-        }
+        found_by_id = {s.id: s for s in StatementFile.objects.filter(id__in=ids, user=request.user)}
 
         deleted = []
         skipped = []
