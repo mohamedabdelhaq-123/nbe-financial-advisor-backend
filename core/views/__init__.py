@@ -1,5 +1,7 @@
 from core.views.administration import (
     AdminFeedbackListView,
+    AdminInvestmentInstrumentDetailView,
+    AdminInvestmentInstrumentListCreateView,
     AdminIssueListView,
     AdminIssueUpdateView,
     AdminLoginView,
@@ -19,6 +21,7 @@ from core.views.aggregations import (
     RecurringChargesView,
     SpendingInsightsView,
     StabilityScoreView,
+    TransactionBulkDeleteView,
     TransactionDetailView,
     TransactionListCreateView,
 )
@@ -52,7 +55,6 @@ from core.views.categories import (
     CategoryListView,
 )
 from core.views.conversations import (
-    ConversationAttachmentsView,
     ConversationDetailView,
     ConversationListCreateView,
     ConversationMessagesView,
@@ -61,6 +63,18 @@ from core.views.conversations import (
 from core.views.events import EventStreamView, SSETicketMintView
 from core.views.feedback import FeedbackCreateView, IssueListCreateView
 from core.views.health import db_check, health, ping
+from core.views.investment_holdings import (
+    InvestmentHoldingDetailView,
+    InvestmentHoldingListCreateView,
+    InvestmentHoldingValuationView,
+    InvestmentInstrumentListView,
+)
+from core.views.investment_scenarios import (
+    SavedInvestmentAllocationPurchaseView,
+    SavedInvestmentAllocationUpdateView,
+    SavedInvestmentScenarioDetailView,
+    SavedInvestmentScenarioListView,
+)
 from core.views.profile import (
     BankAccountDetailView,
     BankAccountListCreateView,
@@ -72,6 +86,7 @@ from core.views.profile import (
 )
 from core.views.recommendation import RecommendationFeedbackView, RecommendationsView
 from core.views.statements import (
+    StatementBulkDeleteView,
     StatementDetailView,
     StatementListCreateView,
     StatementOcrArtifactDownloadView,
@@ -107,11 +122,13 @@ __all__ = [
     "BankSyncWebhookView",
     "StatementListCreateView",
     "StatementDetailView",
+    "StatementBulkDeleteView",
     "StatementOcrResultView",
     "StatementOcrArtifactDownloadView",
     "StatementTransactionApprovalView",
     "TransactionListCreateView",
     "TransactionDetailView",
+    "TransactionBulkDeleteView",
     "MonthlySummariesView",
     "CategoryBreakdownView",
     "RecurringChargesView",
@@ -135,6 +152,14 @@ __all__ = [
     "ConversationDetailView",
     "ConversationMessagesView",
     "MessageWidgetView",
+    "SavedInvestmentScenarioListView",
+    "SavedInvestmentScenarioDetailView",
+    "SavedInvestmentAllocationPurchaseView",
+    "SavedInvestmentAllocationUpdateView",
+    "InvestmentHoldingListCreateView",
+    "InvestmentHoldingDetailView",
+    "InvestmentHoldingValuationView",
+    "InvestmentInstrumentListView",
     "ConversationAttachmentsView",
     "SSETicketMintView",
     "EventStreamView",
@@ -146,6 +171,8 @@ __all__ = [
     "AdminLogoutView",
     "AdminRefreshView",
     "AdminFeedbackListView",
+    "AdminInvestmentInstrumentListCreateView",
+    "AdminInvestmentInstrumentDetailView",
     "AdminIssueListView",
     "AdminIssueUpdateView",
     "AdminProductListCreateView",

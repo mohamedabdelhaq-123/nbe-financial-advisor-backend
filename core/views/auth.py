@@ -134,6 +134,10 @@ class SignupView(APIView):
     silently logging into the existing account.
     """
 
+    # A stale bearer token must never block a public session-entry endpoint.
+    # In particular, DRF authenticates before checking AllowAny, so leaving the
+    # default JWT authenticator enabled would reject signup before this view ran.
+    authentication_classes = []
     permission_classes = [AllowAny]
     # Shared "auth" throttle scope (config/settings.py) — brute-force/spam guard.
     throttle_classes = [ScopedRateThrottle]
@@ -163,6 +167,7 @@ class LoginView(APIView):
     discover which emails are registered.
     """
 
+    authentication_classes = []
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "auth"
@@ -194,7 +199,17 @@ class RefreshView(APIView):
     state and send the user back to login rather than retrying.
     """
 
+    # Refresh is authenticated by the rotating httpOnly cookie, not by the
+    # access-token header. An expired bearer header is exactly why a client is
+    # calling this endpoint and must not prevent the cookie exchange.
+    authentication_classes = []
     permission_classes = [AllowAny]
+
+    def get_authenticate_header(self, request):
+        # InvalidToken is an AuthenticationFailed response. DRF downgrades it
+        # to 403 when a view has no authenticator/challenge, so keep the public
+        # refresh endpoint's established 401 contract explicitly.
+        return "Bearer"
 
     @extend_schema(
         request=None,

@@ -21,6 +21,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from core.exceptions import ConflictError
 from core.filters.administration import (
+    AdminInvestmentInstrumentFilterSet,
     AdminIssueFilterSet,
     AdminProductFilterSet,
     AdminReactionFilterSet,
@@ -28,6 +29,7 @@ from core.filters.administration import (
 from core.models import (
     AdminBlacklistedToken,
     AdminUser,
+    InvestmentInstrument,
     ProblemStatement,
     Product,
     Reaction,
@@ -36,6 +38,7 @@ from core.models import (
 from core.openapi import error_responses
 from core.permissions import AdminAuthMixin, IsSuperAdmin
 from core.serializers.administration import (
+    AdminInvestmentInstrumentSerializer,
     AdminIssueSerializer,
     AdminIssueUpdateSerializer,
     AdminLoginResponseSerializer,
@@ -142,7 +145,15 @@ class AdminRefreshView(APIView):
     own rotation (it blacklists via OutstandingToken, which rejects
     AdminUser); rotates against AdminBlacklistedToken instead."""
 
+    # The admin refresh cookie is the credential for this endpoint. Ignore a
+    # stale access-token header so an expired admin session can renew normally.
+    authentication_classes = []
     permission_classes = [AllowAny]
+
+    def get_authenticate_header(self, request):
+        # Preserve 401 for a missing/invalid admin refresh cookie even though
+        # stale access-token authentication is deliberately disabled here.
+        return "Bearer"
 
     @extend_schema(
         request=None,
@@ -365,6 +376,74 @@ class AdminProductDetailView(AdminAuthMixin, APIView):
     def delete(self, request, product_id):
         product = get_object_or_404(Product, id=product_id)
         product.delete()
+        return Response(status=204)
+
+
+@extend_schema_view(
+    post=extend_schema(
+        request=AdminInvestmentInstrumentSerializer,
+        responses={
+            201: AdminInvestmentInstrumentSerializer,
+            **error_responses(403, 422),
+        },
+    )
+)
+class AdminInvestmentInstrumentListCreateView(AdminAuthMixin, generics.ListCreateAPIView):
+    """List curated pricing instruments or create one as a super admin."""
+
+    serializer_class = AdminInvestmentInstrumentSerializer
+    pagination_class = LimitOffsetPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = AdminInvestmentInstrumentFilterSet
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [IsSuperAdmin()]
+        return super().get_permissions()
+
+    def get_queryset(self):
+        return InvestmentInstrument.objects.select_related("product").order_by("created_at")
+
+
+class AdminInvestmentInstrumentDetailView(AdminAuthMixin, APIView):
+    """Read, update, or delete one curated investment instrument."""
+
+    serializer_class = AdminInvestmentInstrumentSerializer
+
+    def get_permissions(self):
+        if self.request.method in {"PATCH", "DELETE"}:
+            return [IsSuperAdmin()]
+        return super().get_permissions()
+
+    def get(self, request, instrument_id):
+        instrument = get_object_or_404(
+            InvestmentInstrument.objects.select_related("product"),
+            id=instrument_id,
+        )
+        return Response(AdminInvestmentInstrumentSerializer(instrument).data)
+
+    @extend_schema(
+        request=AdminInvestmentInstrumentSerializer,
+        responses={
+            200: AdminInvestmentInstrumentSerializer,
+            **error_responses(403, 404, 422),
+        },
+    )
+    def patch(self, request, instrument_id):
+        instrument = get_object_or_404(InvestmentInstrument, id=instrument_id)
+        serializer = AdminInvestmentInstrumentSerializer(
+            instrument,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    @extend_schema(responses={204: None, **error_responses(403, 404)})
+    def delete(self, request, instrument_id):
+        instrument = get_object_or_404(InvestmentInstrument, id=instrument_id)
+        instrument.delete()
         return Response(status=204)
 
 
