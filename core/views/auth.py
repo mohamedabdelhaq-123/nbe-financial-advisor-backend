@@ -222,6 +222,14 @@ class RefreshView(APIView):
         inner = TokenRefreshSerializer(data={"refresh": refresh_token})
         try:
             inner.is_valid(raise_exception=True)
+        except User.DoesNotExist as exc:
+            # A refresh token can outlive its user row. This happens in local
+            # development when seeded users are recreated while the browser
+            # still holds yesterday's httpOnly cookie, and can also happen
+            # after an account is deleted. Treat it as an expired session;
+            # leaking the model exception would return 500 and leave the
+            # frontend waiting forever for a retryable server failure.
+            raise InvalidToken("Refresh token is invalid or expired.") from exc
         except TokenError as exc:
             # TokenRefreshSerializer.validate() constructs the token directly
             # and can raise a raw TokenError (expired/blacklisted/malformed)
