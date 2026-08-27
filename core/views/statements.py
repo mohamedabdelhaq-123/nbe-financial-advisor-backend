@@ -20,6 +20,8 @@ from core.models.categories.resolution import resolve_category
 from core.openapi import error_responses
 from core.permissions import HasDataProcessingConsent
 from core.serializers.statements import (
+    StatementBulkDeleteRequestSerializer,
+    StatementBulkDeleteResponseSerializer,
     StatementDetailSerializer,
     StatementFileSerializer,
     StatementOcrResultResponseSerializer,
@@ -57,16 +59,35 @@ def advance_statement_to(statement: StatementFile, target_status: str) -> None:
     process_statement_pipeline.delay(str(statement.id), target_status)
 
 
+def delete_statement_file(instance: StatementFile) -> None:
+    """
+    Removes the statement_files row and its raw/artifact files (subject to
+    retain_raw_documents — File_System_Structure.md §2-3). Does NOT touch
+    transactions already committed to the ledger from this statement
+    (Data_Shapes_Statements.md: transactions are the single source of truth
+    independent of their originating statement) — the FK is ON DELETE
+    SET NULL (DB_Schema.md), so that happens for free at the DB level, no
+    manual cleanup needed here. Shared by StatementDetailView.perform_destroy
+    and StatementBulkDeleteView so both single and bulk delete apply the
+    same cleanup.
+    """
+    preferences, _ = UserPreference.objects.get_or_create(user=instance.user)
+    if not preferences.retain_raw_documents:
+        file_storage.delete_prefix(f"pfm-statements-raw/{instance.user_id}/{instance.id}/")
+        # OCR and normalized artifacts are separate buckets, not one shared
+        # "artifacts" bucket (PLAN.md's one-bucket-per-file-type decision) —
+        # each needs its own delete_prefix call.
+        file_storage.delete_prefix(f"pfm-statements-ocr/{instance.user_id}/{instance.id}/")
+        file_storage.delete_prefix(f"pfm-statements-normalized/{instance.user_id}/{instance.id}/")
+    instance.delete()
+
+
 def create_statement_from_upload(user, file_obj, target_status=None) -> StatementFile:
     """
     The full upload -> checksum-dedupe -> store -> auto-chained-pipeline
-    flow, factored out of StatementListCreateView.post() so the
-    Conversations domain's POST /chat/conversations/{id}/attachments can
-    reuse it exactly — Data_Shapes_Conversations.md: "Shortcut into the
-    Statements pipeline... same underlying processing as POST /statements".
-    Raises the same ValidationError/BusinessRuleError/404 a direct upload
-    would, so both call sites behave identically (API Design Guidelines §1:
-    "one backend, one write path").
+    flow, factored out of StatementListCreateView.post() so validation and
+    storage stay in one place (API Design Guidelines §1: "one backend, one
+    write path").
 
     A StatementFile row is only ever created once the file is successfully
     stored (PLAN.md) — if storage fails, this raises before anything is
@@ -78,16 +99,14 @@ def create_statement_from_upload(user, file_obj, target_status=None) -> Statemen
     the furthest point reachable by auto-chaining (STATUS_APPROVED is only
     reachable via the transaction-approval endpoint, never a status flag),
     and the original always-chain-to-the-end behavior — when the caller
-    (e.g. the Conversations shortcut) doesn't pass one; POST /statements
-    lets the client choose explicitly via StatementUploadRequestSerializer's
-    optional `status` field. Stops wherever a phase fails — PATCH
-    /statements/{id} is then the way to resume from there.
+    doesn't pass one; POST /statements lets the client choose explicitly via
+    StatementUploadRequestSerializer's optional `status` field. Stops
+    wherever a phase fails — PATCH /statements/{id} is then the way to
+    resume from there.
     """
     if not file_obj:
         raise ValidationError({"file": "This field is required."})
 
-    # Real enforcement point — ConversationAttachmentsView bypasses the
-    # serializer's validate_file() entirely, so this must run here too.
     try:
         validate_statement_upload(file_obj)
     except ValidationError as exc:
@@ -278,24 +297,43 @@ class StatementDetailView(generics.RetrieveDestroyAPIView):
         return Response(StatementDetailSerializer(statement).data, status=status.HTTP_202_ACCEPTED)
 
     def perform_destroy(self, instance):
-        # Removes the statement_files row and its raw/artifact files (subject
-        # to retain_raw_documents — File_System_Structure.md §2-3). Does NOT
-        # touch transactions already committed to the ledger from this
-        # statement (Data_Shapes_Statements.md: transactions are the single
-        # source of truth independent of their originating statement) — the
-        # FK is ON DELETE SET NULL (DB_Schema.md), so that happens for free
-        # at the DB level, no manual cleanup needed here.
-        preferences, _ = UserPreference.objects.get_or_create(user=instance.user)
-        if not preferences.retain_raw_documents:
-            file_storage.delete_prefix(f"pfm-statements-raw/{instance.user_id}/{instance.id}/")
-            # OCR and normalized artifacts are separate buckets, not one
-            # shared "artifacts" bucket (PLAN.md's one-bucket-per-file-type
-            # decision) — each needs its own delete_prefix call.
-            file_storage.delete_prefix(f"pfm-statements-ocr/{instance.user_id}/{instance.id}/")
-            file_storage.delete_prefix(
-                f"pfm-statements-normalized/{instance.user_id}/{instance.id}/"
-            )
-        instance.delete()
+        delete_statement_file(instance)
+
+
+class StatementBulkDeleteView(APIView):
+    """
+    Delete multiple of the current user's statements in one call.
+
+    An id that doesn't exist or isn't owned by the caller is reported in
+    `skipped` with a reason rather than failing the whole request — the
+    rest of the batch still goes through. Mirrors
+    StatementTransactionApprovalView's partial-success shape.
+    """
+
+    @extend_schema(
+        request=StatementBulkDeleteRequestSerializer,
+        responses={200: StatementBulkDeleteResponseSerializer, **error_responses(422)},
+    )
+    def post(self, request, *args, **kwargs):
+        serializer = StatementBulkDeleteRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        ids = serializer.validated_data["ids"]
+
+        found_by_id = {s.id: s for s in StatementFile.objects.filter(id__in=ids, user=request.user)}
+
+        deleted = []
+        skipped = []
+        for statement_id in ids:
+            instance = found_by_id.get(statement_id)
+            if instance is None:
+                skipped.append({"id": str(statement_id), "reason": "not_found"})
+                continue
+            delete_statement_file(instance)
+            deleted.append(str(statement_id))
+
+        return Response(
+            StatementBulkDeleteResponseSerializer({"deleted": deleted, "skipped": skipped}).data
+        )
 
 
 class StatementOcrResultView(APIView):

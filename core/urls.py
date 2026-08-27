@@ -29,7 +29,6 @@ from core.views import (
     BudgetView,
     CategoryBreakdownView,
     CategoryListView,
-    ConversationAttachmentsView,
     ConversationDetailView,
     ConversationListCreateView,
     ConversationMessagesView,
@@ -72,11 +71,13 @@ from core.views import (
     SSETicketMintView,
     StabilityScoreView,
     StarterTemplatesView,
+    StatementBulkDeleteView,
     StatementDetailView,
     StatementListCreateView,
     StatementOcrArtifactDownloadView,
     StatementOcrResultView,
     StatementTransactionApprovalView,
+    TransactionBulkDeleteView,
     TransactionDetailView,
     TransactionListCreateView,
     db_check,
@@ -135,6 +136,7 @@ urlpatterns = [
     path("webhooks/bank-sync/", BankSyncWebhookView.as_view()),
     # 4. Statements & Document Ingestion (API_Endpoints_1.md §4)
     path("statements/", StatementListCreateView.as_view()),
+    path("statements/bulk-delete/", StatementBulkDeleteView.as_view()),
     path("statements/<uuid:statement_id>/", StatementDetailView.as_view()),
     path("statements/<uuid:statement_id>/ocr-result/", StatementOcrResultView.as_view()),
     path(
@@ -151,6 +153,7 @@ urlpatterns = [
     path("categories/", CategoryListView.as_view()),
     # 5. Transactions (API_Endpoints_1.md §5)
     path("transactions/", TransactionListCreateView.as_view()),
+    path("transactions/bulk-delete/", TransactionBulkDeleteView.as_view()),
     path("transactions/<uuid:transaction_id>/", TransactionDetailView.as_view()),
     # 6. Budget (API_Endpoints_1.md §6)
     path("budget/", BudgetView.as_view()),
@@ -193,10 +196,6 @@ urlpatterns = [
     path(
         "chat/conversations/<uuid:conversation_id>/messages/<uuid:message_id>/widget/",
         MessageWidgetView.as_view(),
-    ),
-    path(
-        "chat/conversations/<uuid:conversation_id>/attachments/",
-        ConversationAttachmentsView.as_view(),
     ),
     # Events (SSE) — async infra phase, single multiplexed connection per user
     path("events/ticket/", SSETicketMintView.as_view()),
