@@ -404,15 +404,13 @@ services:
       AI_SERVICE_MARKET_DATA__TIMEOUT_SECONDS: ${MARKET_DATA_TIMEOUT_SECONDS:-12}
       AI_SERVICE_MARKET_DATA__CACHE_TTL_SECONDS: ${MARKET_DATA_CACHE_TTL_SECONDS:-60}
       AI_SERVICE_MARKET_DATA__MAX_BATCH_SIZE: ${MARKET_DATA_MAX_BATCH_SIZE:-3}
-      # Scope guardrail (zero-shot "is this about personal finance" check) — off
-      # by default, still being validated. MODE=hosted calls the HF Inference API
-      # (needs SCOPE_GUARD_HOSTED_API_KEY, a free token from
-      # https://huggingface.co/settings/tokens); MODE=local runs the model
-      # in-process instead (image must be built with `--group local-scope-guard`
-      # first — not included by default, see the ai-service repo's pyproject.toml).
-      AI_SERVICE_SCOPE_GUARD__ENABLED: ${SCOPE_GUARD_ENABLED:-0}
-      AI_SERVICE_SCOPE_GUARD__MODE: ${SCOPE_GUARD_MODE:-hosted}
-      AI_SERVICE_SCOPE_GUARD__HOSTED_API_KEY: ${SCOPE_GUARD_HOSTED_API_KEY}
+      # Maestro owns scope + routing. The old NLI can be enabled only as
+      # non-blocking shadow telemetry for comparison; hosted mode sends raw
+      # chat text to HF and therefore needs explicit data-path approval.
+      AI_SERVICE_MAESTRO_ROUTING__MINIMUM_CONFIDENCE: ${MAESTRO_ROUTING_MINIMUM_CONFIDENCE:-0.55}
+      AI_SERVICE_NLI_SHADOW__ENABLED: ${NLI_SHADOW_ENABLED:-0}
+      AI_SERVICE_NLI_SHADOW__MODE: ${NLI_SHADOW_MODE:-hosted}
+      AI_SERVICE_NLI_SHADOW__HOSTED_API_KEY: ${NLI_SHADOW_HOSTED_API_KEY:-}
     expose: ["8001"]                  # internal only, NEVER published — Pattern A
     depends_on:
       postgres:
