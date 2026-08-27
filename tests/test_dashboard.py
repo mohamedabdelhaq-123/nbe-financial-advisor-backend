@@ -109,10 +109,32 @@ class TestDashboardPeriodWindow:
         resp = client.get("/dashboard/", {"period": "bogus"})
         assert resp.status_code == 422
 
-    @pytest.mark.parametrize("period", ["this_month", "last_month", "last_3_months", "this_year"])
+    @pytest.mark.parametrize(
+        "period",
+        ["this_month", "last_month", "last_3_months", "this_year", "last_5_years"],
+    )
     def test_each_period_value_is_accepted(self, client, budget, period):
         resp = client.get("/dashboard/", {"period": period})
         assert resp.status_code == 200
+
+    def test_last_five_years_starts_at_beginning_of_fourth_prior_year(
+        self, client, user, account, category, budget
+    ):
+        start = date(date.today().year - 4, 1, 1)
+        _make_txn(user, account, category, txn_date=start, amount="50.00", merchant="inside")
+        _make_txn(
+            user,
+            account,
+            category,
+            txn_date=start - timedelta(days=1),
+            amount="999.00",
+            merchant="outside",
+        )
+
+        resp = client.get("/dashboard/", {"period": "last_5_years"})
+
+        assert resp.status_code == 200
+        assert Decimal(resp.data["metrics"]["current_month_spend"]) == Decimal("50.00")
 
     def test_preceding_window_is_equal_length_to_current_window(
         self, client, user, account, category, budget
