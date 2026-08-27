@@ -77,7 +77,7 @@ services:
             python manage.py ensure_storage_buckets &&
             python manage.py seed_onboarding_templates &&
             python manage.py seed_db &&
-            if [ -n \"$SEED_MOCK_BANK_CUSTOMER_EMAIL\" ]; then python manage.py register_mock_bank_customer --email \"$SEED_MOCK_BANK_CUSTOMER_EMAIL\" || true; fi &&
+            if [ -n \"$$SEED_MOCK_BANK_CUSTOMER_EMAIL\" ]; then python manage.py register_mock_bank_customer --email \"$$SEED_MOCK_BANK_CUSTOMER_EMAIL\" || true; fi &&
             python manage.py runserver 0.0.0.0:8000"
     env_file:
       - ../.env
