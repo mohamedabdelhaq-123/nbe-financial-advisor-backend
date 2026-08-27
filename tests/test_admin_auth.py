@@ -88,6 +88,18 @@ class TestAdminRefresh:
         # A new rotated cookie was set too, not just a new access token.
         assert client.cookies[COOKIE_NAME].value
 
+    def test_expired_or_invalid_bearer_does_not_block_valid_refresh_cookie(
+        self, client, admin_user
+    ):
+        login_resp = _login(client)
+        assert login_resp.status_code == 200
+
+        client.credentials(HTTP_AUTHORIZATION="Bearer expired-admin-access-token")
+        refresh_resp = client.post("/admin/auth/refresh/")
+
+        assert refresh_resp.status_code == 200
+        assert refresh_resp.data["access_token"]
+
     def test_reusing_a_rotated_away_refresh_token_is_rejected(self, client, admin_user):
         _login(client)
         old_cookie_value = client.cookies[COOKIE_NAME].value

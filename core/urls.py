@@ -4,6 +4,8 @@ from core.views import (
     AdminCategoryDetailView,
     AdminCategoryListCreateView,
     AdminFeedbackListView,
+    AdminInvestmentInstrumentDetailView,
+    AdminInvestmentInstrumentListCreateView,
     AdminIssueListView,
     AdminIssueUpdateView,
     AdminLoginView,
@@ -37,6 +39,10 @@ from core.views import (
     EventStreamView,
     FeedbackCreateView,
     GoalView,
+    InvestmentHoldingDetailView,
+    InvestmentHoldingListCreateView,
+    InvestmentHoldingValuationView,
+    InvestmentInstrumentListView,
     IssueListCreateView,
     LoginView,
     LogoutAllDevicesView,
@@ -55,6 +61,10 @@ from core.views import (
     RecommendationsView,
     RecurringChargesView,
     RefreshView,
+    SavedInvestmentAllocationPurchaseView,
+    SavedInvestmentAllocationUpdateView,
+    SavedInvestmentScenarioDetailView,
+    SavedInvestmentScenarioListView,
     SavingsProgressView,
     SignupView,
     SpendingInsightsView,
@@ -157,6 +167,28 @@ urlpatterns = [
     # 7. Dashboard (API_Endpoints_1.md §7)
     path("dashboard/", DashboardView.as_view()),
     path("dashboard/goal/", DashboardGoalView.as_view()),
+    # Saved investment scenarios are immutable price snapshots for planning;
+    # they are not holdings and no endpoint here can execute a trade.
+    path("investment-scenarios/", SavedInvestmentScenarioListView.as_view()),
+    path(
+        "investment-scenarios/<uuid:scenario_id>/",
+        SavedInvestmentScenarioDetailView.as_view(),
+    ),
+    path(
+        "investment-scenarios/<uuid:scenario_id>/allocations/<uuid:instrument_id>/",
+        SavedInvestmentAllocationUpdateView.as_view(),
+    ),
+    path(
+        "investment-scenarios/<uuid:scenario_id>/allocations/<uuid:instrument_id>/purchase/",
+        SavedInvestmentAllocationPurchaseView.as_view(),
+    ),
+    path("investment-instruments/", InvestmentInstrumentListView.as_view()),
+    path("investment-holdings/", InvestmentHoldingListCreateView.as_view()),
+    path("investment-holdings/valuation/", InvestmentHoldingValuationView.as_view()),
+    path(
+        "investment-holdings/<uuid:holding_id>/",
+        InvestmentHoldingDetailView.as_view(),
+    ),
     # 9. AI Assistant / Conversations (API_Endpoints_1.md §9)
     path("chat/conversations/", ConversationListCreateView.as_view()),
     path("chat/conversations/<uuid:conversation_id>/", ConversationDetailView.as_view()),
@@ -194,6 +226,14 @@ urlpatterns = [
     path("admin/issues/<uuid:issue_id>/", AdminIssueUpdateView.as_view()),
     path("admin/products/", AdminProductListCreateView.as_view()),
     path("admin/products/<uuid:product_id>/", AdminProductDetailView.as_view()),
+    path(
+        "admin/investment-instruments/",
+        AdminInvestmentInstrumentListCreateView.as_view(),
+    ),
+    path(
+        "admin/investment-instruments/<uuid:instrument_id>/",
+        AdminInvestmentInstrumentDetailView.as_view(),
+    ),
     path("admin/categories/", AdminCategoryListCreateView.as_view()),
     path("admin/categories/<uuid:category_id>/", AdminCategoryDetailView.as_view()),
     path("admin/onboarding-templates/", AdminOnboardingTemplateListCreateView.as_view()),

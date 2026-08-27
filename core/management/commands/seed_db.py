@@ -30,6 +30,7 @@ from core.models import (
     ConsentRecord,
     Conversation,
     Goal,
+    InvestmentInstrument,
     Message,
     MessageReference,
     MonthlySummary,
@@ -287,6 +288,133 @@ class Command(BaseCommand):
             ProblemStatement.objects.create(
                 product=product,
                 statement_text=f"Looking for {description[0].lower()}{description[1:]}",
+            )
+            products.append(product)
+
+        investment_catalog = [
+            {
+                "title": "24K Gold (per gram)",
+                "description": "A curated 24-karat gold opportunity quoted in EGP per gram.",
+                "categories": ["investments", "gold"],
+                "tags": ["store-of-value", "commodity"],
+                "features": {
+                    "risk_level": "moderate",
+                    "liquidity": "medium",
+                    "investment_objectives": ["preserve_value", "balanced_growth"],
+                    "investment_horizons": ["medium", "long"],
+                    "investment_aliases": [
+                        "gold",
+                        "24k gold",
+                        "gold 24k",
+                        "ذهب",
+                        "الذهب",
+                        "ذهب عيار 24",
+                    ],
+                },
+                "code": "gold-24k-gram-egp",
+                "asset_class": InvestmentInstrument.AssetClass.GOLD,
+                "provider_symbol": "XAU_EGP_GRAM_24K",
+                "price_type": InvestmentInstrument.PriceType.SPOT,
+                "unit": "gram_24k",
+                "minimum_increment": Decimal("0.01"),
+                "fractional_units_supported": True,
+                "max_quote_age_seconds": 900,
+            },
+            {
+                "title": "EGX30 Index ETF",
+                "description": (
+                    "A curated Egyptian equity index fund quoted by its latest available "
+                    "delayed EGX market price per unit."
+                ),
+                "categories": ["investments", "funds"],
+                "tags": ["index-fund", "egyptian-equities"],
+                "features": {
+                    "risk_level": "high",
+                    "liquidity": "high",
+                    "investment_objectives": ["balanced_growth"],
+                    "investment_horizons": ["long"],
+                    "investment_aliases": [
+                        "fund",
+                        "investment fund",
+                        "etf",
+                        "egx30",
+                        "egx30 etf",
+                        "صندوق",
+                        "صندوق استثمار",
+                        "صندوق egx30",
+                    ],
+                },
+                "code": "egx30-index-etf",
+                "asset_class": InvestmentInstrument.AssetClass.FUND,
+                "provider_symbol": "EGX30ETF_MARKET_PRICE",
+                "price_type": InvestmentInstrument.PriceType.MARKET_PRICE,
+                "unit": "fund_unit",
+                "minimum_increment": Decimal("1"),
+                "fractional_units_supported": False,
+                "max_quote_age_seconds": 259200,
+            },
+            {
+                "title": "US Dollar",
+                "description": (
+                    "A curated USD opportunity using the rate a customer pays to buy USD "
+                    "with EGP (the bank's cash-sell rate)."
+                ),
+                "categories": ["investments", "currencies"],
+                "tags": ["foreign-currency", "liquid"],
+                "features": {
+                    "risk_level": "moderate",
+                    "liquidity": "high",
+                    "investment_objectives": ["preserve_value"],
+                    "investment_horizons": ["short", "medium"],
+                    "investment_aliases": [
+                        "usd",
+                        "dollar",
+                        "us dollar",
+                        "currency",
+                        "دولار",
+                        "الدولار",
+                        "دولار أمريكي",
+                        "عملة",
+                    ],
+                },
+                "code": "usd-egp-customer-buy",
+                "asset_class": InvestmentInstrument.AssetClass.CURRENCY,
+                "provider_symbol": "USD_EGP_BUY",
+                "price_type": InvestmentInstrument.PriceType.CUSTOMER_BUY_RATE,
+                "unit": "USD",
+                "minimum_increment": Decimal("1"),
+                "fractional_units_supported": False,
+                # This is the latest published bank rate rather than a continuously
+                # traded midpoint, so weekends and bank holidays require a wider window.
+                "max_quote_age_seconds": 259200,
+            },
+        ]
+        for spec in investment_catalog:
+            product = Product.objects.create(
+                title=spec["title"],
+                description=spec["description"],
+                categories=spec["categories"],
+                tags=spec["tags"],
+                features=spec["features"],
+                external_link=f"{SEED_PRODUCT_LINK_PREFIX}{spec['code']}",
+                is_active=True,
+            )
+            ProblemStatement.objects.create(
+                product=product,
+                statement_text=f"I want to invest in {spec['title'].lower()}",
+            )
+            InvestmentInstrument.objects.create(
+                product=product,
+                code=spec["code"],
+                asset_class=spec["asset_class"],
+                provider_symbol=spec["provider_symbol"],
+                price_type=spec["price_type"],
+                price_currency="EGP",
+                unit=spec["unit"],
+                minimum_increment=spec["minimum_increment"],
+                fractional_units_supported=spec["fractional_units_supported"],
+                max_quote_age_seconds=spec["max_quote_age_seconds"],
+                is_active=True,
             )
             products.append(product)
         return products

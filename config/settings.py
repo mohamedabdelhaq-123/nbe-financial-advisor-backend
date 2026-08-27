@@ -47,6 +47,16 @@ AI_SERVICE_URL = env.str("AI_SERVICE_URL", "http://ai-service:8001")
 # never need a live ai-service; flip to 0 once one is reachable.
 USE_MOCK_AI_SERVICE = env.bool("USE_MOCK_AI_SERVICE", True)
 
+# Provider-neutral market quote gateway used for holding valuations. Disabled
+# means no request is made; the holdings themselves remain fully editable.
+MARKET_DATA_ENABLED = env.bool("MARKET_DATA_ENABLED", False)
+MARKET_DATA_BASE_URL = env.str("MARKET_DATA_BASE_URL", "http://market-data-gateway:8004").rstrip(
+    "/"
+)
+MARKET_DATA_API_KEY = env.str("MARKET_DATA_API_KEY", "")
+MARKET_DATA_TIMEOUT_SECONDS = env.float("MARKET_DATA_TIMEOUT_SECONDS", 12.0)
+MARKET_DATA_CACHE_TTL_SECONDS = env.int("MARKET_DATA_CACHE_TTL_SECONDS", 60)
+
 # Gates the MX/DNS deliverability lookup core/validators.py runs on signup
 # emails. On by default; flip off for offline dev/CI environments without
 # egress (tests do this themselves — see tests/conftest.py).
@@ -212,9 +222,10 @@ SPECTACULAR_SETTINGS = {
     "VERSION": "0.1.0",
     "SERVE_INCLUDE_SCHEMA": False,
     "SERVERS": [{"url": API_URL_PREFIX}] if API_URL_PREFIX else [],
-    # Three unrelated fields are all named "status" with different choice
+    # Several unrelated fields are all named "status" with different choice
     # sets (StatementFile's pipeline-phase status, the statements pipeline's
-    # PATCH/POST advance-target subset, and admin issue triage status) —
+    # PATCH/POST advance-target subset, admin issue triage status, and saved
+    # investment scenario status) —
     # left alone, drf-spectacular's automatic enum-component naming collides
     # all three into one "Status" name and disambiguates with unreadable
     # hash suffixes (e.g. StatusC7eEnum). Naming each explicitly keeps the
@@ -223,6 +234,7 @@ SPECTACULAR_SETTINGS = {
         "StatementFileStatusEnum": "core.models.statements.file.StatementFile.STATUS_CHOICES",
         "StatementAdvanceTargetEnum": "core.serializers.statements._ADVANCE_TARGET_CHOICES",
         "IssueTriageStatusEnum": ["open", "in_review", "resolved", "dismissed"],
+        "InvestmentScenarioStatusEnum": [("saved", "Saved"), ("archived", "Archived")],
     },
 }
 

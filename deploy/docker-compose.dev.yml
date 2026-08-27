@@ -2,7 +2,8 @@
 # celery-worker needs a manual restart after task code changes.
 #
 # Ports: frontend 5173, backend 8000, ai-service 8001, mock-bank-oauth 8002,
-# mock-bank-sync 8003, postgres 5433, redis 6379, seaweedfs 8333/9333/8888,
+# mock-bank-sync 8003, market-data-gateway 8004, postgres 5433, redis 6379,
+# seaweedfs 8333/9333/8888,
 # nginx 8080 (optional prod-like single-origin routing — every service above
 # is also reachable directly; nginx here is a convenience, not required).
 #
@@ -86,6 +87,11 @@ services:
       DJANGO_DEBUG: 1
       USE_MOCK_AI_SERVICE: "0"
       AI_SERVICE_URL: http://ai-service:8001
+      MARKET_DATA_ENABLED: ${MARKET_DATA_ENABLED:-0}
+      MARKET_DATA_BASE_URL: ${MARKET_DATA_BASE_URL:-http://market-data-gateway:8004}
+      MARKET_DATA_API_KEY: ${MARKET_DATA_API_KEY:-dev-market-data-key}
+      MARKET_DATA_TIMEOUT_SECONDS: ${MARKET_DATA_TIMEOUT_SECONDS:-12}
+      MARKET_DATA_CACHE_TTL_SECONDS: ${MARKET_DATA_CACHE_TTL_SECONDS:-60}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       SEAWEED_S3_ENDPOINT: http://seaweedfs:8333
@@ -180,6 +186,38 @@ services:
       postgres:
         condition: service_healthy
 
+  # Normalizes provider-specific public data into the /v1/quotes contract used
+  # by the AI service. Source URLs are deployment configuration, not app code.
+  # It makes no external calls until the investment planner requests a quote.
+  market-data-gateway:
+    build:
+      context: ../../nbe-financial-advisor-ai-service
+      target: dev
+      provenance: false
+      sbom: false
+    command: uvicorn app.market_data_gateway.main:app --host 0.0.0.0 --port 8004 --reload
+    environment:
+      MARKET_GATEWAY_API_KEY: ${MARKET_DATA_API_KEY:-dev-market-data-key}
+      MARKET_GATEWAY_NBE_BASE_URL: ${MARKET_DATA_NBE_BASE_URL:-https://www.nbe.com.eg}
+      MARKET_GATEWAY_NBE_EXCHANGE_PATH: ${MARKET_DATA_NBE_EXCHANGE_PATH:-/NBEeChannelManager/CallMW.aspx}
+      MARKET_GATEWAY_GOLD_BASE_URL: ${MARKET_DATA_GOLD_BASE_URL:-https://api.gold-api.com}
+      MARKET_GATEWAY_GOLD_QUOTE_PATH: ${MARKET_DATA_GOLD_QUOTE_PATH:-/price/XAU}
+      MARKET_GATEWAY_FUND_BASE_URL: ${MARKET_DATA_FUND_BASE_URL:-https://english.mubasher.info}
+      MARKET_GATEWAY_FUND_QUOTE_PATH: ${MARKET_DATA_FUND_QUOTE_PATH:-/markets/EGX/stocks/EGX30ETF}
+      MARKET_GATEWAY_TIMEOUT_SECONDS: ${MARKET_DATA_SOURCE_TIMEOUT_SECONDS:-10}
+    volumes:
+      - ../../nbe-financial-advisor-ai-service:/app
+      - market-data-gateway-dev-venv:/app/.venv
+    ports:
+      - "8004:8004"
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
   ai-service:
     build:
       context: ../../nbe-financial-advisor-ai-service
@@ -189,6 +227,14 @@ services:
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload"
     env_file:
       - ../../nbe-financial-advisor-ai-service/.env
+    environment:
+      AI_SERVICE_MARKET_DATA__ENABLED: ${MARKET_DATA_ENABLED:-0}
+      AI_SERVICE_MARKET_DATA__PROVIDER: ${MARKET_DATA_PROVIDER:-http}
+      AI_SERVICE_MARKET_DATA__BASE_URL: ${MARKET_DATA_BASE_URL:-http://market-data-gateway:8004}
+      AI_SERVICE_MARKET_DATA__API_KEY: ${MARKET_DATA_API_KEY:-dev-market-data-key}
+      AI_SERVICE_MARKET_DATA__TIMEOUT_SECONDS: ${MARKET_DATA_TIMEOUT_SECONDS:-12}
+      AI_SERVICE_MARKET_DATA__CACHE_TTL_SECONDS: ${MARKET_DATA_CACHE_TTL_SECONDS:-60}
+      AI_SERVICE_MARKET_DATA__MAX_BATCH_SIZE: ${MARKET_DATA_MAX_BATCH_SIZE:-3}
     volumes:
       - ../../nbe-financial-advisor-ai-service:/app
       - ai-service-dev-venv:/app/.venv
@@ -241,4 +287,5 @@ volumes:
   pgdata:
   seaweed_data:
   ai-service-dev-venv:
+  market-data-gateway-dev-venv:
   frontend-node-modules:

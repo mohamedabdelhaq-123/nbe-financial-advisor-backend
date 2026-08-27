@@ -36,6 +36,12 @@ from .profile.bank_connection import BankConnection
 from .profile.consent_record import ConsentRecord
 from .profile.user import User
 from .profile.user_preference import UserPreference
+from .recommendation.investment_holding import InvestmentHolding
+from .recommendation.investment_instrument import InvestmentInstrument
+from .recommendation.investment_scenario import (
+    SavedInvestmentAllocationPurchase,
+    SavedInvestmentScenario,
+)
 from .recommendation.log import RecommendationLog
 from .recommendation.problem_statement import ProblemStatement
 
@@ -74,6 +80,10 @@ __all__ = [
     "Reaction",
     "ReportedIssue",
     # Recommendation
+    "InvestmentHolding",
+    "InvestmentInstrument",
+    "SavedInvestmentScenario",
+    "SavedInvestmentAllocationPurchase",
     "Product",
     "ProblemStatement",
     "RecommendationLog",

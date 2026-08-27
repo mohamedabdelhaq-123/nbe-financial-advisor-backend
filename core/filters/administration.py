@@ -1,6 +1,6 @@
 import django_filters as filters
 
-from core.models import Product, Reaction, ReportedIssue
+from core.models import InvestmentInstrument, Product, Reaction, ReportedIssue
 
 
 class AdminReactionFilterSet(filters.FilterSet):
@@ -42,3 +42,15 @@ class AdminProductFilterSet(filters.FilterSet):
 
     def filter_category(self, queryset, name, value):
         return queryset.filter(categories__contains=[value])
+
+
+class AdminInvestmentInstrumentFilterSet(filters.FilterSet):
+    """GET /admin/investment-instruments"""
+
+    class Meta:
+        model = InvestmentInstrument
+        fields = {
+            "asset_class": ["exact"],
+            "is_active": ["exact"],
+            "product_id": ["exact"],
+        }
