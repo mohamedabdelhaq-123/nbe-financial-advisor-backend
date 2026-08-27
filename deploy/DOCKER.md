@@ -99,7 +99,13 @@ Dev skips both: every service's port is published straight to `localhost`
 instead, and the SSE route just runs on `backend` alongside everything else
 — fine at dev traffic levels, which is why isolating it is a prod-only concern.
 
-Both stacks also define an **optional 10th service, off by default**:
+Both stacks include a **10th support service** for optional market pricing:
+
+| Service | Why it exists |
+|---|---|
+| **market-data-gateway** | Normalizes configured Gold API, NBE exchange-rate, and delayed EGX30 ETF market-price sources into the AI service's provider-neutral `POST /v1/quotes` contract. It makes no source call while the pricing feature is disabled, and `ai-service` has no startup dependency on its health. `MARKET_DATA_BASE_URL` can point to an internal replacement instead. |
+
+Both stacks also define an optional GPU service, off by default:
 
 | Service            | Why it's off by default                                                                                                                                                                                                        |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -108,6 +114,25 @@ Both stacks also define an **optional 10th service, off by default**:
 LLM observability (Langfuse) is vendored in the ai-service repo
 (`compose/langfuse/docker-compose.yml`) but is **not currently wired into
 either stack here** — see that repo's README for status.
+
+### Market-pricing modes
+
+The AI service's investment planner has a separate market-pricing switch. It
+does not represent a global network-access switch for the AI service.
+
+- Compose defaults pricing to disabled. `deploy/.env` may explicitly select
+  disabled, deterministic `mock`, or live `http` mode; this workspace selects
+  live HTTP mode for the validated seeded-user demo.
+- Production requires `MARKET_DATA_ENABLED=0` or `1` in `deploy/.env`.
+- `MARKET_DATA_ENABLED=0` guarantees the quote provider is not invoked while all
+  unrelated advisor features remain available.
+- `MARKET_DATA_PROVIDER=http` sends curated instrument metadata only to the
+  configured `MARKET_DATA_BASE_URL`; changing from a public to an internal
+  endpoint does not change the agent or calculator.
+- The bundled live gateway reads every public source URL/path from
+  `MARKET_DATA_NBE_*`, `MARKET_DATA_GOLD_*`, and `MARKET_DATA_FUND_*` variables.
+  Gold is an indicative XAU/USD spot conversion, fund pricing is latest
+  delayed market price, and USD purchase pricing uses NBE's cash-sell rate.
 
 ## Data persistence
 

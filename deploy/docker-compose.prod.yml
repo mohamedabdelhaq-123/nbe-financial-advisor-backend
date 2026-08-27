@@ -76,6 +76,14 @@ services:
       DJANGO_CORS_ALLOWED_ORIGINS: ${DJANGO_CORS_ALLOWED_ORIGINS:-http://localhost:8080}
       AI_SERVICE_URL: http://ai-service:8001
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+      # Holdings valuation uses the same normalized, replaceable quote gateway
+      # as the advisor. When disabled, holdings stay editable but no quote
+      # request is made.
+      MARKET_DATA_ENABLED: ${MARKET_DATA_ENABLED:?Set MARKET_DATA_ENABLED to 0 or 1}
+      MARKET_DATA_BASE_URL: ${MARKET_DATA_BASE_URL:-http://market-data-gateway:8004}
+      MARKET_DATA_API_KEY: ${MARKET_DATA_API_KEY:-}
+      MARKET_DATA_TIMEOUT_SECONDS: ${MARKET_DATA_TIMEOUT_SECONDS:-12}
+      MARKET_DATA_CACHE_TTL_SECONDS: ${MARKET_DATA_CACHE_TTL_SECONDS:-60}
       # Consumed by core/migrations/0009_grant_ai_readonly_role.py to
       # provision/refresh the ai_readonly role's password.
       AI_READONLY_PASSWORD: ${AI_READONLY_PASSWORD:-change-me-readonly-pass}
@@ -302,6 +310,32 @@ services:
       timeout: 3s
       retries: 5
 
+  # Optional public-source implementation of the normalized market quote API.
+  # It performs no source requests unless called. MARKET_DATA_BASE_URL can point
+  # ai-service at an approved internal replacement without changing planner code.
+  market-data-gateway:
+    build:
+      context: ../../nbe-financial-advisor-ai-service
+      target: prod
+    command: uvicorn app.market_data_gateway.main:app --host 0.0.0.0 --port 8004
+    environment:
+      MARKET_GATEWAY_API_KEY: ${MARKET_DATA_API_KEY:-}
+      MARKET_GATEWAY_NBE_BASE_URL: ${MARKET_DATA_NBE_BASE_URL:-https://www.nbe.com.eg}
+      MARKET_GATEWAY_NBE_EXCHANGE_PATH: ${MARKET_DATA_NBE_EXCHANGE_PATH:-/NBEeChannelManager/CallMW.aspx}
+      MARKET_GATEWAY_GOLD_BASE_URL: ${MARKET_DATA_GOLD_BASE_URL:-https://api.gold-api.com}
+      MARKET_GATEWAY_GOLD_QUOTE_PATH: ${MARKET_DATA_GOLD_QUOTE_PATH:-/price/XAU}
+      MARKET_GATEWAY_FUND_BASE_URL: ${MARKET_DATA_FUND_BASE_URL:-https://english.mubasher.info}
+      MARKET_GATEWAY_FUND_QUOTE_PATH: ${MARKET_DATA_FUND_QUOTE_PATH:-/markets/EGX/stocks/EGX30ETF}
+      MARKET_GATEWAY_TIMEOUT_SECONDS: ${MARKET_DATA_SOURCE_TIMEOUT_SECONDS:-10}
+    expose: ["8004"]
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
   ai-service:
     build:
       context: ../../nbe-financial-advisor-ai-service
@@ -361,6 +395,15 @@ services:
       AI_SERVICE_EMBEDDINGS__API_KEY: ${EMBEDDING_API_KEY}
       AI_SERVICE_EMBEDDINGS__MODEL_NAME: ${EMBEDDING_MODEL_NAME}
       AI_SERVICE_EMBEDDINGS__DIMENSIONS: ${EMBEDDING_DIMENSIONS}
+      # Optional curated market pricing. This controls only the quote capability,
+      # not global AI-service network access. Production must choose 0 or 1.
+      AI_SERVICE_MARKET_DATA__ENABLED: ${MARKET_DATA_ENABLED:?Set MARKET_DATA_ENABLED to 0 or 1}
+      AI_SERVICE_MARKET_DATA__PROVIDER: ${MARKET_DATA_PROVIDER:-http}
+      AI_SERVICE_MARKET_DATA__BASE_URL: ${MARKET_DATA_BASE_URL:-http://market-data-gateway:8004}
+      AI_SERVICE_MARKET_DATA__API_KEY: ${MARKET_DATA_API_KEY:-}
+      AI_SERVICE_MARKET_DATA__TIMEOUT_SECONDS: ${MARKET_DATA_TIMEOUT_SECONDS:-12}
+      AI_SERVICE_MARKET_DATA__CACHE_TTL_SECONDS: ${MARKET_DATA_CACHE_TTL_SECONDS:-60}
+      AI_SERVICE_MARKET_DATA__MAX_BATCH_SIZE: ${MARKET_DATA_MAX_BATCH_SIZE:-3}
       # Scope guardrail (zero-shot "is this about personal finance" check) — off
       # by default, still being validated. MODE=hosted calls the HF Inference API
       # (needs SCOPE_GUARD_HOSTED_API_KEY, a free token from

@@ -1,6 +1,123 @@
+import re
+
 from rest_framework import serializers
 
-from core.models import Product, Reaction, ReportedIssue
+from core.models import InvestmentInstrument, Product, Reaction, ReportedIssue
+
+
+class AdminInvestmentInstrumentSerializer(serializers.ModelSerializer):
+    product_id = serializers.PrimaryKeyRelatedField(
+        source="product",
+        queryset=Product.objects.all(),
+    )
+    product_title = serializers.CharField(source="product.title", read_only=True)
+
+    class Meta:
+        model = InvestmentInstrument
+        fields = [
+            "id",
+            "product_id",
+            "product_title",
+            "code",
+            "asset_class",
+            "provider_symbol",
+            "price_type",
+            "price_currency",
+            "unit",
+            "minimum_increment",
+            "fractional_units_supported",
+            "max_quote_age_seconds",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "product_title", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        instance = self.instance
+
+        def value(name):
+            if name in attrs:
+                return attrs[name]
+            return getattr(instance, name, None) if instance is not None else None
+
+        asset_class = value("asset_class")
+        price_type = value("price_type")
+        expected_price_types = {
+            InvestmentInstrument.AssetClass.GOLD: {InvestmentInstrument.PriceType.SPOT},
+            InvestmentInstrument.AssetClass.FUND: {
+                InvestmentInstrument.PriceType.NAV,
+                InvestmentInstrument.PriceType.MARKET_PRICE,
+            },
+            InvestmentInstrument.AssetClass.CURRENCY: {
+                InvestmentInstrument.PriceType.CUSTOMER_BUY_RATE
+            },
+        }
+        expected = expected_price_types.get(asset_class)
+        if expected is not None and price_type not in expected:
+            allowed = {
+                InvestmentInstrument.AssetClass.GOLD: "spot",
+                InvestmentInstrument.AssetClass.FUND: "nav or market_price",
+                InvestmentInstrument.AssetClass.CURRENCY: "customer_buy_rate",
+            }[asset_class]
+            raise serializers.ValidationError(
+                {"price_type": f"{asset_class} instruments must use {allowed}."}
+            )
+
+        price_currency = value("price_currency")
+        if price_currency:
+            normalized_currency = str(price_currency).upper()
+            if normalized_currency != "EGP":
+                raise serializers.ValidationError(
+                    {"price_currency": "The first release supports EGP pricing only."}
+                )
+            attrs["price_currency"] = normalized_currency
+
+        minimum_increment = value("minimum_increment")
+        if minimum_increment is not None and minimum_increment <= 0:
+            raise serializers.ValidationError({"minimum_increment": "Must be greater than zero."})
+        fractional_units_supported = value("fractional_units_supported")
+        if (
+            minimum_increment is not None
+            and not fractional_units_supported
+            and minimum_increment != minimum_increment.to_integral_value()
+        ):
+            raise serializers.ValidationError(
+                {
+                    "minimum_increment": (
+                        "Must be a whole quantity when fractional units are disabled."
+                    )
+                }
+            )
+
+        unit = value("unit")
+        if unit:
+            normalized_unit = str(unit).strip()
+            if asset_class == InvestmentInstrument.AssetClass.GOLD and not re.fullmatch(
+                r"gram_(?:24k|21k|18k)", normalized_unit.lower()
+            ):
+                raise serializers.ValidationError(
+                    {"unit": "Gold units must identify grams and purity, such as gram_24k."}
+                )
+            if (
+                asset_class == InvestmentInstrument.AssetClass.FUND
+                and normalized_unit != "fund_unit"
+            ):
+                raise serializers.ValidationError({"unit": "Fund instruments must use fund_unit."})
+            if asset_class == InvestmentInstrument.AssetClass.CURRENCY:
+                normalized_unit = normalized_unit.upper()
+                if not re.fullmatch(r"[A-Z]{3}", normalized_unit):
+                    raise serializers.ValidationError(
+                        {"unit": "Currency units must be a three-letter ISO code."}
+                    )
+                attrs["unit"] = normalized_unit
+
+        max_quote_age_seconds = value("max_quote_age_seconds")
+        if max_quote_age_seconds is not None and max_quote_age_seconds <= 0:
+            raise serializers.ValidationError(
+                {"max_quote_age_seconds": "Must be greater than zero."}
+            )
+        return attrs
 
 
 class AdminLoginSerializer(serializers.Serializer):
@@ -49,6 +166,8 @@ class AdminIssueUpdateSerializer(serializers.Serializer):
 
 
 class AdminProductSerializer(serializers.ModelSerializer):
+    investment_instrument = AdminInvestmentInstrumentSerializer(read_only=True)
+
     class Meta:
         model = Product
         fields = [
@@ -60,6 +179,7 @@ class AdminProductSerializer(serializers.ModelSerializer):
             "features",
             "external_link",
             "is_active",
+            "investment_instrument",
             "created_at",
         ]
         read_only_fields = ["id", "created_at"]

@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view
@@ -10,7 +11,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.filters.conversations import ConversationFilterSet, MessageFilterSet
-from core.models import Conversation, Message
+from core.models import Conversation, Message, SavedInvestmentScenario
 from core.openapi import error_responses
 from core.permissions import HasDataProcessingConsent
 from core.serializers.conversations import (
@@ -22,6 +23,7 @@ from core.serializers.conversations import (
     MessageSerializer,
     MessageWidgetUpdateSerializer,
 )
+from core.serializers.investment_scenarios import validate_saved_payload
 from core.tasks.conversations import generate_chat_reply
 from core.views.statements import create_statement_from_upload
 
@@ -188,17 +190,42 @@ class MessageWidgetView(APIView):
         request=MessageWidgetUpdateSerializer,
         responses={200: MessageSerializer, **error_responses(404, 422)},
     )
+    @transaction.atomic
     def patch(self, request, conversation_id, message_id):
         conversation = get_object_or_404(Conversation, id=conversation_id, user=request.user)
         message = get_object_or_404(
-            Message, id=message_id, conversation=conversation, sender="assistant"
+            Message.objects.select_for_update(),
+            id=message_id,
+            conversation=conversation,
+            sender="assistant",
         )
         if not message.widget_json:
             raise ValidationError({"widget": "This message has no widget to update."})
 
         serializer = MessageWidgetUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        message.widget_json["payload"] = serializer.validated_data["payload"]
+        payload = serializer.validated_data["payload"]
+
+        if message.widget_json.get("type") == "investment_plan":
+            payload = validate_saved_payload(payload, message.widget_json.get("payload"))
+            scenario = (
+                SavedInvestmentScenario.objects.select_for_update()
+                .filter(source_message=message)
+                .first()
+            )
+            if scenario is None:
+                SavedInvestmentScenario.objects.create(
+                    user=request.user,
+                    source_message=message,
+                    payload_json=payload,
+                )
+            else:
+                # Preserve the user's title and archive choice on an idempotent
+                # retry; only the source widget snapshot is being persisted.
+                scenario.payload_json = payload
+                scenario.save(update_fields=["payload_json", "updated_at"])
+
+        message.widget_json["payload"] = payload
         message.save(update_fields=["widget_json"])
         return Response(MessageSerializer(message).data)
 
