@@ -58,6 +58,19 @@ class TestRefresh:
         assert refresh_response.status_code == 200
         assert refresh_response.data["access_token"]
 
+    def test_refresh_for_deleted_user_ends_stale_session(self, client, user):
+        login_response = _login(client)
+        assert login_response.status_code == 200
+
+        # Seed-data refreshes and account deletion can leave a browser holding
+        # a correctly signed refresh token whose user row no longer exists.
+        # It is an invalid session (401), not a retryable server failure (500).
+        user.delete()
+        refresh_response = client.post("/auth/refresh/")
+
+        assert refresh_response.status_code == 401
+        assert refresh_response.data["error"]["code"] == "token_not_valid"
+
 
 class TestSessionEntry:
     def test_stale_bearer_does_not_block_login(self, client, user):

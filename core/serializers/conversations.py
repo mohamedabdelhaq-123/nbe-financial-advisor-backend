@@ -2,7 +2,6 @@ from rest_framework import serializers
 
 from core.constants import CHAT_MESSAGE_MAX_LENGTH
 from core.models import Conversation, Message, MessageReference
-from core.serializers.statements import _BinaryFileField
 
 
 class ConversationSerializer(serializers.ModelSerializer):
@@ -114,25 +113,3 @@ class ChatErrorEventSerializer(serializers.Serializer):
 
     conversation_id = serializers.UUIDField()
     message = serializers.CharField()
-
-
-class ConversationAttachmentResponseSerializer(serializers.Serializer):
-    statement_id = serializers.UUIDField()
-    status = serializers.CharField()
-    message_id = serializers.UUIDField()
-
-
-class ConversationAttachmentRequestSerializer(serializers.Serializer):
-    """multipart/form-data request for POST .../attachments — documentation only,
-    the view reads request.FILES directly (see create_statement_from_upload()).
-
-    Uses the same _BinaryFileField as StatementUploadRequestSerializer
-    (core/serializers/statements.py) — a plain FileField renders in the
-    generated OpenAPI schema as `type: string, format: uri`, which reads as
-    "send a URL/reference string" rather than "send the raw file bytes as
-    multipart/form-data" (the field's actual, working contract)."""
-
-    file = _BinaryFileField()
-    # Optional caption typed alongside the file; becomes the user's message
-    # content (falls back to the file name when absent).
-    text = serializers.CharField(required=False, allow_blank=True)

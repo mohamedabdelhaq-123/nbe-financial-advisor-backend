@@ -6,7 +6,6 @@ from rest_framework import generics, mixins, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import GenericAPIView
 from rest_framework.pagination import CursorPagination, LimitOffsetPagination
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -15,8 +14,6 @@ from core.models import Conversation, Message, SavedInvestmentScenario
 from core.openapi import error_responses
 from core.permissions import HasDataProcessingConsent
 from core.serializers.conversations import (
-    ConversationAttachmentRequestSerializer,
-    ConversationAttachmentResponseSerializer,
     ConversationListItemSerializer,
     ConversationSerializer,
     MessageCreateSerializer,
@@ -25,7 +22,6 @@ from core.serializers.conversations import (
 )
 from core.serializers.investment_scenarios import validate_saved_payload
 from core.tasks.conversations import generate_chat_reply
-from core.views.statements import create_statement_from_upload
 
 
 @extend_schema_view(
@@ -228,62 +224,3 @@ class MessageWidgetView(APIView):
         message.widget_json["payload"] = payload
         message.save(update_fields=["widget_json"])
         return Response(MessageSerializer(message).data)
-
-
-class ConversationAttachmentsView(APIView):
-    """
-    Upload a bank statement from within a chat session — a shortcut into
-    the same statement-ingestion pipeline `POST /statements` uses (same
-    202-Accepted-and-poll contract, same `status` progression), just tagged
-    to this conversation: an assistant message is posted announcing the
-    upload, referencing the new statement, rather than the statement
-    gaining any new field of its own to track which conversation it came
-    from.
-    """
-
-    # Same OCR entry point as StatementListCreateView's POST — same consent gate.
-    permission_classes = [IsAuthenticated, HasDataProcessingConsent]
-
-    @extend_schema(
-        request=ConversationAttachmentRequestSerializer,
-        responses={202: ConversationAttachmentResponseSerializer, **error_responses(403, 404, 422)},
-    )
-    def post(self, request, conversation_id):
-        conversation = get_object_or_404(Conversation, id=conversation_id, user=request.user)
-        file_obj = request.FILES.get("file")
-        if not file_obj:
-            raise ValidationError({"file": "This field is required."})
-
-        # Record the upload as the user's own message so the thread shows what
-        # they did — always the file name (Message has no attachment field, so
-        # this is the only durable way to show the file), with the typed caption
-        # above it when present. Created before the assistant announcement so it
-        # sorts first by created_at. `file_obj.name` is read here before
-        # create_statement_from_upload() consumes the file stream.
-        caption = (request.data.get("text") or "").strip()
-        file_line = f"📎 {file_obj.name}"
-        Message.objects.create(
-            conversation=conversation,
-            sender="user",
-            content=f"{file_line}\n{caption}" if caption else file_line,
-        )
-
-        statement = create_statement_from_upload(request.user, file_obj)
-
-        message = Message.objects.create(
-            conversation=conversation,
-            sender="assistant",
-            stage="extraction_review",
-            content="I've started processing your uploaded statement.",
-        )
-        message.add_reference("statement", statement.id)
-        conversation.save()
-
-        return Response(
-            {
-                "statement_id": str(statement.id),
-                "status": statement.status,
-                "message_id": str(message.id),
-            },
-            status=202,
-        )

@@ -3,6 +3,20 @@ from rest_framework import serializers
 from core.models import AnomalyFlag, Category, RecurringCharge, SpendingPatternInsight, Transaction
 
 
+class TransactionBulkDeleteRequestSerializer(serializers.Serializer):
+    ids = serializers.ListField(child=serializers.UUIDField(), allow_empty=False)
+
+
+class TransactionBulkDeleteResultSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    reason = serializers.CharField()
+
+
+class TransactionBulkDeleteResponseSerializer(serializers.Serializer):
+    deleted = serializers.ListField(child=serializers.CharField())
+    skipped = TransactionBulkDeleteResultSerializer(many=True)
+
+
 class TransactionListSerializer(serializers.ModelSerializer):
     # Renamed from DRF's default `account`/`statement` (PrimaryKeyRelatedField)
     # to the `_id`-suffixed convention used throughout the Data Shapes docs.
