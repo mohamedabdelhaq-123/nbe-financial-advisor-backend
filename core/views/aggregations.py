@@ -2,6 +2,7 @@ import calendar
 from datetime import date
 from decimal import Decimal
 
+from django.db import transaction as db_transaction
 from django.db.models import Sum
 from django.db.models.functions import TruncMonth
 from django.shortcuts import get_object_or_404
@@ -40,6 +41,8 @@ from core.serializers.aggregations import (
     SpendingPatternInsightSerializer,
     StabilityScoreResponseSerializer,
     SyncedTransactionPatchSerializer,
+    TransactionBulkDeleteRequestSerializer,
+    TransactionBulkDeleteResponseSerializer,
     TransactionCreateRequestSerializer,
     TransactionDetailSerializer,
     TransactionListSerializer,
@@ -226,6 +229,54 @@ class TransactionDetailView(mixins.RetrieveModelMixin, mixins.DestroyModelMixin,
         # already compute live from the ledger on every read instead, so
         # there's nothing stale left to re-trigger in the meantime.
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class TransactionBulkDeleteView(APIView):
+    """
+    Delete multiple of the current user's transactions in one call.
+
+    An id that doesn't exist, isn't owned by the caller, or belongs to a
+    bank-integrated (synced) account is reported in `skipped` with a reason
+    rather than failing the whole request — the rest of the batch still
+    goes through. Mirrors StatementTransactionApprovalView's partial-success
+    shape (core/views/statements.py).
+    """
+
+    @extend_schema(
+        request=TransactionBulkDeleteRequestSerializer,
+        responses={200: TransactionBulkDeleteResponseSerializer, **error_responses(422)},
+    )
+    def post(self, request, *args, **kwargs):
+        serializer = TransactionBulkDeleteRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        ids = serializer.validated_data["ids"]
+
+        found_by_id = {
+            t.id: t
+            for t in Transaction.objects.filter(id__in=ids, user=request.user).select_related(
+                "account"
+            )
+        }
+
+        deleted = []
+        skipped = []
+        with db_transaction.atomic():
+            for transaction_id in ids:
+                instance = found_by_id.get(transaction_id)
+                if instance is None:
+                    skipped.append({"id": str(transaction_id), "reason": "not_found"})
+                    continue
+                try:
+                    assert_account_mutable(instance.account)
+                except BusinessRuleError:
+                    skipped.append({"id": str(transaction_id), "reason": "account_not_mutable"})
+                    continue
+                instance.delete()
+                deleted.append(str(transaction_id))
+
+        return Response(
+            TransactionBulkDeleteResponseSerializer({"deleted": deleted, "skipped": skipped}).data
+        )
 
 
 # ============================================================================

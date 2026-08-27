@@ -19,6 +19,7 @@ from core.views.aggregations import (
     RecurringChargesView,
     SpendingInsightsView,
     StabilityScoreView,
+    TransactionBulkDeleteView,
     TransactionDetailView,
     TransactionListCreateView,
 )
@@ -52,7 +53,6 @@ from core.views.categories import (
     CategoryListView,
 )
 from core.views.conversations import (
-    ConversationAttachmentsView,
     ConversationDetailView,
     ConversationListCreateView,
     ConversationMessagesView,
@@ -72,6 +72,7 @@ from core.views.profile import (
 )
 from core.views.recommendation import RecommendationFeedbackView, RecommendationsView
 from core.views.statements import (
+    StatementBulkDeleteView,
     StatementDetailView,
     StatementListCreateView,
     StatementOcrArtifactDownloadView,
@@ -107,11 +108,13 @@ __all__ = [
     "BankSyncWebhookView",
     "StatementListCreateView",
     "StatementDetailView",
+    "StatementBulkDeleteView",
     "StatementOcrResultView",
     "StatementOcrArtifactDownloadView",
     "StatementTransactionApprovalView",
     "TransactionListCreateView",
     "TransactionDetailView",
+    "TransactionBulkDeleteView",
     "MonthlySummariesView",
     "CategoryBreakdownView",
     "RecurringChargesView",
@@ -135,7 +138,6 @@ __all__ = [
     "ConversationDetailView",
     "ConversationMessagesView",
     "MessageWidgetView",
-    "ConversationAttachmentsView",
     "SSETicketMintView",
     "EventStreamView",
     "FeedbackCreateView",
