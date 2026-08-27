@@ -50,10 +50,30 @@ from core.serializers.aggregations import (
     TransactionWriteSerializer,
 )
 from core.views.profile import assert_account_mutable
+from services import ai_service
 
 # ============================================================================
 # Transactions — the real, fully CRUD-able ledger.
 # ============================================================================
+
+# The fields embed_transactions' summary text is actually built from
+# (merchant, category, amount, currency, date — see
+# app.features.transactions.service._build_summary_text in the AI service).
+# currency isn't patchable here, so it's not in this set; transaction_type
+# and is_recurring don't feed the summary text at all, so editing only those
+# doesn't need a re-embed.
+_EMBEDDING_RELEVANT_FIELDS = frozenset({"merchant_raw", "category", "amount", "transaction_date"})
+
+
+def _embed_best_effort(transaction_ids: list[str]) -> None:
+    """Best-effort enrichment, never allowed to affect the caller's response —
+    same rationale as core/tasks/bank_sync.py's run_post_ingestion_analysis
+    call: the transaction write already succeeded, a missed embedding pass
+    isn't worth failing it over."""
+    try:
+        ai_service.get_client().embed_transactions(transaction_ids)
+    except ai_service.AIServiceError:
+        pass
 
 
 @extend_schema_view(
@@ -152,6 +172,7 @@ class TransactionListCreateView(ListAPIView):
             transaction_type=data.get("transaction_type"),
             is_recurring=data.get("is_recurring", False),
         )
+        _embed_best_effort([str(transaction.id)])
         return Response(
             TransactionDetailSerializer(transaction).data, status=status.HTTP_201_CREATED
         )
@@ -214,6 +235,8 @@ class TransactionDetailView(mixins.RetrieveModelMixin, mixins.DestroyModelMixin,
             serializer = TransactionPatchSerializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        if _EMBEDDING_RELEVANT_FIELDS & set(serializer.validated_data):
+            _embed_best_effort([str(instance.id)])
         return Response(TransactionDetailSerializer(instance).data)
 
     @extend_schema(responses={204: None, **error_responses(404, 422)})
