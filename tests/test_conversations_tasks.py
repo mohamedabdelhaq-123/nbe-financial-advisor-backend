@@ -194,3 +194,32 @@ def test_generate_chat_reply_relays_tool_call_events_as_chat_tool_status(
     ]
     assistant_message = Message.objects.get(conversation=conversation, sender="assistant")
     assert assistant_message.content == "You spent 100 EGP."
+    # Persisted onto the row itself, not just relayed live — this is what
+    # lets a step list survive a refetch of this conversation's history
+    # instead of only ever existing in the SSE stream a client happened to
+    # be listening to when the turn ran.
+    assert assistant_message.thinking_json is not None
+    assert assistant_message.thinking_json["steps"] == [
+        {"call_id": "call_1", "tool": "get_transactions", "status": "started"},
+        {"call_id": "call_1", "tool": "get_transactions", "status": "completed"},
+    ]
+    assert assistant_message.thinking_json["duration_ms"] >= 0
+
+    message_events = [p for p in published if p[1] == "chat_message"]
+    assert len(message_events) == 1
+    assert message_events[0][2]["thinking"] == assistant_message.thinking_json
+
+
+def test_generate_chat_reply_leaves_thinking_json_null_when_no_tool_called(
+    client, conversation, fake_redis
+):
+    """A turn with no tool calls (e.g. routed to general) must not get a
+    spurious "Thought for 0 seconds" summary — thinking_json stays null."""
+    client.post(
+        f"/chat/conversations/{conversation.id}/messages/",
+        {"content": "what can you help with?"},
+        format="json",
+    )
+
+    assistant_message = Message.objects.get(conversation=conversation, sender="assistant")
+    assert assistant_message.thinking_json is None

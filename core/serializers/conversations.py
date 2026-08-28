@@ -47,6 +47,7 @@ class MessageSerializer(serializers.ModelSerializer):
             "widget_json",
             "references",
             "suggestions_json",
+            "thinking_json",
             "created_at",
         ]
         read_only_fields = fields
@@ -81,6 +82,21 @@ class WidgetSerializer(serializers.Serializer):
     payload = serializers.JSONField(allow_null=True)
 
 
+class ChatThinkingStepSerializer(serializers.Serializer):
+    call_id = serializers.CharField()
+    tool = serializers.CharField()
+    status = serializers.ChoiceField(choices=["started", "completed"])
+
+
+class ChatThinkingSerializer(serializers.Serializer):
+    """Shape of Message.thinking_json / the chat_message event's `thinking`
+    field — the analysis agent's tool-call activity for the turn that
+    produced this reply, or absent entirely for a turn that called no tool."""
+
+    steps = ChatThinkingStepSerializer(many=True)
+    duration_ms = serializers.IntegerField()
+
+
 class MessageDoneEventSerializer(serializers.Serializer):
     """
     Documents the `data` payload of the `chat_message` SSE event published
@@ -99,6 +115,7 @@ class MessageDoneEventSerializer(serializers.Serializer):
     widget = WidgetSerializer()
     references = MessageReferenceSerializer(many=True)
     suggestions = serializers.ListField(child=serializers.CharField())
+    thinking = ChatThinkingSerializer(required=False, allow_null=True)
 
 
 class ChatErrorEventSerializer(serializers.Serializer):
