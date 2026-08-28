@@ -52,9 +52,13 @@ class EventStreamView(APIView):
             200: OpenApiResponse(
                 description=(
                     "text/event-stream — a persistent connection relaying "
-                    "statement_status, chat_token, chat_message, chat_error, "
-                    "transaction_synced, and anomaly_detected events (named "
-                    "SSE `event:` types) as they occur. chat_error "
+                    "statement_status, chat_token, chat_tool_status, chat_message, "
+                    "chat_error, transaction_synced, and anomaly_detected events "
+                    "(named SSE `event:` types) as they occur. chat_tool_status "
+                    "(core.serializers.conversations.ChatToolStatusEventSerializer) "
+                    "fires zero or more times per turn, best-effort, when the AI "
+                    "service's analysis node calls a tool mid-turn — a client must "
+                    "not depend on it for correctness. chat_error "
                     "(core.serializers.conversations.ChatErrorEventSerializer) "
                     "fires instead of chat_message when the AI service's reply "
                     "fails — no assistant message is persisted in that case. "

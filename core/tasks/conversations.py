@@ -22,7 +22,9 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
     serializable). Consumes ai_service.stream_chat()'s {"event", "data"}
     envelope: each "token" event is forwarded immediately as a chat_token SSE
     event (a genuine relay of the AI service's own stream, mock or real —
-    see services/ai_service.py), then the terminal "done" event's content is
+    see services/ai_service.py), each best-effort "tool_call" event (the
+    analysis agent calling a tool mid-turn) is forwarded as chat_tool_status,
+    then the terminal "done" event's content is
     persisted as the assistant Message (+ its references, + its follow-up
     suggestions) exactly as the old inline code did, and published as one
     terminal chat_message event
@@ -51,6 +53,20 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
                     conversation.user_id,
                     "chat_token",
                     {"conversation_id": str(conversation.id), "data": envelope["data"]},
+                )
+            elif event == "tool_call":
+                # Best-effort "thinking" indicator — the AI service's analysis
+                # node calling a tool mid-turn. Never required for correctness;
+                # see ChatToolStatusEventSerializer.
+                event_bus.publish_user_event(
+                    conversation.user_id,
+                    "chat_tool_status",
+                    {
+                        "conversation_id": str(conversation.id),
+                        "call_id": envelope["data"]["call_id"],
+                        "tool": envelope["data"]["tool"],
+                        "status": envelope["data"]["status"],
+                    },
                 )
             elif event == "done":
                 result = envelope["data"]

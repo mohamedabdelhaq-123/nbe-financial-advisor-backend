@@ -22,7 +22,7 @@ from core.models import (
     User,
 )
 from core.tasks.conversations import generate_chat_reply
-from services import ai_service
+from services import ai_service, event_bus
 
 
 @pytest.fixture
@@ -119,3 +119,78 @@ def test_generate_chat_reply_skips_message_when_stream_has_no_terminal_event(
     generate_chat_reply(str(conversation.id), str(user_message.id))
 
     assert not Message.objects.filter(conversation=conversation, sender="assistant").exists()
+
+
+def test_generate_chat_reply_relays_tool_call_events_as_chat_tool_status(
+    user, conversation, fake_redis, monkeypatch
+):
+    """The if/elif chain in generate_chat_reply has no else branch — an
+    unmatched/mistyped event name silently no-ops. This asserts the new
+    "tool_call" branch actually publishes chat_tool_status with the expected
+    shape, and that persisting the assistant Message afterward still works
+    (regression coverage: the new branch mustn't disturb the done handling)."""
+    user_message = Message.objects.create(
+        conversation=conversation, sender="user", content="show my spending", stage="general"
+    )
+
+    def _stream_with_tool_call(*args, **kwargs):
+        yield {
+            "event": "tool_call",
+            "data": {"call_id": "call_1", "tool": "get_transactions", "status": "started"},
+        }
+        yield {"event": "token", "data": "You spent "}
+        yield {
+            "event": "tool_call",
+            "data": {"call_id": "call_1", "tool": "get_transactions", "status": "completed"},
+        }
+        yield {
+            "event": "done",
+            "data": {
+                "content": "You spent 100 EGP.",
+                "widget": {"type": None, "payload": None},
+                "references": [],
+                "suggestions": [],
+            },
+        }
+
+    class _FakeClient:
+        stream_chat = staticmethod(_stream_with_tool_call)
+
+    monkeypatch.setattr(ai_service, "get_client", lambda: _FakeClient())
+
+    published = []
+    original_publish = event_bus.publish_user_event
+
+    def _recording_publish(user_id, event_type, data):
+        published.append((user_id, event_type, data))
+        return original_publish(user_id, event_type, data)
+
+    monkeypatch.setattr(event_bus, "publish_user_event", _recording_publish)
+
+    generate_chat_reply(str(conversation.id), str(user_message.id))
+
+    tool_status_events = [p for p in published if p[1] == "chat_tool_status"]
+    assert tool_status_events == [
+        (
+            user.id,
+            "chat_tool_status",
+            {
+                "conversation_id": str(conversation.id),
+                "call_id": "call_1",
+                "tool": "get_transactions",
+                "status": "started",
+            },
+        ),
+        (
+            user.id,
+            "chat_tool_status",
+            {
+                "conversation_id": str(conversation.id),
+                "call_id": "call_1",
+                "tool": "get_transactions",
+                "status": "completed",
+            },
+        ),
+    ]
+    assistant_message = Message.objects.get(conversation=conversation, sender="assistant")
+    assert assistant_message.content == "You spent 100 EGP."

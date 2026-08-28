@@ -113,3 +113,20 @@ class ChatErrorEventSerializer(serializers.Serializer):
 
     conversation_id = serializers.UUIDField()
     message = serializers.CharField()
+
+
+class ChatToolStatusEventSerializer(serializers.Serializer):
+    """
+    Documents the `data` payload of the `chat_tool_status` SSE event —
+    published by generate_chat_reply (core/tasks/conversations.py) whenever
+    the AI service's `analysis` node calls a tool mid-turn. Best-effort/
+    informational: a turn with no tool calls publishes none of these, and a
+    client must not depend on this for correctness. Same documentation-only
+    role as MessageDoneEventSerializer above — not a real DRF response body,
+    EventStreamView's is text/event-stream.
+    """
+
+    conversation_id = serializers.UUIDField()
+    call_id = serializers.CharField()
+    tool = serializers.CharField()
+    status = serializers.ChoiceField(choices=["started", "completed"])

@@ -194,7 +194,25 @@ def _mock_stream_chat(conversation_id: str, user_id: str, message: str):
     if "budget" in lowered or "allocation" in lowered:
         budget = Budget.objects.filter(user_id=user_id).prefetch_related("allocations").first()
 
+    tool_call_events: list[dict] = []
     if budget is not None:
+        # Mirrors the real analysis node's best-effort tool_call events, so
+        # USE_MOCK_AI_SERVICE=1 dev/demo mode can exercise the "thinking"
+        # indicator UI without a live model.
+        tool_call_events = [
+            {
+                "event": "tool_call",
+                "data": {"call_id": "mock-call-1", "tool": "get_transactions", "status": "started"},
+            },
+            {
+                "event": "tool_call",
+                "data": {
+                    "call_id": "mock-call-1",
+                    "tool": "get_transactions",
+                    "status": "completed",
+                },
+            },
+        ]
         content = "Here's your current plan — adjust the sliders and confirm to update it."
         widget = {
             "type": "allocation_slider",
@@ -226,6 +244,8 @@ def _mock_stream_chat(conversation_id: str, user_id: str, message: str):
             "What are my recent transactions?",
             "Help me plan my savings",
         ]
+
+    yield from tool_call_events
 
     for word in content.split(" "):
         yield {"event": "token", "data": word + " "}
