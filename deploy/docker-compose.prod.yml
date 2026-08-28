@@ -416,15 +416,28 @@ services:
       AI_SERVICE_MARKET_DATA__TIMEOUT_SECONDS: ${MARKET_DATA_TIMEOUT_SECONDS:-12}
       AI_SERVICE_MARKET_DATA__CACHE_TTL_SECONDS: ${MARKET_DATA_CACHE_TTL_SECONDS:-60}
       AI_SERVICE_MARKET_DATA__MAX_BATCH_SIZE: ${MARKET_DATA_MAX_BATCH_SIZE:-3}
-      # Scope guardrail (zero-shot "is this about personal finance" check) — off
-      # by default, still being validated. MODE=hosted calls the HF Inference API
-      # (needs SCOPE_GUARD_HOSTED_API_KEY, a free token from
-      # https://huggingface.co/settings/tokens); MODE=local runs the model
-      # in-process instead (image must be built with `--group local-scope-guard`
+      # Maestro routing — the chat orchestrator's own scope+intent decision.
+      # MODEL_NAME empty reuses AI_SERVICE_CHAT_MODEL__MODEL_NAME; set it here
+      # to use a smaller/cheaper model for routing without touching the model
+      # that writes the advisor's actual replies.
+      AI_SERVICE_MAESTRO_ROUTING__MINIMUM_CONFIDENCE: ${MAESTRO_ROUTING_MINIMUM_CONFIDENCE:-0.55}
+      AI_SERVICE_MAESTRO_ROUTING__MODEL_NAME: ${MAESTRO_ROUTING_MODEL_NAME:-}
+      AI_SERVICE_MAESTRO_ROUTING__MAX_OUTPUT_TOKENS: ${MAESTRO_ROUTING_MAX_OUTPUT_TOKENS:-512}
+      # NLI shadow — legacy zero-shot classifier retained for comparison
+      # telemetry only; never gates chat. Off by default. MODE=hosted calls
+      # the HF Inference API (needs NLI_SHADOW_HOSTED_API_KEY, a free token
+      # from https://huggingface.co/settings/tokens); MODE=local runs the
+      # model in-process (image must be built with `--group local-scope-guard`
       # first — not included by default, see the ai-service repo's pyproject.toml).
+      AI_SERVICE_NLI_SHADOW__ENABLED: ${NLI_SHADOW_ENABLED:-0}
+      AI_SERVICE_NLI_SHADOW__MODE: ${NLI_SHADOW_MODE:-hosted}
+      AI_SERVICE_NLI_SHADOW__HOSTED_API_KEY: ${NLI_SHADOW_HOSTED_API_KEY:-}
+      # Scope guardrail — legacy setting, no longer read by this branch's
+      # ai-service code (superseded by NLI_SHADOW above). Left wired for any
+      # branch/rollback that still expects it; harmless no-op otherwise.
       AI_SERVICE_SCOPE_GUARD__ENABLED: ${SCOPE_GUARD_ENABLED:-0}
       AI_SERVICE_SCOPE_GUARD__MODE: ${SCOPE_GUARD_MODE:-hosted}
-      AI_SERVICE_SCOPE_GUARD__HOSTED_API_KEY: ${SCOPE_GUARD_HOSTED_API_KEY}
+      AI_SERVICE_SCOPE_GUARD__HOSTED_API_KEY: ${SCOPE_GUARD_HOSTED_API_KEY:-}
     expose: ["8001"]                  # internal only, NEVER published — Pattern A
     depends_on:
       postgres:
