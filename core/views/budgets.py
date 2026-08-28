@@ -535,7 +535,13 @@ class GoalView(APIView):
         return Response(status=204)
 
 
-_DASHBOARD_PERIODS = ("this_month", "last_month", "last_3_months", "this_year")
+_DASHBOARD_PERIODS = (
+    "this_month",
+    "last_month",
+    "last_3_months",
+    "this_year",
+    "last_5_years",
+)
 
 
 def _resolve_window(period):
@@ -565,6 +571,9 @@ def _resolve_window(period):
         end = today
     elif period == "this_year":
         start = date(today.year, 1, 1)
+        end = today
+    elif period == "last_5_years":
+        start = date(today.year - 4, 1, 1)
         end = today
     else:  # "this_month" — also the default when no period is given
         start = date(today.year, today.month, 1)
@@ -607,10 +616,10 @@ class DashboardView(APIView):
     metrics (vs. the preceding equal-length window), and net worth — one
     call instead of the frontend stitching together five separate ones.
 
-    `period` (`this_month` | `last_month` | `last_3_months` | `this_year`,
-    default `this_month`) selects the window every metric below is computed
-    over. `account_id`, when given, restricts every metric to that one
-    account's transactions/balance instead of all of the user's accounts
+    `period` (`this_month` | `last_month` | `last_3_months` | `this_year` |
+    `last_5_years`, default `this_month`) selects the window every metric below
+    is computed over. `account_id`, when given, restricts every metric to that
+    one account's transactions/balance instead of all of the user's accounts
     combined — 404 if it doesn't belong to the current user.
 
     Always returns 200, even for a brand new user with no budget plan yet:
