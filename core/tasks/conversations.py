@@ -24,10 +24,12 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
     serializable). Consumes ai_service.stream_chat()'s {"event", "data"}
     envelope: each "token" event is forwarded immediately as a chat_token SSE
     event (a genuine relay of the AI service's own stream, mock or real —
-    see services/ai_service.py), each best-effort "tool_call" event (the
-    analysis agent calling a tool mid-turn) is forwarded as chat_tool_status
-    AND accumulated into thinking_steps, then the terminal "done" event's
-    content is
+    see services/ai_service.py), the best-effort "agent_selected" event
+    (which specialist Maestro routed this turn to) is forwarded as
+    chat_agent_selected AND accumulated into thinking_steps, each best-effort
+    "tool_call" event (the analysis agent calling a tool mid-turn) is
+    forwarded as chat_tool_status AND accumulated into thinking_steps, then
+    the terminal "done" event's content is
     persisted as the assistant Message (+ its references, + its follow-up
     suggestions, + its accumulated thinking_json if any tool was called)
     exactly as the old inline code did, and published as one terminal
@@ -71,6 +73,7 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
                     thinking_started_at = time.monotonic()
                 thinking_steps.append(
                     {
+                        "kind": "tool",
                         "call_id": envelope["data"]["call_id"],
                         "tool": envelope["data"]["tool"],
                         "status": envelope["data"]["status"],
@@ -87,6 +90,21 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
                         "call_id": envelope["data"]["call_id"],
                         "tool": envelope["data"]["tool"],
                         "status": envelope["data"]["status"],
+                    },
+                )
+            elif event == "agent_selected":
+                if thinking_started_at is None:
+                    thinking_started_at = time.monotonic()
+                thinking_steps.append({"kind": "agent", "agent": envelope["data"]["agent"]})
+                # Best-effort "thinking" indicator — which specialist Maestro
+                # routed this turn to. Never required for correctness; see
+                # ChatAgentSelectedEventSerializer.
+                event_bus.publish_user_event(
+                    conversation.user_id,
+                    "chat_agent_selected",
+                    {
+                        "conversation_id": str(conversation.id),
+                        "agent": envelope["data"]["agent"],
                     },
                 )
             elif event == "done":

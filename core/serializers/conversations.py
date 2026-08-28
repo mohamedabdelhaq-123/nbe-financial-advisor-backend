@@ -83,15 +83,25 @@ class WidgetSerializer(serializers.Serializer):
 
 
 class ChatThinkingStepSerializer(serializers.Serializer):
-    call_id = serializers.CharField()
-    tool = serializers.CharField()
-    status = serializers.ChoiceField(choices=["started", "completed"])
+    """One step of a turn's thinking summary — either which specialist
+    Maestro routed to (`kind: "agent"`) or a tool lifecycle signal
+    (`kind: "tool"`). No polymorphic-serializer pattern exists elsewhere in
+    this codebase, so the two shapes are flattened onto one serializer with
+    kind-conditional optional fields rather than introducing one here."""
+
+    kind = serializers.ChoiceField(choices=["agent", "tool"])
+    agent = serializers.CharField(required=False)
+    call_id = serializers.CharField(required=False)
+    tool = serializers.CharField(required=False)
+    status = serializers.ChoiceField(choices=["started", "completed"], required=False)
 
 
 class ChatThinkingSerializer(serializers.Serializer):
     """Shape of Message.thinking_json / the chat_message event's `thinking`
-    field — the analysis agent's tool-call activity for the turn that
-    produced this reply, or absent entirely for a turn that called no tool."""
+    field — the agent-selection step plus the analysis agent's tool-call
+    activity for the turn that produced this reply, or absent entirely for a
+    turn that never routed anywhere (e.g. an unauthorized-conversation
+    rejection, which persists no assistant Message at all)."""
 
     steps = ChatThinkingStepSerializer(many=True)
     duration_ms = serializers.IntegerField()
@@ -147,3 +157,18 @@ class ChatToolStatusEventSerializer(serializers.Serializer):
     call_id = serializers.CharField()
     tool = serializers.CharField()
     status = serializers.ChoiceField(choices=["started", "completed"])
+
+
+class ChatAgentSelectedEventSerializer(serializers.Serializer):
+    """
+    Documents the `data` payload of the `chat_agent_selected` SSE event —
+    published by generate_chat_reply (core/tasks/conversations.py) once per
+    turn, naming the specialist Maestro routed to. Best-effort/informational,
+    same as ChatToolStatusEventSerializer above: a turn that raises before
+    routing (e.g. an unauthorized-conversation rejection) publishes none of
+    these. Same documentation-only role as MessageDoneEventSerializer above —
+    not a real DRF response body, EventStreamView's is text/event-stream.
+    """
+
+    conversation_id = serializers.UUIDField()
+    agent = serializers.CharField()

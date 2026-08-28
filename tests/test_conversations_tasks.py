@@ -200,8 +200,8 @@ def test_generate_chat_reply_relays_tool_call_events_as_chat_tool_status(
     # be listening to when the turn ran.
     assert assistant_message.thinking_json is not None
     assert assistant_message.thinking_json["steps"] == [
-        {"call_id": "call_1", "tool": "get_transactions", "status": "started"},
-        {"call_id": "call_1", "tool": "get_transactions", "status": "completed"},
+        {"kind": "tool", "call_id": "call_1", "tool": "get_transactions", "status": "started"},
+        {"kind": "tool", "call_id": "call_1", "tool": "get_transactions", "status": "completed"},
     ]
     assert assistant_message.thinking_json["duration_ms"] >= 0
 
@@ -210,16 +210,134 @@ def test_generate_chat_reply_relays_tool_call_events_as_chat_tool_status(
     assert message_events[0][2]["thinking"] == assistant_message.thinking_json
 
 
-def test_generate_chat_reply_leaves_thinking_json_null_when_no_tool_called(
-    client, conversation, fake_redis
+def test_generate_chat_reply_relays_agent_selected_events_as_chat_agent_selected(
+    user, conversation, fake_redis, monkeypatch
 ):
-    """A turn with no tool calls (e.g. routed to general) must not get a
-    spurious "Thought for 0 seconds" summary — thinking_json stays null."""
-    client.post(
-        f"/chat/conversations/{conversation.id}/messages/",
-        {"content": "what can you help with?"},
-        format="json",
+    """The new "agent_selected" branch publishes chat_agent_selected with the
+    expected shape, accumulating a `kind: "agent"` step ahead of any tool
+    steps, in stream order."""
+    user_message = Message.objects.create(
+        conversation=conversation, sender="user", content="show my spending", stage="general"
     )
+
+    def _stream_with_agent_selected(*args, **kwargs):
+        yield {"event": "agent_selected", "data": {"agent": "analysis"}}
+        yield {
+            "event": "tool_call",
+            "data": {"call_id": "call_1", "tool": "get_transactions", "status": "started"},
+        }
+        yield {"event": "token", "data": "You spent "}
+        yield {
+            "event": "tool_call",
+            "data": {"call_id": "call_1", "tool": "get_transactions", "status": "completed"},
+        }
+        yield {
+            "event": "done",
+            "data": {
+                "content": "You spent 100 EGP.",
+                "widget": {"type": None, "payload": None},
+                "references": [],
+                "suggestions": [],
+            },
+        }
+
+    class _FakeClient:
+        stream_chat = staticmethod(_stream_with_agent_selected)
+
+    monkeypatch.setattr(ai_service, "get_client", lambda: _FakeClient())
+
+    published = []
+    original_publish = event_bus.publish_user_event
+
+    def _recording_publish(user_id, event_type, data):
+        published.append((user_id, event_type, data))
+        return original_publish(user_id, event_type, data)
+
+    monkeypatch.setattr(event_bus, "publish_user_event", _recording_publish)
+
+    generate_chat_reply(str(conversation.id), str(user_message.id))
+
+    agent_selected_events = [p for p in published if p[1] == "chat_agent_selected"]
+    assert agent_selected_events == [
+        (
+            user.id,
+            "chat_agent_selected",
+            {"conversation_id": str(conversation.id), "agent": "analysis"},
+        ),
+    ]
+
+    assistant_message = Message.objects.get(conversation=conversation, sender="assistant")
+    assert assistant_message.thinking_json["steps"] == [
+        {"kind": "agent", "agent": "analysis"},
+        {"kind": "tool", "call_id": "call_1", "tool": "get_transactions", "status": "started"},
+        {"kind": "tool", "call_id": "call_1", "tool": "get_transactions", "status": "completed"},
+    ]
+
+
+def test_generate_chat_reply_thinking_json_not_null_when_only_agent_selected(
+    user, conversation, fake_redis, monkeypatch
+):
+    """A turn routed somewhere that calls no tool (e.g. general) still gets a
+    persisted thinking summary now, carrying just the agent-selection step —
+    this is the intended effect of surfacing "which agent it chose", not a
+    regression of the earlier "no spurious summary" guard."""
+    user_message = Message.objects.create(
+        conversation=conversation, sender="user", content="hi", stage="general"
+    )
+
+    def _stream_with_only_agent_selected(*args, **kwargs):
+        yield {"event": "agent_selected", "data": {"agent": "general"}}
+        yield {"event": "token", "data": "Hello! "}
+        yield {
+            "event": "done",
+            "data": {
+                "content": "Hello! How can I help?",
+                "widget": {"type": None, "payload": None},
+                "references": [],
+                "suggestions": [],
+            },
+        }
+
+    class _FakeClient:
+        stream_chat = staticmethod(_stream_with_only_agent_selected)
+
+    monkeypatch.setattr(ai_service, "get_client", lambda: _FakeClient())
+
+    generate_chat_reply(str(conversation.id), str(user_message.id))
+
+    assistant_message = Message.objects.get(conversation=conversation, sender="assistant")
+    assert assistant_message.thinking_json is not None
+    assert assistant_message.thinking_json["steps"] == [{"kind": "agent", "agent": "general"}]
+
+
+def test_generate_chat_reply_leaves_thinking_json_null_when_stream_emits_neither(
+    user, conversation, fake_redis, monkeypatch
+):
+    """A stream that emits no agent_selected and no tool_call at all (e.g. a
+    client implementation that never got as far as picking a route) must not
+    get a spurious "Thought for 0 seconds" summary — thinking_json stays null."""
+    user_message = Message.objects.create(
+        conversation=conversation, sender="user", content="hi", stage="general"
+    )
+
+    def _stream_with_neither(*args, **kwargs):
+        yield {"event": "token", "data": "Hello! "}
+        yield {
+            "event": "done",
+            "data": {
+                "content": "Hello! How can I help?",
+                "widget": {"type": None, "payload": None},
+                "references": [],
+                "suggestions": [],
+            },
+        }
+
+    class _FakeClient:
+        stream_chat = staticmethod(_stream_with_neither)
+
+    monkeypatch.setattr(ai_service, "get_client", lambda: _FakeClient())
+
+    generate_chat_reply(str(conversation.id), str(user_message.id))
 
     assistant_message = Message.objects.get(conversation=conversation, sender="assistant")
     assert assistant_message.thinking_json is None
