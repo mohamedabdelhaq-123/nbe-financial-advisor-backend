@@ -19,7 +19,9 @@ class MonthlySummary(models.Model):
     total_inflow = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
     category_breakdown_json = models.JSONField(blank=True, null=True)
     top_merchants_json = models.JSONField(blank=True, null=True)
-    embedding = VectorField(dimensions=1536, blank=True, null=True)
+    # 768 dimensions, matching the AI service's configured embedding model
+    # (same convention as ProblemStatement.embedding).
+    embedding = VectorField(dimensions=768, blank=True, null=True)
 
     class Meta:
         db_table = "monthly_summaries"

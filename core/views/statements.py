@@ -33,7 +33,7 @@ from core.serializers.statements import (
 )
 from core.tasks.statements import process_statement_pipeline, validate_advance
 from core.views.profile import assert_account_mutable
-from services import file_storage
+from services import ai_service, file_storage
 
 
 def advance_statement_to(statement: StatementFile, target_status: str) -> None:
@@ -509,6 +509,20 @@ class StatementTransactionApprovalView(APIView):
             statement.failure_reason = None
             statement.failed_phase = None
             statement.save(update_fields=["status", "failure_reason", "failed_phase"])
+
+        # Best-effort enrichment, outside the atomic block so this outbound
+        # call never holds the DB transaction open — same rationale as
+        # core/tasks/bank_sync.py's run_post_ingestion_analysis call: the
+        # transactions are already committed, a missed embedding pass isn't
+        # worth failing approval over.
+        new_transaction_ids = [
+            str(row["transaction_id"]) for row in resolved if row["transaction_id"] is not None
+        ]
+        if new_transaction_ids:
+            try:
+                ai_service.get_client().embed_transactions(new_transaction_ids)
+            except ai_service.AIServiceError:
+                pass
 
         return Response(
             TransactionApprovalResponseSerializer(

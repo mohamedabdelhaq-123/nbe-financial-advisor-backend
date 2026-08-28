@@ -27,6 +27,15 @@ class Message(models.Model):
     # stream" rationale) — null on user messages and on any assistant message
     # from before this field existed.
     suggestions_json = models.JSONField(blank=True, null=True)
+    # {"steps": [{"call_id", "tool", "status"}, ...], "duration_ms": int} for
+    # an assistant reply whose analysis-agent turn called at least one tool —
+    # null otherwise (see widget_json above for the same "persist, don't just
+    # stream" rationale). Without this, the frontend's tool-call step list
+    # only ever lived in an in-memory overlay on the SSE-delivered message,
+    # not the message itself — the next refetch of this conversation's
+    # history (GET .../messages/) silently dropped it since the real
+    # persisted row had nothing to show.
+    thinking_json = models.JSONField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

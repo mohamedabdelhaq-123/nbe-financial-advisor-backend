@@ -143,8 +143,22 @@ class Command(BaseCommand):
             default=False,
             help="Bypass the DEBUG-only guardrail.",
         )
+        parser.add_argument(
+            "--if-empty",
+            action="store_true",
+            default=False,
+            help="No-op (exit 0, nothing flushed or reseeded) if any Product row "
+            "already exists — real or previously seeded. For an automatic startup "
+            "step: seeds a fresh volume once, then leaves a running deployment's "
+            "data alone on every subsequent restart instead of flushing and "
+            "reseeding every time.",
+        )
 
     def handle(self, *args, **options):
+        if options["if_empty"] and Product.objects.exists():
+            self.stdout.write("Products already exist — skipping seed (--if-empty).")
+            return
+
         if not settings.DEBUG and not options["force"]:
             raise CommandError(
                 "Refusing to seed synthetic data: settings.DEBUG is False. "

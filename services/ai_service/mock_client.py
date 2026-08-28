@@ -194,7 +194,27 @@ def _mock_stream_chat(conversation_id: str, user_id: str, message: str):
     if "budget" in lowered or "allocation" in lowered:
         budget = Budget.objects.filter(user_id=user_id).prefetch_related("allocations").first()
 
+    agent_selected_events: list[dict] = []
+    tool_call_events: list[dict] = []
     if budget is not None:
+        # Mirrors the real service's best-effort agent_selected + tool_call
+        # events, so USE_MOCK_AI_SERVICE=1 dev/demo mode can exercise the
+        # "thinking" indicator UI without a live model.
+        agent_selected_events = [{"event": "agent_selected", "data": {"agent": "planning"}}]
+        tool_call_events = [
+            {
+                "event": "tool_call",
+                "data": {"call_id": "mock-call-1", "tool": "get_transactions", "status": "started"},
+            },
+            {
+                "event": "tool_call",
+                "data": {
+                    "call_id": "mock-call-1",
+                    "tool": "get_transactions",
+                    "status": "completed",
+                },
+            },
+        ]
         content = "Here's your current plan — adjust the sliders and confirm to update it."
         widget = {
             "type": "allocation_slider",
@@ -215,6 +235,7 @@ def _mock_stream_chat(conversation_id: str, user_id: str, message: str):
             "Revert to my last confirmed allocation",
         ]
     else:
+        agent_selected_events = [{"event": "agent_selected", "data": {"agent": "analysis"}}]
         content = (
             "I can help with spending analysis, planning, or product recommendations — "
             "ask me about your budget, transactions, or savings goal."
@@ -226,6 +247,9 @@ def _mock_stream_chat(conversation_id: str, user_id: str, message: str):
             "What are my recent transactions?",
             "Help me plan my savings",
         ]
+
+    yield from agent_selected_events
+    yield from tool_call_events
 
     for word in content.split(" "):
         yield {"event": "token", "data": word + " "}

@@ -8,6 +8,8 @@ of two independent async producers rather than one Celery producer and one
 inline-request producer sharing a pipe by convention only.
 """
 
+import time
+
 from celery import shared_task
 
 from core.models import Conversation, Message
@@ -22,10 +24,16 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
     serializable). Consumes ai_service.stream_chat()'s {"event", "data"}
     envelope: each "token" event is forwarded immediately as a chat_token SSE
     event (a genuine relay of the AI service's own stream, mock or real —
-    see services/ai_service.py), then the terminal "done" event's content is
+    see services/ai_service.py), the best-effort "agent_selected" event
+    (which specialist Maestro routed this turn to) is forwarded as
+    chat_agent_selected AND accumulated into thinking_steps, each best-effort
+    "tool_call" event (the analysis agent calling a tool mid-turn) is
+    forwarded as chat_tool_status AND accumulated into thinking_steps, then
+    the terminal "done" event's content is
     persisted as the assistant Message (+ its references, + its follow-up
-    suggestions) exactly as the old inline code did, and published as one
-    terminal chat_message event
+    suggestions, + its accumulated thinking_json if any tool was called)
+    exactly as the old inline code did, and published as one terminal
+    chat_message event
     carrying the same fields MessageDoneEventSerializer already documents,
     plus conversation_id since the connection is multiplexed across all of a
     user's conversations. An "error" event — or a request-level failure —
@@ -41,6 +49,14 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
     user_message = Message.objects.get(id=user_message_id)
 
     result = None
+    # Mirrors each relayed tool_call event into a running record — separate
+    # from (and in addition to) the best-effort chat_tool_status relay below,
+    # which only ever reaches a live SSE listener. This one gets persisted
+    # onto the assistant Message itself (thinking_json) once the turn
+    # finishes, so a client's step list survives a refetch of this
+    # conversation's history instead of only existing in the live stream.
+    thinking_steps: list[dict] = []
+    thinking_started_at: float | None = None
     try:
         for envelope in ai_service.get_client().stream_chat(
             str(conversation.id), str(conversation.user_id), user_message.content
@@ -51,6 +67,45 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
                     conversation.user_id,
                     "chat_token",
                     {"conversation_id": str(conversation.id), "data": envelope["data"]},
+                )
+            elif event == "tool_call":
+                if thinking_started_at is None:
+                    thinking_started_at = time.monotonic()
+                thinking_steps.append(
+                    {
+                        "kind": "tool",
+                        "call_id": envelope["data"]["call_id"],
+                        "tool": envelope["data"]["tool"],
+                        "status": envelope["data"]["status"],
+                    }
+                )
+                # Best-effort "thinking" indicator — the AI service's analysis
+                # node calling a tool mid-turn. Never required for correctness;
+                # see ChatToolStatusEventSerializer.
+                event_bus.publish_user_event(
+                    conversation.user_id,
+                    "chat_tool_status",
+                    {
+                        "conversation_id": str(conversation.id),
+                        "call_id": envelope["data"]["call_id"],
+                        "tool": envelope["data"]["tool"],
+                        "status": envelope["data"]["status"],
+                    },
+                )
+            elif event == "agent_selected":
+                if thinking_started_at is None:
+                    thinking_started_at = time.monotonic()
+                thinking_steps.append({"kind": "agent", "agent": envelope["data"]["agent"]})
+                # Best-effort "thinking" indicator — which specialist Maestro
+                # routed this turn to. Never required for correctness; see
+                # ChatAgentSelectedEventSerializer.
+                event_bus.publish_user_event(
+                    conversation.user_id,
+                    "chat_agent_selected",
+                    {
+                        "conversation_id": str(conversation.id),
+                        "agent": envelope["data"]["agent"],
+                    },
                 )
             elif event == "done":
                 result = envelope["data"]
@@ -72,6 +127,15 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
         )
         return
 
+    thinking_json = (
+        {
+            "steps": thinking_steps,
+            "duration_ms": round((time.monotonic() - thinking_started_at) * 1000),
+        }
+        if thinking_steps and thinking_started_at is not None
+        else None
+    )
+
     assistant_message = Message.objects.create(
         conversation=conversation,
         sender="assistant",
@@ -79,6 +143,7 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
         stage="general",
         widget_json=result["widget"],
         suggestions_json=result.get("suggestions") or [],
+        thinking_json=thinking_json,
     )
     for ref in result["references"]:
         assistant_message.add_reference(ref["target_type"], ref["target_id"])
@@ -101,5 +166,6 @@ def generate_chat_reply(conversation_id: str, user_message_id: str) -> None:
                 for r in assistant_message.references.all()
             ],
             "suggestions": assistant_message.suggestions_json or [],
+            "thinking": assistant_message.thinking_json,
         },
     )

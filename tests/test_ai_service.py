@@ -209,7 +209,9 @@ def test_get_job_status_mock_is_stateless_across_client_instances(client, user):
 
 def test_stream_chat_mock_yields_token_events_then_one_done_event(client, user):
     envelopes = list(client.stream_chat(str(user.id), str(user.id), "hello there"))
-    assert [e["event"] for e in envelopes[:-1]] == ["token"] * len(envelopes[:-1])
+    # One leading agent_selected event, then all-token until the terminal done.
+    assert envelopes[0] == {"event": "agent_selected", "data": {"agent": "analysis"}}
+    assert [e["event"] for e in envelopes[1:-1]] == ["token"] * len(envelopes[1:-1])
     assert envelopes[-1]["event"] == "done"
     done_data = envelopes[-1]["data"]
     assert set(done_data) == {"content", "widget", "references", "suggestions"}
@@ -226,6 +228,7 @@ def test_stream_chat_mock_budget_keyword_produces_allocation_widget(client, user
     )
 
     envelopes = list(client.stream_chat(str(user.id), str(user.id), "show me my budget"))
+    assert envelopes[0] == {"event": "agent_selected", "data": {"agent": "planning"}}
     done_data = envelopes[-1]["data"]
     assert done_data["widget"]["type"] == "allocation_slider"
     assert done_data["references"] == [{"target_type": "budget", "target_id": str(budget.id)}]
