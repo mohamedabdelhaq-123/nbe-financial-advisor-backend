@@ -15,9 +15,9 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            cd ~/nbe-financial-advisor-frontend && git pull
-            cd ~/nbe-financial-advisor-backend && git pull
-            cd ~/nbe-financial-advisor-ai-service && git pull
+            cd ~/nbe-financial-advisor-frontend && git checkout main && git pull origin main
+            cd ~/nbe-financial-advisor-backend && git checkout dev && git pull origin dev
+            cd ~/nbe-financial-advisor-ai-service && git checkout main && git pull origin main
             cd ~/nbe-financial-advisor-backend/deploy
             docker compose -f docker-compose.prod.yml --env-file .env up -d --build
             docker compose -f docker-compose.prod.yml restart nginx
