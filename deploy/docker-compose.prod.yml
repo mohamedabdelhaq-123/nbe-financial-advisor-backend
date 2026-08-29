@@ -18,8 +18,10 @@ services:
     image: nginx:1.27-alpine
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
     ports:
       - "8080:80"                     # changed from 80 (already in use on this host)
+      - "443:443"
     depends_on: [frontend, backend, backend-events]
 
   frontend:
@@ -209,9 +211,9 @@ services:
         BUILD_ENV: production
     command: sh -c "celery -A config worker --loglevel=info --concurrency=2"
     environment:
+      USE_MOCK_AI_SERVICE: ${USE_MOCK_AI_SERVICE:-0}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
       DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
-      USE_MOCK_AI_SERVICE: ${USE_MOCK_AI_SERVICE:-0}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS}
       POSTGRES_DB: ${POSTGRES_DB:-appdb}
       POSTGRES_USER: ${POSTGRES_USER:-appuser}

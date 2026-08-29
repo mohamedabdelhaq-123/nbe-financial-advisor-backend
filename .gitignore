@@ -8,4 +8,5 @@ deploy/.env
 .vscode/
 PLAN*
 Problems.md
-.aider*
+.aider*deploy/.env
+deploy/certs/
