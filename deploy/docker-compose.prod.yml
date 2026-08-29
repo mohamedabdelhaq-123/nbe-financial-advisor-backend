@@ -44,13 +44,18 @@ services:
     # nothing about this service's normal request/response endpoints needs
     # gunicorn's default timeout enforced.
     # AUTO_SEED_DB opts a deploy into seeding synthetic products/investment
-    # instruments/seed_user_* accounts on startup — off by default so a real
-    # production deploy using this same compose file never seeds fake data
-    # by accident. --if-empty makes it a one-time bootstrap rather than a
-    # flush-and-reseed on every restart (see core/management/commands/
-    # seed_db.py): it no-ops once any Product row exists, real or seeded, so
-    # a running deployment's data (including whatever a seed user has done
-    # since) survives every subsequent container restart. --force is still
+    # instruments/seed_user_* accounts on startup — on by default because
+    # this compose file is deployed to a demo/staging environment (mock
+    # bank OAuth, seed_user_* accounts, no real customer data), where an
+    # empty Product/InvestmentInstrument table silently breaks investment
+    # planning and product recommendations rather than protecting anything.
+    # A genuinely separate real-production deployment reusing this file
+    # should set AUTO_SEED_DB=0 in its own .env to opt back out. --if-empty
+    # makes this a one-time bootstrap rather than a flush-and-reseed on
+    # every restart (see core/management/commands/seed_db.py): it no-ops
+    # once any Product row exists, real or seeded, so a running
+    # deployment's data (including whatever a seed user has done since)
+    # survives every subsequent container restart. --force is still
     # required alongside it for the one run where it actually seeds, since
     # this compose's DJANGO_DEBUG defaults to 0.
     command: >
@@ -60,7 +65,7 @@ services:
             if [ \"$$AUTO_SEED_DB\" = \"1\" ]; then python manage.py seed_db --if-empty --force; fi &&
             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --worker-class gthread --workers 2 --threads 4 --timeout 0"
     environment:
-      AUTO_SEED_DB: ${AUTO_SEED_DB:-0}
+      AUTO_SEED_DB: ${AUTO_SEED_DB:-1}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
       DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
       USE_MOCK_AI_SERVICE: ${USE_MOCK_AI_SERVICE:-0}
