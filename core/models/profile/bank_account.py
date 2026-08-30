@@ -1,6 +1,8 @@
 import uuid
+from decimal import Decimal
 
 from django.db import models
+from django.db.models import Q, Sum
 
 from core.constants import BANK_ACCOUNT_LINK_TYPES
 
@@ -73,11 +75,45 @@ class BankAccount(models.Model):
     @property
     def current_balance(self):
         """
-        Grabs the latest transaction balance or falls back to 0.00.
-        Leverages the single source of truth ledger in Aggregations.
+        Return the live ledger balance for this account.
+
+        A statement transaction can carry the bank's running balance, while
+        transactions created later by manual entry or bank sync may only carry
+        an amount and direction.  Treat the newest stated balance as an anchor,
+        then apply every newer movement so a NULL balance on the latest row
+        cannot hide real credits/debits.  Accounts with no stated balance are
+        derived from their full ledger starting at zero.
         """
-        # Kept dynamic to reflect real-time ledger updates
-        latest_transaction = (
-            self.transactions.order_by("-transaction_date", "-created_at").only("balance").first()
+        transactions = self.transactions.all()
+        anchor = (
+            transactions.filter(balance__isnull=False)
+            .order_by("-transaction_date", "-created_at")
+            .only("balance", "transaction_date", "created_at")
+            .first()
         )
-        return latest_transaction.balance if latest_transaction else 0.00
+
+        if anchor is None:
+            balance = Decimal("0")
+            movements = transactions
+        else:
+            balance = anchor.balance
+            movements = transactions.filter(
+                Q(transaction_date__gt=anchor.transaction_date)
+                | Q(
+                    transaction_date=anchor.transaction_date,
+                    created_at__gt=anchor.created_at,
+                )
+            )
+
+        totals = movements.aggregate(
+            credits=Sum("amount", filter=Q(transaction_type="credit")),
+            outflows=Sum(
+                "amount",
+                filter=Q(transaction_type__isnull=True) | ~Q(transaction_type="credit"),
+            ),
+        )
+        return (
+            balance
+            + (totals["credits"] or Decimal("0"))
+            - (totals["outflows"] or Decimal("0"))
+        )
