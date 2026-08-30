@@ -112,8 +112,4 @@ class BankAccount(models.Model):
                 filter=Q(transaction_type__isnull=True) | ~Q(transaction_type="credit"),
             ),
         )
-        return (
-            balance
-            + (totals["credits"] or Decimal("0"))
-            - (totals["outflows"] or Decimal("0"))
-        )
+        return balance + (totals["credits"] or Decimal("0")) - (totals["outflows"] or Decimal("0"))
