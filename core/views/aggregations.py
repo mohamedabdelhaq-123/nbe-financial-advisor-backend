@@ -606,13 +606,8 @@ class NetWorthView(APIView):
             {
                 "account_id": str(acct.id),
                 "bank_name": acct.bank_name,
-                # BankAccount.current_balance can be None even when a latest
-                # transaction exists — its fallback to 0.00 only applies when
-                # there's no transaction at all, not when a real transaction's
-                # own `balance` field was left unset (true for every mock
-                # transaction from the Statements pipeline, which never sets
-                # it). Coalesced to 0 here since the documented response shape
-                # for `balance` is always "number", never null.
+                # current_balance starts at the newest bank-stated running
+                # balance and applies every later amount-only ledger movement.
                 "balance": acct.current_balance or Decimal("0"),
             }
             for acct in accounts
